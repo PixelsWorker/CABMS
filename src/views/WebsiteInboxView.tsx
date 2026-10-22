@@ -6,6 +6,7 @@
 
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import {
   Inbox,
   Plus,
@@ -19,8 +20,9 @@ import {
   Phone,
   MapPin,
   AlertTriangle,
+  FileCheck2,
 } from 'lucide-react';
-import { BrandId } from '../types/cabms.ts';
+import { BrandId, WebsiteEnquiry } from '../types/cabms.ts';
 
 export const WebsiteInboxView: React.FC = () => {
   const {
@@ -33,9 +35,27 @@ export const WebsiteInboxView: React.FC = () => {
     setActiveTab,
     setSelectedJobId,
     customers,
+    jobTypes,
+    persona,
+    myobConnection,
   } = useCabms();
 
   const [selectedBrandForSim, setSelectedBrandForSim] = useState<BrandId>(activeBrandId);
+  const [conversionModalEnquiry, setConversionModalEnquiry] = useState<WebsiteEnquiry | null>(null);
+  const [selectedCustMatchMode, setSelectedCustMatchMode] = useState<'matched' | 'existing_picker' | 'new_write_through'>('matched');
+  const [selectedExistingCustId, setSelectedExistingCustId] = useState<string>('');
+  const [selectedJobTypeId, setSelectedJobTypeId] = useState<string>(jobTypes[0]?.id || 'jt-solar-install');
+
+  // Role Gate: Technician restricted
+  if (persona === 'technician') {
+    return (
+      <AccessDeniedView
+        resourceName="Website Lead Inbox & Conversion"
+        requiredRoleDescription="Super Admin, Owner / Admin, or Office Staff"
+        customExplanation="Technicians do not triage incoming website leads, perform customer record linkage, or generate initial job types."
+      />
+    );
+  }
 
   const pendingEnquiries = websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW');
   const processedEnquiries = websiteEnquiries.filter(e => e.status !== 'PENDING_REVIEW');
@@ -188,9 +208,10 @@ export const WebsiteInboxView: React.FC = () => {
 
                     <button
                       onClick={() => {
-                        const { jobId } = convertEnquiryToJob(enq.id);
-                        setSelectedJobId(jobId);
-                        setActiveTab('jobs');
+                        setConversionModalEnquiry(enq);
+                        setSelectedCustMatchMode(enq.matchedExistingCustomerId ? 'matched' : 'new_write_through');
+                        setSelectedExistingCustId(enq.matchedExistingCustomerId || customers[0]?.id || '');
+                        setSelectedJobTypeId(jobTypes[0]?.id || 'jt-solar-install');
                       }}
                       className="flex items-center space-x-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
                     >
@@ -234,6 +255,185 @@ export const WebsiteInboxView: React.FC = () => {
                 </span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* CONVERSION MODAL: Customer Matching & Job Type Picker */}
+      {conversionModalEnquiry && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2">
+                <FileCheck2 className="w-5 h-5 text-purple-400" />
+                <h3 className="text-base font-bold text-white">Convert Web Lead to Work Order</h3>
+              </div>
+              <button
+                onClick={() => setConversionModalEnquiry(null)}
+                className="text-slate-400 hover:text-white font-bold text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-1.5">
+              <div className="font-bold text-white text-sm">{conversionModalEnquiry.customerName}</div>
+              <div className="text-slate-400 flex items-center space-x-3">
+                <span>{conversionModalEnquiry.phone}</span>
+                <span>•</span>
+                <span>{conversionModalEnquiry.email}</span>
+              </div>
+              <div className="text-slate-300 pt-1 border-t border-slate-800/80">
+                Service: <strong>{conversionModalEnquiry.serviceRequested}</strong>
+              </div>
+            </div>
+
+            {/* 1. Customer Linkage Selection */}
+            <div className="space-y-2 text-xs">
+              <label className="text-slate-300 font-bold block uppercase tracking-wider text-[10px]">
+                1. Customer Resolution & MYOB Card Linkage
+              </label>
+
+              <div className="space-y-2 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                {conversionModalEnquiry.matchedExistingCustomerId && (
+                  <label className="flex items-start space-x-2 cursor-pointer text-slate-300">
+                    <input
+                      type="radio"
+                      name="custMatch"
+                      checked={selectedCustMatchMode === 'matched'}
+                      onChange={() => setSelectedCustMatchMode('matched')}
+                      className="mt-0.5 text-purple-600 focus:ring-0"
+                    />
+                    <div>
+                      <span className="font-bold text-white">Use Matched Existing Customer</span>
+                      <span className="block text-[11px] text-sky-400 font-mono">
+                        {customers.find(c => c.id === conversionModalEnquiry.matchedExistingCustomerId)?.name} ({conversionModalEnquiry.matchedExistingCustomerId})
+                      </span>
+                    </div>
+                  </label>
+                )}
+
+                <label className="flex items-start space-x-2 cursor-pointer text-slate-300">
+                  <input
+                    type="radio"
+                    name="custMatch"
+                    checked={selectedCustMatchMode === 'existing_picker'}
+                    onChange={() => setSelectedCustMatchMode('existing_picker')}
+                    className="mt-0.5 text-purple-600 focus:ring-0"
+                  />
+                  <div className="flex-1">
+                    <span className="font-bold text-white">Select from Existing Customer Master</span>
+                    {selectedCustMatchMode === 'existing_picker' && (
+                      <select
+                        value={selectedExistingCustId}
+                        onChange={e => setSelectedExistingCustId(e.target.value)}
+                        className="w-full mt-1.5 bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-white"
+                      >
+                        {customers.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.name} ({c.myobCustomerId})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                </label>
+
+                <label className="flex items-start space-x-2 cursor-pointer text-slate-300">
+                  <input
+                    type="radio"
+                    name="custMatch"
+                    checked={selectedCustMatchMode === 'new_write_through'}
+                    onChange={() => setSelectedCustMatchMode('new_write_through')}
+                    className="mt-0.5 text-purple-600 focus:ring-0"
+                  />
+                  <div>
+                    <span className="font-bold text-white">Create New MYOB Customer Card</span>
+                    <span className="block text-[11px] text-slate-400">
+                      Write-through new customer entry to MYOB Business master file.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              {myobConnection.status !== 'CONNECTED' && selectedCustMatchMode === 'new_write_through' && (
+                <div className="p-2.5 rounded bg-amber-950/40 border border-amber-800/80 text-amber-300 text-[11px] flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                  <span>
+                    MYOB Business is currently offline. The new customer will be preserved as an unresolved operational local draft with pending sync status.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Job Type Picker */}
+            <div className="space-y-2 text-xs">
+              <label className="text-slate-300 font-bold block uppercase tracking-wider text-[10px]">
+                2. Operational Job Type & Compliance Matrix
+              </label>
+
+              <select
+                value={selectedJobTypeId}
+                onChange={e => setSelectedJobTypeId(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white font-medium cursor-pointer"
+              >
+                {jobTypes.map(jt => (
+                  <option key={jt.id} value={jt.id}>
+                    {jt.name} ({jt.version}) {jt.isDirectToInvoice ? '• [Direct-to-Invoice]' : `• [Req: ${jt.formsRequired.join(', ')}]`}
+                  </option>
+                ))}
+              </select>
+
+              {(() => {
+                const jt = jobTypes.find(t => t.id === selectedJobTypeId) || jobTypes[0];
+                return (
+                  <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
+                    <div className="text-slate-400">
+                      Policy Rule: <strong className="text-white">{jt.isDirectToInvoice ? 'Direct-to-invoice service (no mandatory safety forms)' : 'Multi-form compliance check enforced'}</strong>
+                    </div>
+                    <div className="text-slate-400">
+                      Enforced Documents: <span className="font-mono text-sky-400">{jt.formsRequired.length > 0 ? jt.formsRequired.join(' + ') : 'None'}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800 text-xs">
+              <button
+                type="button"
+                onClick={() => setConversionModalEnquiry(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  let targetCustId: string | undefined = undefined;
+                  if (selectedCustMatchMode === 'matched') {
+                    targetCustId = conversionModalEnquiry.matchedExistingCustomerId;
+                  } else if (selectedCustMatchMode === 'existing_picker') {
+                    targetCustId = selectedExistingCustId;
+                  } else {
+                    targetCustId = undefined; // trigger new customer write-through
+                  }
+
+                  const res = convertEnquiryToJob(conversionModalEnquiry.id, targetCustId, selectedJobTypeId);
+                  setConversionModalEnquiry(null);
+                  if (res.jobId) {
+                    setSelectedJobId(res.jobId);
+                    setActiveTab('jobs');
+                  }
+                }}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded transition shadow cursor-pointer flex items-center space-x-1.5"
+              >
+                <span>Confirm Conversion & Open Job</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       )}

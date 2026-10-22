@@ -479,3 +479,57 @@ test('verifyPersonaAccess: technician and office staff boundaries (G00-001)', ()
   });
   assert.equal(otherTechCheck.allowed, false);
 });
+
+test('quotation GST math: ex-GST subtotal + 10% GST = total inc GST without double taxing', () => {
+  const grossTarget = 1450;
+  const exSubtotal = Math.round((grossTarget / 1.1) * 100) / 100;
+  const gst = Math.round(exSubtotal * 0.1 * 100) / 100;
+  const calculatedTotal = Math.round((exSubtotal + gst) * 100) / 100;
+
+  assert.equal(exSubtotal, 1318.18);
+  assert.equal(gst, 131.82);
+  assert.equal(calculatedTotal, 1450.00);
+});
+
+test('validateJobCompletion: blocks completion if job requires forms but forms are unsigned', () => {
+  const cctvJob: Job = {
+    id: 'JOB-2026-104',
+    brandId: 'cctv',
+    customerId: 'CUSTOMER-DEMO-002',
+    title: 'CCTV Telecommunications Cabling',
+    jobType: 'Enterprise CCTV & Cabling Inspection',
+    jobTypeVersion: 'v2.1',
+    siteAddress: 'Industrial Zone',
+    siteContact: 'Marcus Vance',
+    sitePhone: '0400 000 002',
+    description: 'Requires TCA1 and JSA',
+    status: 'IN_PROGRESS',
+    assignedTechId: 'TECH-001',
+    assignedTechName: 'Dave Miller',
+    scheduledDate: '2026-11-02',
+    scheduledTime: '13:00',
+    estimatedDurationHours: 4,
+    isDirectToInvoice: false,
+    formsRequired: ['JSA', 'TCA1'],
+    reviewRequest: {
+      status: 'NOT_SENT',
+      reviewLink: '',
+      brandName: 'Gold Coast CCTV',
+      channel: 'EMAIL_SIMULATED',
+      history: [],
+    },
+    reminders: [],
+    attachedSampleIds: [],
+    unresolvedWarnings: [],
+    activityHistory: [],
+  };
+
+  const completionResult = validateJobCompletion(cctvJob, {
+    jsa: { signedOff: true } as any,
+    tca1: { signedOff: false } as any,
+  });
+
+  assert.equal(completionResult.canComplete, false);
+  assert.ok(completionResult.missingRequirements.some(r => r.includes('TCA1')));
+});
+

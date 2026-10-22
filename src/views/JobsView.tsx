@@ -136,13 +136,17 @@ export const JobsView: React.FC = () => {
 
     const matchedCust = customers.find(c => c.id === newCustId) || customers[0];
     const tech = technicians.find(t => t.id === newAssignedTechId);
+    const selectedJt = jobTypes.find(t => t.id === selectedJobTypeId) || jobTypes[0];
 
     const created = createJob({
       brandId: activeBrandId,
       customerId: matchedCust.id,
       title: newTitle,
+      jobType: selectedJt.name,
+      jobTypeVersion: selectedJt.version,
       description: newDescription || `${newTitle} for ${matchedCust.name}`,
       status: newAssignedTechId ? 'SCHEDULED' : 'NEW',
+      appointmentStatus: 'SCHEDULED',
       scheduledDate: '2026-11-04',
       scheduledTime: '10:00',
       assignedTechId: newAssignedTechId,
@@ -150,8 +154,8 @@ export const JobsView: React.FC = () => {
       siteAddress: newSiteAddress,
       siteContact: newSiteContact,
       sitePhone: newSitePhone,
-      isDirectToInvoice: newIsDirectToInvoice,
-      formsRequired: newIsDirectToInvoice ? [] : newForms,
+      isDirectToInvoice: selectedJt.isDirectToInvoice,
+      formsRequired: selectedJt.formsRequired,
       unresolvedWarnings: [],
     });
 
@@ -723,32 +727,31 @@ export const JobsView: React.FC = () => {
               </div>
 
               <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-2">
-                <label className="flex items-center space-x-2 text-white font-semibold cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newIsDirectToInvoice}
-                    onChange={e => setNewIsDirectToInvoice(e.target.checked)}
-                    className="rounded"
-                  />
-                  <span>Direct-to-Invoice Service (No Compliance Forms Required)</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <span className="text-white font-semibold">Job Type Compliance Policy</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    jobTypes.find(t => t.id === selectedJobTypeId)?.isDirectToInvoice
+                      ? 'bg-sky-950 text-sky-400 border border-sky-800'
+                      : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                  }`}>
+                    {jobTypes.find(t => t.id === selectedJobTypeId)?.isDirectToInvoice ? 'Direct to Invoice' : 'Compliance Documents Required'}
+                  </span>
+                </div>
 
-                {!newIsDirectToInvoice && (
+                {jobTypes.find(t => t.id === selectedJobTypeId)?.isDirectToInvoice ? (
+                  <p className="text-slate-400 text-[11px]">
+                    Direct-to-invoice service: no compliance documentation required for operational completion.
+                  </p>
+                ) : (
                   <div>
-                    <span className="block text-slate-400 font-semibold mb-1">Required Compliance Forms:</span>
-                    <div className="flex flex-wrap gap-3">
-                      {(['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'] as const).map(ft => (
-                        <label key={ft} className="flex items-center space-x-1 text-slate-300">
-                          <input
-                            type="checkbox"
-                            checked={newForms.includes(ft)}
-                            onChange={e => {
-                              if (e.target.checked) setNewForms([...newForms, ft]);
-                              else setNewForms(newForms.filter(f => f !== ft));
-                            }}
-                          />
-                          <span>{ft}</span>
-                        </label>
+                    <span className="block text-slate-400 font-semibold mb-1">
+                      Mandatory Forms (governed by {jobTypes.find(t => t.id === selectedJobTypeId)?.name} {jobTypes.find(t => t.id === selectedJobTypeId)?.version}):
+                    </span>
+                    <div className="flex flex-wrap gap-2">
+                      {jobTypes.find(t => t.id === selectedJobTypeId)?.formsRequired.map(ft => (
+                        <span key={ft} className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-sky-300 font-mono text-[11px] font-bold">
+                          {ft}
+                        </span>
                       ))}
                     </div>
                   </div>

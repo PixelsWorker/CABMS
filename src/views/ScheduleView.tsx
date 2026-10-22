@@ -142,37 +142,39 @@ export const ScheduleView: React.FC = () => {
           </span>
         </div>
 
-        {/* Calendar Mappings Status */}
-        <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
-            <span className="text-white font-semibold">CABMS Operations Hub</span>
-            <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-              <CheckCircle2 className="w-3 h-3" /> Synced (Simulated)
+        {/* Calendar Mappings Status & Simulated Error Recovery */}
+        <div className="mt-4 pt-4 border-t border-slate-800 space-y-3 text-xs">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
+              <span className="text-white font-semibold">CABMS Operations Hub</span>
+              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle2 className="w-3 h-3" /> Synced (Simulated)
+              </div>
             </div>
-          </div>
 
-          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #1</span>
-            <span className="text-amber-400 font-semibold">{brands.solarcell?.calendarMappingName}</span>
-            <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-              <CheckCircle2 className="w-3 h-3" /> Synced
+            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #1</span>
+              <span className="text-amber-400 font-semibold">{brands.solarcell?.calendarMappingName}</span>
+              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle2 className="w-3 h-3" /> Synced
+              </div>
             </div>
-          </div>
 
-          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #2</span>
-            <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName || brands.smarthome?.calendarMappingName}</span>
-            <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-              <CheckCircle2 className="w-3 h-3" /> Synced
+            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #2</span>
+              <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName || brands.smarthome?.calendarMappingName}</span>
+              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle2 className="w-3 h-3" /> Synced
+              </div>
             </div>
-          </div>
 
-          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
-            <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #3</span>
-            <span className="text-emerald-400 font-semibold">{brands.cctv?.calendarMappingName}</span>
-            <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-              <CheckCircle2 className="w-3 h-3" /> Synced
+            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+              <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #3</span>
+              <span className="text-emerald-400 font-semibold">{brands.cctv?.calendarMappingName}</span>
+              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                <CheckCircle2 className="w-3 h-3" /> Synced
+              </div>
             </div>
           </div>
         </div>
@@ -201,8 +203,34 @@ export const ScheduleView: React.FC = () => {
             {scheduledJobs.map(job => (
               <div
                 key={job.id}
-                className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition"
+                className={`bg-slate-900 border rounded-xl p-5 space-y-4 hover:border-slate-700 transition ${
+                  job.appointmentStatus === 'CANCELLED'
+                    ? 'border-red-900/60 bg-red-950/10'
+                    : 'border-slate-800'
+                }`}
               >
+                {/* Cancelled Appointment Alert Banner */}
+                {job.appointmentStatus === 'CANCELLED' && (
+                  <div className="bg-red-950/40 border border-red-800/80 rounded-lg p-3 text-xs text-red-200 flex items-center justify-between">
+                    <div className="flex items-center space-x-2">
+                      <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <span>
+                        <strong>Visit Cancelled</strong> — Customer reminders have been suppressed. Work order remains open for rescheduling.
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setRescheduleTarget(job);
+                        setNewDate(job.scheduledDate);
+                        setNewTime(job.scheduledTime);
+                      }}
+                      className="px-2.5 py-1 bg-red-900 hover:bg-red-800 text-white font-bold text-[11px] rounded transition cursor-pointer"
+                    >
+                      Reschedule Now
+                    </button>
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-start space-x-3">
                     <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg text-center shrink-0">
@@ -223,8 +251,19 @@ export const ScheduleView: React.FC = () => {
                         >
                           {brands[job.brandId]?.name}
                         </span>
+                        {job.appointmentStatus && job.appointmentStatus !== 'SCHEDULED' && (
+                          <span
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                              job.appointmentStatus === 'CANCELLED'
+                                ? 'bg-red-950 text-red-400 border border-red-800'
+                                : 'bg-sky-950 text-sky-400 border border-sky-800'
+                            }`}
+                          >
+                            {job.appointmentStatus}
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs text-slate-400 mt-1 flex items-center space-x-3">
+                      <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-3">
                         <span className="flex items-center gap-1">
                           <User className="w-3.5 h-3.5 text-slate-500" />
                           {job.siteContact} ({job.sitePhone})
@@ -232,6 +271,10 @@ export const ScheduleView: React.FC = () => {
                         <span>•</span>
                         <span className="flex items-center gap-1 text-sky-400">
                           Tech: {job.assignedTechName || 'Unassigned'}
+                        </span>
+                        <span>•</span>
+                        <span className="font-mono text-[11px] text-slate-500">
+                          Calendar: {job.calendarMapping || 'Fleet Calendar'} ({job.calendarSyncStatus || 'SYNCED'})
                         </span>
                       </div>
                     </div>
@@ -248,16 +291,18 @@ export const ScheduleView: React.FC = () => {
                       className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
                     >
                       <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Reschedule</span>
+                      <span>{job.appointmentStatus === 'CANCELLED' ? 'Re-book Visit' : 'Reschedule'}</span>
                     </button>
 
-                    <button
-                      onClick={() => setCancelTarget(job)}
-                      className="px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
-                    >
-                      <XCircle className="w-3.5 h-3.5" />
-                      <span>Cancel</span>
-                    </button>
+                    {job.appointmentStatus !== 'CANCELLED' && (
+                      <button
+                        onClick={() => setCancelTarget(job)}
+                        className="px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
+                      >
+                        <XCircle className="w-3.5 h-3.5" />
+                        <span>Cancel Visit</span>
+                      </button>
+                    )}
 
                     <button
                       onClick={() => {

@@ -85,6 +85,9 @@ export interface Job {
   estimatedDurationHours: number;
   isDirectToInvoice: boolean;
   formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+  appointmentStatus?: 'SCHEDULED' | 'RESCHEDULED' | 'CANCELLED';
+  calendarMapping?: string;
+  calendarSyncStatus?: 'SYNCED' | 'PENDING' | 'FAILED';
   quote?: Quote;
   invoice?: Invoice;
   reviewRequest: ReviewRequest;
@@ -133,6 +136,8 @@ export interface Invoice {
   paidDate?: string;
   reconciliationRequired: boolean;
   reconciliationNotes?: string;
+  syncStatus?: SyncStatus;
+  errorMessage?: string;
 }
 
 export interface ReviewRequest {
@@ -216,6 +221,7 @@ export interface JsaFormData {
   formRevision: string;
   issuerPlaceholder: string;
   frozenIssuerSnapshot?: string;
+  fullSnapshot?: string;
   attachedSampleIds: string[];
 }
 
@@ -249,6 +255,7 @@ export interface ElectricalCertData {
   signedTimestamp?: string;
   unresolvedNotice: string; // "Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred."
   frozenIssuerSnapshot?: string;
+  fullSnapshot?: string;
   attachedSampleIds: string[];
 }
 
@@ -292,6 +299,7 @@ export interface SmokeAlarmCertData {
   signedTimestamp?: string;
   provisionalNote: string;
   frozenIssuerSnapshot?: string;
+  fullSnapshot?: string;
   attachedSampleIds: string[];
 }
 
@@ -314,6 +322,7 @@ export interface Tca1CertData {
   signedTimestamp?: string;
   unresolvedRegistrationExpiryNotice: string;
   frozenIssuerSnapshot?: string;
+  fullSnapshot?: string;
   attachedSampleIds: string[];
 }
 
@@ -348,7 +357,19 @@ export interface Tca2CertData {
   signedTimestamp?: string;
   warningNotice: string;
   frozenIssuerSnapshot?: string;
+  fullSnapshot?: string;
   attachedSampleIds: string[];
+}
+
+export interface CertificateDeliveryRecord {
+  id: string;
+  jobId: string;
+  formType: string;
+  recipientEmail: string;
+  status: 'SENT' | 'FAILED' | 'RECONCILED';
+  sentAt: string;
+  documentTitle: string;
+  snapshotSummary: string;
 }
 
 export interface WebsiteEnquiry {

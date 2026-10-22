@@ -7,6 +7,7 @@
 
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import {
   MessageSquare,
   Bell,
@@ -20,6 +21,7 @@ import {
   Star,
   ExternalLink,
   FastForward,
+  RefreshCw,
 } from 'lucide-react';
 import { Job } from '../types/cabms.ts';
 
@@ -29,8 +31,12 @@ export const CommunicationsView: React.FC = () => {
     selectedJobId,
     setSelectedJobId,
     brands,
+    persona,
     triggerReviewRequest,
     reconcileReviewRequest,
+    certificateDeliveries,
+    sendCertificateEmail,
+    retryCertificateDelivery,
     demoClock,
     advanceClock,
     getOrCreateJsa,
@@ -42,6 +48,18 @@ export const CommunicationsView: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<'reviews' | 'reminders' | 'certificates'>('reviews');
   const [reviewFeedback, setReviewFeedback] = useState<{ success: boolean; message: string } | null>(null);
+  const [selectedCertType, setSelectedCertType] = useState<'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2'>('JSA');
+
+  // Persona boundary: Technician is restricted
+  if (persona === 'technician') {
+    return (
+      <AccessDeniedView
+        resourceName="Customer Communications & Review Automation"
+        requiredRoleDescription="Super Admin, Owner / Admin, or Office Staff"
+        customExplanation="Technicians do not dispatch automated customer communications, Google review requests, or customer certificate delivery packages."
+      />
+    );
+  }
 
   // Selected job
   const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
@@ -302,7 +320,7 @@ export const CommunicationsView: React.FC = () => {
                     style={{ backgroundColor: brands[currentJob.brandId]?.primaryColor }}
                   >
                     <Star className="w-4 h-4 fill-current" />
-                    <span>Leave a 5-Star Review on Google</span>
+                    <span>Share Your Experience on Google</span>
                   </a>
                 </div>
 
@@ -374,52 +392,183 @@ export const CommunicationsView: React.FC = () => {
         </div>
       )}
 
-      {/* Certificates Delivery Tab (G00-022) */}
+      {/* Certificates Delivery Tab (G00-022: Selection -> Preview -> Mock Send -> Recovery) */}
       {activeTab === 'certificates' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">
-            Completed Compliance Document Dispatch Preview
-          </h2>
-          <p className="text-xs text-slate-400">
-            Preview of automated certificate delivery package sent to building owners and property managers upon job completion.
-            Only fully executed and signed compliance certificates are eligible for customer dispatch.
-          </p>
-
-          <div className="bg-slate-950 rounded-xl p-5 border border-slate-800 space-y-3 text-xs">
-            <div className="text-slate-400 text-[11px] pb-2 border-b border-slate-800">
-              Email Subject: Verified Compliance Certificates for Work Order #{currentJob.id} — {brands[currentJob.brandId]?.name}
-            </div>
-            <p className="text-slate-200">
-              Dear {currentJob.siteContact},
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+          <div>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+              Finalized Document Dispatch Workflow
+            </span>
+            <h2 className="text-base font-bold text-white mt-0.5">
+              Completed Compliance Certificate Email Dispatch ({currentJob.id})
+            </h2>
+            <p className="text-xs text-slate-400">
+              Only signed compliance certificates with preserved immutable snapshots are eligible for simulated dispatch to property owners.
             </p>
-            <p className="text-slate-300 leading-relaxed">
-              Please find attached your verified compliance records for the works carried out at <strong>{currentJob.siteAddress}</strong> on {currentJob.scheduledDate}.
-            </p>
+          </div>
 
-            <div className="bg-slate-900 p-3 rounded border border-slate-800 space-y-2">
-              <span className="font-bold text-slate-300 block text-[11px]">
-                Enclosed Verified Documents ({signedCerts.length} signed of {currentJob.formsRequired.length} required):
+          {/* Form Selection & Dispatch Triggers */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            <div className="lg:col-span-6 bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4 text-xs">
+              <span className="font-bold text-slate-300 uppercase tracking-wider text-[11px] block">
+                1. Select Finalized Certificate
               </span>
 
-              {signedCerts.length > 0 ? (
-                <div className="space-y-1">
-                  {signedCerts.map((certName, idx) => (
-                    <div key={idx} className="flex items-center space-x-1.5 text-emerald-400 font-mono text-[11px]">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      <span>{certName}</span>
-                    </div>
-                  ))}
+              {currentJob.formsRequired.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {currentJob.formsRequired.map(fType => {
+                      let isSigned = false;
+                      if (fType === 'JSA') isSigned = getOrCreateJsa(currentJob.id).signedOff;
+                      if (fType === 'ELECTRICAL') isSigned = getOrCreateElectrical(currentJob.id).signedOff;
+                      if (fType === 'SMOKE_ALARM') isSigned = getOrCreateSmokeAlarm(currentJob.id).signedOff;
+                      if (fType === 'TCA1') isSigned = getOrCreateTca1(currentJob.id).signedOff;
+                      if (fType === 'TCA2') isSigned = getOrCreateTca2(currentJob.id).signedOff;
+
+                      return (
+                        <button
+                          key={fType}
+                          onClick={() => setSelectedCertType(fType)}
+                          className={`px-3 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer flex items-center space-x-1.5 ${
+                            selectedCertType === fType
+                              ? 'bg-emerald-600 text-slate-950 shadow-sm'
+                              : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
+                          }`}
+                        >
+                          <span>{fType}</span>
+                          {isSigned ? (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                          ) : (
+                            <span className="text-[10px] text-amber-400 font-mono">(Unsigned)</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-800 text-slate-400">
+                    Recipient: <strong className="text-white">{currentJob.siteContact}</strong> ({currentJob.siteContact.toLowerCase().replace(/[^a-z0-9]/g, '.')}@example.invalid)
+                  </div>
                 </div>
               ) : (
-                <div className="text-amber-400 bg-amber-950/40 p-2.5 rounded border border-amber-800/60 text-xs">
-                  ⚠ No compliance forms have received technician sign-off for this job yet. Finalized PDF packages are generated once technician executes and applies DEMO sign-off.
-                </div>
+                <p className="text-slate-500">No compliance forms required for direct-to-invoice service.</p>
               )}
+
+              {/* Action Buttons */}
+              <div className="pt-3 border-t border-slate-800 flex flex-wrap gap-2">
+                <button
+                  onClick={() => sendCertificateEmail(currentJob.id, selectedCertType, false)}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded-lg transition shadow-md cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                  <span>Send Certificate Email (Normal)</span>
+                </button>
+                <button
+                  onClick={() => sendCertificateEmail(currentJob.id, selectedCertType, true)}
+                  className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-red-300 border border-red-800/80 font-semibold rounded-lg transition cursor-pointer"
+                  title="Simulate network failure resulting in a FAILED delivery record with retry option"
+                >
+                  Simulate SMTP 504 Failure
+                </button>
+              </div>
             </div>
 
-            <p className="text-slate-400 text-[11px]">
-              Legal Issuer: {brands[currentJob.brandId]?.legalIssuerName} • {brands[currentJob.brandId]?.abnPlaceholder}
-            </p>
+            {/* Email Preview Card */}
+            <div className="lg:col-span-6 bg-slate-950 rounded-xl p-5 border border-slate-800 space-y-3 text-xs">
+              <span className="font-bold text-slate-300 uppercase tracking-wider text-[11px] block">
+                2. Customer Email Delivery Package Preview
+              </span>
+              <div className="text-slate-400 text-[11px] pb-2 border-b border-slate-800">
+                Subject: Verified Compliance Certificates for Work Order #{currentJob.id} — {brands[currentJob.brandId]?.name}
+              </div>
+              <p className="text-slate-200">Dear {currentJob.siteContact},</p>
+              <p className="text-slate-300 leading-relaxed">
+                Please find attached your verified compliance records for the works carried out at <strong>{currentJob.siteAddress}</strong> on {currentJob.scheduledDate}.
+              </p>
+              <div className="bg-slate-900 p-3 rounded border border-slate-800 space-y-2">
+                <span className="font-bold text-slate-300 block text-[11px]">
+                  Enclosed Verified Documents ({signedCerts.length} signed of {currentJob.formsRequired.length} required):
+                </span>
+                {signedCerts.length > 0 ? (
+                  <div className="space-y-1">
+                    {signedCerts.map((certName, idx) => (
+                      <div key={idx} className="flex items-center space-x-1.5 text-emerald-400 font-mono text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <span>{certName}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-amber-400 bg-amber-950/40 p-2.5 rounded border border-amber-800/60 text-xs">
+                    No compliance forms have received technician sign-off for this job yet. Sign-off is required before client delivery.
+                  </div>
+                )}
+              </div>
+              <p className="text-slate-400 text-[11px]">
+                Legal Issuer: {brands[currentJob.brandId]?.legalIssuerName} • {brands[currentJob.brandId]?.abnPlaceholder}
+              </p>
+            </div>
+          </div>
+
+          {/* Delivery Audit History & Recovery Log */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              3. Simulated Dispatch Audit History & Delivery Recovery
+            </h3>
+
+            {certificateDeliveries.filter(d => d.jobId === currentJob.id).length === 0 ? (
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-slate-500 text-center">
+                No certificate delivery simulations recorded for this work order yet. Use the dispatch buttons above.
+              </div>
+            ) : (
+              <div className="space-y-2 text-xs">
+                {certificateDeliveries
+                  .filter(d => d.jobId === currentJob.id)
+                  .map(deliv => (
+                    <div
+                      key={deliv.id}
+                      className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        deliv.status === 'SENT'
+                          ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-200'
+                          : 'bg-red-950/40 border-red-800 text-red-200'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono font-bold">{deliv.id}</span>
+                          <span>•</span>
+                          <span className="font-semibold">{deliv.documentTitle}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">
+                          Recipient: {deliv.recipientEmail} • Dispatched: {deliv.sentAt}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            deliv.status === 'SENT'
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                              : 'bg-red-950 text-red-400 border border-red-800'
+                          }`}
+                        >
+                          {deliv.status}
+                        </span>
+
+                        {deliv.status === 'FAILED' && (
+                          <button
+                            onClick={() => retryCertificateDelivery(deliv.id)}
+                            className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[11px] rounded transition cursor-pointer flex items-center space-x-1"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Retry Delivery</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         </div>
       )}

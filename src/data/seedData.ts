@@ -84,25 +84,6 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     quoteTemplateName: 'MYOB-TPL-CCTV-ENTERPRISE',
     invoiceTemplateName: 'MYOB-INV-CCTV-STANDARD',
   },
-  demo_energy: {
-    id: 'demo_energy',
-    name: 'Pacific Eco-Energy (Profile Example)',
-    tagline: 'Commercial Battery Storage & Microgrids (Demo Only)',
-    primaryColor: '#7c3aed', // violet-600
-    accentColor: '#a78bfa',
-    logoGlyph: 'P',
-    legalIssuerName: 'Pacific Eco-Energy Pty Ltd (Configurable Profile Example)',
-    abnPlaceholder: 'ABN 45 678 901 234 (Fictional)',
-    electricalLicencePlaceholder: 'Q-ELEC-55110 (Fictional)',
-    acmaCablerPlaceholder: 'ACMA-T1122 (Fictional)',
-    qbccLicencePlaceholder: 'QBCC 1822341 (Fictional)',
-    contactEmail: 'contact@pacificeco.example.invalid',
-    contactPhone: '(07) 5500 0444',
-    reviewUrlPlaceholder: 'https://demo.google-reviews.invalid/pacific-eco',
-    calendarMappingName: 'Eco-Energy Specialist Calendar',
-    quoteTemplateName: 'MYOB-TPL-ECO-2026',
-    invoiceTemplateName: 'MYOB-INV-ECO-STANDARD',
-  },
 };
 
 export const INITIAL_JOB_TYPES: JobTypeConfig[] = [

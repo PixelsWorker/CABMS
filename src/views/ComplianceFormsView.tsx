@@ -149,10 +149,10 @@ export const ComplianceFormsView: React.FC = () => {
 
   const activeStatus = getActiveFormStatus();
 
-  // Helper for adding a new JSA step
+  // Helper for adding a new JSA step (deterministic sequential ID)
   const handleAddJsaStep = () => {
     const newStep = {
-      id: `STEP-${Date.now().toString().slice(-4)}`,
+      id: `STEP-${currentJsa.steps.length + 1}`,
       taskStep: 'Additional Site Task',
       hazards: 'Site-specific hazard identified',
       initialRisk: 'M' as const,
@@ -173,10 +173,10 @@ export const ComplianceFormsView: React.FC = () => {
     updateJsaForm(currentJob.id, { ppeChecklist: updated });
   };
 
-  // Helper for adding Smoke Alarm row
+  // Helper for adding Smoke Alarm row (deterministic sequential ID)
   const handleAddSmokeAlarmRow = () => {
     const newRow = {
-      id: `ALARM-${Date.now().toString().slice(-4)}`,
+      id: `ALARM-${currentSmoke.alarmSchedule.length + 1}`,
       roomLocation: 'Additional Bedroom / Hallway',
       alarmBrandModel: 'Clipsal 755PSMA4',
       standardMarkingPlaceholder: 'AS 3786:2014',
@@ -426,13 +426,32 @@ export const ComplianceFormsView: React.FC = () => {
                       className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono"
                     />
                   </div>
-                  <div className="flex items-center space-x-4 pt-2 text-[11px]">
-                    <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                      <Check className="w-3.5 h-3.5" /> Site Induction Completed
-                    </span>
-                    <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                      <Check className="w-3.5 h-3.5" /> Competencies Verified
-                    </span>
+                  <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px]">
+                    <label className="flex items-center space-x-2 cursor-pointer bg-slate-900 border border-slate-800 hover:border-slate-700 px-2.5 py-1.5 rounded transition">
+                      <input
+                        type="checkbox"
+                        checked={currentJsa.inductionCompleted}
+                        disabled={currentJsa.signedOff}
+                        onChange={e => updateJsaForm(currentJob.id, { inductionCompleted: e.target.checked })}
+                        className="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0 cursor-pointer"
+                      />
+                      <span className={currentJsa.inductionCompleted ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                        Site Induction Completed
+                      </span>
+                    </label>
+
+                    <label className="flex items-center space-x-2 cursor-pointer bg-slate-900 border border-slate-800 hover:border-slate-700 px-2.5 py-1.5 rounded transition">
+                      <input
+                        type="checkbox"
+                        checked={currentJsa.competencyVerified}
+                        disabled={currentJsa.signedOff}
+                        onChange={e => updateJsaForm(currentJob.id, { competencyVerified: e.target.checked })}
+                        className="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0 cursor-pointer"
+                      />
+                      <span className={currentJsa.competencyVerified ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                        Competencies Verified
+                      </span>
+                    </label>
                   </div>
                 </div>
               </div>
@@ -1129,47 +1148,71 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
           )}
 
-          {/* Render Currently Attached Photos */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {sampleAttachments.slice(0, 2).map((item, idx) => (
-              <div key={idx} className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
-                <div className="h-24 bg-slate-800 relative">
-                  <img src={item.thumbnailUrl} alt={item.title} className="w-full h-full object-cover" />
-                  <span className="absolute top-1 left-1 text-[9px] bg-emerald-950/90 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">
-                    Attached
-                  </span>
+          {/* Render Currently Attached Photos Dynamically */}
+          {(() => {
+            const activeAttachedIds = (() => {
+              switch (activeFormTab) {
+                case 'JSA': return currentJsa.attachedSampleIds || [];
+                case 'ELECTRICAL': return currentElec.attachedSampleIds || [];
+                case 'SMOKE_ALARM': return currentSmoke.attachedSampleIds || [];
+                case 'TCA1': return currentTca1.attachedSampleIds || [];
+                case 'TCA2': return currentTca2.attachedSampleIds || [];
+              }
+            })();
+
+            const linkedSamples = sampleAttachments.filter(s => activeAttachedIds.includes(s.id));
+
+            if (linkedSamples.length === 0) {
+              return (
+                <div className="bg-slate-950/60 p-4 rounded-xl border border-dashed border-slate-800 text-center text-slate-500 text-xs">
+                  No photographic site evidence linked to this {activeFormTab} record. Click &quot;Attach Field Photo&quot; above to link verified field captures.
                 </div>
-                <div className="p-2 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-300 font-medium truncate">{item.title}</span>
-                  <button
-                    onClick={() => removeSampleFromJobForm(currentJob.id, activeFormTab, item.id)}
-                    className="text-slate-500 hover:text-red-400 ml-1"
-                    title="Remove attachment"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {linkedSamples.map(item => (
+                  <div key={item.id} className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden group">
+                    <div className="h-24 bg-slate-800 relative">
+                      <img src={item.thumbnailUrl} alt={item.title} className="w-full h-full object-cover" />
+                      <span className="absolute top-1 left-1 text-[9px] bg-emerald-950/90 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">
+                        Linked ({item.category})
+                      </span>
+                    </div>
+                    <div className="p-2 flex items-center justify-between text-[11px]">
+                      <span className="text-slate-300 font-medium truncate">{item.title}</span>
+                      <button
+                        onClick={() => removeSampleFromJobForm(currentJob.id, activeFormTab, item.id)}
+                        className="text-slate-500 hover:text-red-400 ml-1 cursor-pointer"
+                        title="Remove attachment"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            );
+          })()}
         </div>
       </div>
 
-      {/* ======================= BRANDED PRINT / PDF MODAL (G00-003 & G00-004) ======================= */}
+      {/* ======================= BRANDED PRINT / PDF MODAL (G00-003, G00-004 & P0 FIX) ======================= */}
       {showPrintModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white text-slate-900 rounded-2xl max-w-2xl w-full p-6 shadow-2xl max-h-[90vh] overflow-y-auto space-y-5">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+          <div className="bg-white text-slate-900 rounded-2xl max-w-3xl w-full p-6 shadow-2xl max-h-[92vh] overflow-y-auto space-y-5">
+            {/* Modal Top Bar */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <div>
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                   Compliance Document Print Preview
                 </span>
-                <h2 className="text-base font-bold text-slate-900">
+                <h2 className="text-lg font-bold text-slate-900">
                   {activeStatus.title}
                 </h2>
                 <div className="text-xs text-slate-600 font-mono">
-                  Job Reference: {currentJob.id} • Scheduled: {currentJob.scheduledDate}
+                  Job Reference: {currentJob.id} • Scheduled Date: {currentJob.scheduledDate}
                 </div>
               </div>
               <button
@@ -1180,38 +1223,62 @@ export const ComplianceFormsView: React.FC = () => {
               </button>
             </div>
 
-            {/* Legal Issuer Header Snapshot (G00-003) */}
-            <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-              <div>
-                <span className="font-bold block text-slate-500 uppercase text-[10px]">Legal Issuer Name:</span>
-                <span className="font-bold text-slate-900">{jobBrand.legalIssuerName}</span>
-                <span className="block text-slate-600 font-mono">Trading as: {jobBrand.name}</span>
-              </div>
-              <div>
-                <span className="font-bold block text-slate-500 uppercase text-[10px]">Licence & Registration:</span>
-                <span className="font-mono text-slate-800">ABN: {jobBrand.abnPlaceholder}</span>
-                <span className="block font-mono text-slate-800">Elec Lic: {jobBrand.electricalLicencePlaceholder}</span>
-              </div>
-              <div>
-                <span className="font-bold block text-slate-500 uppercase text-[10px]">Site Address:</span>
-                <span className="text-slate-800">{currentJob.siteAddress}</span>
-              </div>
-              <div>
-                <span className="font-bold block text-slate-500 uppercase text-[10px]">Client / Contact:</span>
-                <span className="text-slate-800">{currentJob.siteContact} ({currentJob.sitePhone})</span>
-              </div>
-            </div>
+            {/* Legal Issuer Header Snapshot: Uses saved issuer snapshot when signed, or live brand when unsigned */}
+            {(() => {
+              const savedIssuer = (() => {
+                switch (activeFormTab) {
+                  case 'JSA': return currentJsa.signedOff ? currentJsa.frozenIssuerSnapshot : null;
+                  case 'ELECTRICAL': return currentElec.signedOff ? currentElec.frozenIssuerSnapshot : null;
+                  case 'SMOKE_ALARM': return currentSmoke.signedOff ? currentSmoke.frozenIssuerSnapshot : null;
+                  case 'TCA1': return currentTca1.signedOff ? currentTca1.frozenIssuerSnapshot : null;
+                  case 'TCA2': return currentTca2.signedOff ? currentTca2.frozenIssuerSnapshot : null;
+                }
+              })();
 
-            {/* Electrical Part B Notice in Print Preview */}
-            {activeFormTab === 'ELECTRICAL' && (
-              <div className="bg-amber-50 border border-amber-300 p-3 rounded-lg text-amber-900 text-xs font-semibold">
-                {currentElec.unresolvedNotice}
-              </div>
-            )}
+              return (
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                    <span className="font-bold text-slate-700 uppercase tracking-wider text-[10px]">
+                      Legal Issuer Entity:
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      savedIssuer ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {savedIssuer ? 'Frozen Issuer Snapshot' : 'Live Brand Settings (Unsigned)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-slate-800">
+                    <div>
+                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Issuer Name / Trading Entity:</span>
+                      <strong className="text-slate-900 text-sm">
+                        {savedIssuer ? savedIssuer.split(' • ')[0] : jobBrand.legalIssuerName}
+                      </strong>
+                      <span className="block text-slate-600 font-mono text-[11px]">Brand: {jobBrand.name}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Licences & ABN:</span>
+                      <span className="font-mono block text-[11px]">
+                        {savedIssuer && savedIssuer.includes('•') ? savedIssuer.split(' • ')[1] : `ABN: ${jobBrand.abnPlaceholder}`}
+                      </span>
+                      <span className="font-mono block text-[11px]">Elec Lic: {jobBrand.electricalLicencePlaceholder}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Site Address:</span>
+                      <span>{currentJob.siteAddress}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Customer / Contact:</span>
+                      <span>{currentJob.siteContact} ({currentJob.sitePhone})</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* TRUTHFUL SIGN-OFF STATUS WATERMARK / BOX (G00-004) */}
             <div
-              className={`p-4 rounded-xl border space-y-2 text-xs ${
+              className={`p-3.5 rounded-xl border space-y-1.5 text-xs ${
                 activeStatus.signedOff
                   ? 'bg-emerald-50 border-emerald-300 text-emerald-950'
                   : 'bg-red-50 border-red-300 text-red-950'
@@ -1222,7 +1289,7 @@ export const ComplianceFormsView: React.FC = () => {
                   Document Execution Status:
                 </span>
                 <span
-                  className={`px-2.5 py-1 rounded font-bold text-xs ${
+                  className={`px-2.5 py-0.5 rounded font-bold text-xs ${
                     activeStatus.signedOff
                       ? 'bg-emerald-700 text-white'
                       : 'bg-red-700 text-white font-mono tracking-wider'
@@ -1233,22 +1300,276 @@ export const ComplianceFormsView: React.FC = () => {
               </div>
 
               {activeStatus.signedOff ? (
-                <div className="space-y-1 text-slate-700 pt-1">
+                <div className="space-y-0.5 text-slate-700 text-[11px]">
                   <div>
-                    Licensed Practitioner / Technician: <strong>{activeStatus.signerName}</strong>
+                    Licensed Practitioner / Field Technician: <strong>{activeStatus.signerName}</strong>
                   </div>
                   <div>
                     Timestamp of Sign-Off: <span className="font-mono">{activeStatus.timestamp}</span>
                   </div>
                   <div className="text-[10px] text-slate-500 italic">
-                    Demonstration sign-off applied for UI/UX evaluation.
+                    Demonstration sign-off applied for UI/UX evaluation. Immutable snapshot preserved.
                   </div>
                 </div>
               ) : (
-                <div className="text-red-900 text-xs font-medium pt-1">
-                  ⚠ This record has not been signed off by the technician. It cannot be issued to customers or external authorities until field verification is completed.
+                <div className="text-red-900 text-xs font-medium">
+                  Warning: This record has not been signed off by the technician. It cannot be issued to customers or authorities until field verification is completed.
                 </div>
               )}
+            </div>
+
+            {/* Electrical Part B Notice in Print Preview */}
+            {activeFormTab === 'ELECTRICAL' && (
+              <div className="bg-amber-50 border border-amber-300 p-2.5 rounded-lg text-amber-900 text-xs font-semibold">
+                {currentElec.unresolvedNotice}
+              </div>
+            )}
+
+            {/* ================= COMPLETED FORM CONTENT REPRODUCTION ================= */}
+            <div className="space-y-4 text-xs text-slate-800">
+              {/* JSA Body */}
+              {activeFormTab === 'JSA' && (
+                <div className="space-y-3">
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2">
+                    <div>
+                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Lead Personnel</span>
+                      <span className="font-bold">{currentJsa.personnelName} ({currentJsa.personnelRole})</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Licence & Expiry</span>
+                      <span className="font-mono">{currentJsa.licencePlaceholder} (Exp: {currentJsa.licenceExpiryPlaceholder})</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Site Induction</span>
+                      <span className={currentJsa.inductionCompleted ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
+                        {currentJsa.inductionCompleted ? '✓ Completed Onsite' : '✗ Not Completed'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Competencies Verified</span>
+                      <span className={currentJsa.competencyVerified ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
+                        {currentJsa.competencyVerified ? '✓ Verified by Lead' : '✗ Not Verified'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">
+                      Identified Hazards & Control Measures Matrix (Revision {currentJsa.formRevision})
+                    </h4>
+                    <table className="w-full border border-slate-300 text-left text-[11px]">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
+                        <tr>
+                          <th className="p-1.5">Task Step</th>
+                          <th className="p-1.5">Hazards</th>
+                          <th className="p-1.5 text-center">Initial Risk</th>
+                          <th className="p-1.5">Controls Applied</th>
+                          <th className="p-1.5 text-center">Residual</th>
+                          <th className="p-1.5">Responsible</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {currentJsa.steps.map(s => (
+                          <tr key={s.id}>
+                            <td className="p-1.5 font-semibold text-slate-900">{s.taskStep}</td>
+                            <td className="p-1.5 text-red-800">{s.hazards}</td>
+                            <td className="p-1.5 text-center font-bold">{s.initialRisk}</td>
+                            <td className="p-1.5 text-slate-800">{s.controls}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-700">{s.residualRisk}</td>
+                            <td className="p-1.5 text-slate-600">{s.responsibleRole}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-[11px]">
+                    <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
+                      <span className="font-bold text-slate-700 block mb-1">PPE Equipment Checklist</span>
+                      {currentJsa.ppeChecklist.map((p, i) => (
+                        <div key={i} className="flex justify-between py-0.5 border-b border-slate-200 last:border-0">
+                          <span className="text-slate-700">{p.item}</span>
+                          <span className="font-bold text-slate-900">{p.status}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1">
+                      <span className="font-bold text-slate-700 block mb-1">Emergency Protocols</span>
+                      <div>Assembly Area: <strong>{currentJsa.emergencyAssemblyArea}</strong></div>
+                      <div>Emergency Warden: <strong>{currentJsa.emergencyWardenPlaceholder}</strong></div>
+                      <div>First Aid Officer: <strong>{currentJsa.firstAidOfficerPlaceholder}</strong></div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Electrical Body */}
+              {activeFormTab === 'ELECTRICAL' && (
+                <div className="space-y-3">
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
+                    <div>Date of Test: <strong>{currentElec.dateOfTest}</strong></div>
+                    <div>Certificate Ref: <strong className="font-mono">{currentElec.certReference}</strong></div>
+                    <div>Contractor: <strong>{currentElec.contractorNamePlaceholder}</strong></div>
+                    <div>Licence: <strong className="font-mono">{currentElec.electricianLicencePlaceholder}</strong></div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">Tested Work Items & Verification Results</h4>
+                    <table className="w-full border border-slate-300 text-left text-[11px]">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
+                        <tr>
+                          <th className="p-1.5">Description</th>
+                          <th className="p-1.5">Circuits</th>
+                          <th className="p-1.5">Insulation Res.</th>
+                          <th className="p-1.5 text-center">Polarity</th>
+                          <th className="p-1.5 text-center">Earth Cont.</th>
+                          <th className="p-1.5">RCD Trip</th>
+                          <th className="p-1.5 text-center">Result</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {currentElec.testedWorkItems.map(w => (
+                          <tr key={w.id}>
+                            <td className="p-1.5 font-semibold text-slate-900">{w.description}</td>
+                            <td className="p-1.5">{w.circuitsTested}</td>
+                            <td className="p-1.5 font-mono">{w.insulationResistanceResult}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-700">{w.polarityTest}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-700">{w.earthContinuity}</td>
+                            <td className="p-1.5 font-mono">{w.rcdTripTimeMs}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-800">{w.workResult}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">
+                    <strong>Standards Relied Upon:</strong> {currentElec.standardsReliedOn.join(', ')}
+                  </div>
+                </div>
+              )}
+
+              {/* Smoke Alarm Body */}
+              {activeFormTab === 'SMOKE_ALARM' && (
+                <div className="space-y-3">
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-3 gap-2 text-[11px]">
+                    <div>Property Type: <strong>{currentSmoke.propertyType}</strong></div>
+                    <div>Storeys: <strong>{currentSmoke.storeys}</strong></div>
+                    <div>Bedrooms: <strong>{currentSmoke.bedrooms}</strong></div>
+                    <div>Occupancy: <strong>{currentSmoke.occupancyStatus}</strong></div>
+                    <div>Inspection Date: <strong>{currentSmoke.dateOfInspection}</strong></div>
+                    <div>Issued To: <strong>{currentSmoke.issuedToRole}</strong></div>
+                  </div>
+
+                  <div>
+                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">Smoke Alarm Schedule (AS 3786:2014)</h4>
+                    <table className="w-full border border-slate-300 text-left text-[11px]">
+                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
+                        <tr>
+                          <th className="p-1.5">Room Location</th>
+                          <th className="p-1.5">Make & Model</th>
+                          <th className="p-1.5">Standard</th>
+                          <th className="p-1.5">Power Source</th>
+                          <th className="p-1.5 text-center">Button</th>
+                          <th className="p-1.5 text-center">Interconn.</th>
+                          <th className="p-1.5 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {currentSmoke.alarmSchedule.map(a => (
+                          <tr key={a.id}>
+                            <td className="p-1.5 font-semibold text-slate-900">{a.roomLocation}</td>
+                            <td className="p-1.5">{a.alarmBrandModel}</td>
+                            <td className="p-1.5 font-mono">{a.standardMarkingPlaceholder}</td>
+                            <td className="p-1.5 text-[10px]">{a.powerSource}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-700">{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-700">{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
+                            <td className="p-1.5 text-center font-bold text-emerald-800">{a.passFail}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TCA1 Cabling Body */}
+              {activeFormTab === 'TCA1' && (
+                <div className="space-y-3">
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
+                    <div>Registered Cabler: <strong>{currentTca1.registeredCablerPlaceholder}</strong></div>
+                    <div>Registration No: <strong className="font-mono">{currentTca1.cablerRegistrationNumberPlaceholder}</strong></div>
+                    <div>Employer: <strong>{currentTca1.employerDetailsPlaceholder}</strong></div>
+                    <div>Date of Work: <strong>{currentTca1.dateOfWork}</strong></div>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5 text-[11px]">
+                    <div>Location of Work: <strong>{currentTca1.locationOfWork}</strong></div>
+                    <div>Scope & Work Description: <strong>{currentTca1.workDescription}</strong></div>
+                    <div>Supervision Provided: <strong>{currentTca1.supervisionProvided ? 'Yes' : 'No'}</strong></div>
+                    <p className="italic text-slate-600 pt-1 border-t border-slate-200">
+                      &quot;{currentTca1.certificationPlaceholderText}&quot;
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* TCA2 Defect Body */}
+              {activeFormTab === 'TCA2' && (
+                <div className="space-y-3">
+                  <div className="bg-red-50 p-3 rounded-lg border border-red-200 grid grid-cols-2 gap-2 text-[11px]">
+                    <div>Report Reference: <strong className="font-mono">{currentTca2.reportReference}</strong></div>
+                    <div>Inspection Date: <strong>{currentTca2.inspectionDate}</strong></div>
+                    <div>Risk Category: <strong className="text-red-800">{currentTca2.riskCategory}</strong></div>
+                    <div>Urgency: <strong className="text-red-800">{currentTca2.urgencyLevel}</strong></div>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2 text-[11px]">
+                    <div>Inspected Locations: <strong>{currentTca2.locationsInspected}</strong></div>
+                    <div>Defect Description: <strong className="text-red-900">{currentTca2.nonComplianceDescription}</strong></div>
+                    <div>Relevant Standard: <strong className="font-mono">{currentTca2.requirementReferencePlaceholder}</strong></div>
+                    <div>Rectification Recommendation: <strong>{currentTca2.rectificationRecommendation}</strong></div>
+                    <div>Responsible Party: <strong>{currentTca2.responsibleParty}</strong></div>
+                    <div className="flex justify-between pt-1 border-t border-slate-200">
+                      <span>Customer Acknowledged: <strong>{currentTca2.customerAcknowledged ? `Yes (${currentTca2.customerAckTimestamp})` : 'Pending'}</strong></span>
+                      <span>Office Review: <strong>{currentTca2.officeReviewCompleted ? `Completed (${currentTca2.reviewedByOfficeStaff})` : 'Pending'}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Attached Evidence Preview in PDF */}
+              {(() => {
+                const activeAttachedIds = (() => {
+                  switch (activeFormTab) {
+                    case 'JSA': return currentJsa.attachedSampleIds || [];
+                    case 'ELECTRICAL': return currentElec.attachedSampleIds || [];
+                    case 'SMOKE_ALARM': return currentSmoke.attachedSampleIds || [];
+                    case 'TCA1': return currentTca1.attachedSampleIds || [];
+                    case 'TCA2': return currentTca2.attachedSampleIds || [];
+                  }
+                })();
+                const linkedSamples = sampleAttachments.filter(s => activeAttachedIds.includes(s.id));
+
+                if (linkedSamples.length === 0) return null;
+
+                return (
+                  <div className="pt-2 border-t border-slate-200">
+                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-2">
+                      Linked Photographic Evidence ({linkedSamples.length} verified item{linkedSamples.length > 1 ? 's' : ''})
+                    </h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      {linkedSamples.map(sample => (
+                        <div key={sample.id} className="border border-slate-200 rounded p-1.5 text-center bg-slate-50">
+                          <img src={sample.thumbnailUrl} alt={sample.title} className="h-20 w-full object-cover rounded mb-1" />
+                          <div className="font-bold text-[10px] text-slate-900 truncate">{sample.title}</div>
+                          <div className="text-[9px] text-slate-500 font-mono">{sample.filename}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Modal Actions */}

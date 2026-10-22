@@ -39,6 +39,8 @@ export const CustomersView: React.FC = () => {
     brands,
     activeBrandId,
     myobConnection,
+    showDemoNotification,
+    setActiveTab,
   } = useCabms();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -456,17 +458,36 @@ export const CustomersView: React.FC = () => {
             <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-3 border-t border-slate-800 text-xs">
               <button
                 type="button"
-                onClick={() => setDuplicateWarning({ isOpen: false })}
-                className="w-full sm:w-auto px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold cursor-pointer"
+                onClick={() => {
+                  const existing = duplicateWarning.existingCustomer!;
+                  setDuplicateWarning({ isOpen: false });
+                  setIsAddModalOpen(false);
+                  setSearchQuery(existing.name);
+                  showDemoNotification(`Selected existing customer: ${existing.name} (${existing.myobCustomerId}). Linked for operations.`, 'success');
+                }}
+                className="w-full sm:w-auto px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold cursor-pointer"
               >
                 Use Existing Record
               </button>
               <button
                 type="button"
-                onClick={e => handleFormSubmit(e as any, true)}
-                className="w-full sm:w-auto px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded font-bold cursor-pointer"
+                onClick={() => {
+                  const existing = duplicateWarning.existingCustomer!;
+                  setDuplicateWarning({ isOpen: false });
+                  setIsAddModalOpen(false);
+                  showDemoNotification(`Selected customer ${existing.name}. Switching to Job Creation workflow.`, 'info');
+                  setActiveTab('jobs');
+                }}
+                className="w-full sm:w-auto px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded font-bold cursor-pointer"
               >
-                Confirm Distinct Entry & Save
+                Use & Create Job
+              </button>
+              <button
+                type="button"
+                onClick={e => handleFormSubmit(e as any, true)}
+                className="w-full sm:w-auto px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 rounded font-bold cursor-pointer"
+              >
+                Confirm Distinct Entry
               </button>
             </div>
           </div>

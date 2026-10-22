@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { BrandConfig, BrandId } from '../types/cabms.ts';
 
+let brandSeqCounter = 1;
+
 export const SuperAdminSetupView: React.FC = () => {
   // Hooks called unconditionally at top (G00-008)
   const {
@@ -118,7 +120,8 @@ export const SuperAdminSetupView: React.FC = () => {
     e.preventDefault();
     if (!newBrandName) return;
 
-    const generatedId = newBrandId.trim().toLowerCase().replace(/\s+/g, '_') || `brand_${Date.now().toString().slice(-4)}`;
+    const fallbackBrandId = `brand_tenant_${++brandSeqCounter}`;
+    const generatedId = newBrandId.trim().toLowerCase().replace(/\s+/g, '_') || fallbackBrandId;
 
     const newProfile: BrandConfig = {
       id: generatedId as any,

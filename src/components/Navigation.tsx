@@ -19,6 +19,7 @@ import {
   ShieldAlert,
   Menu,
   X,
+  LogOut,
 } from 'lucide-react';
 
 export const Navigation: React.FC = () => {
@@ -30,6 +31,7 @@ export const Navigation: React.FC = () => {
     websiteEnquiries,
     demoNotification,
     clearDemoNotification,
+    simulateSignOut,
   } = useCabms();
 
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
@@ -85,7 +87,7 @@ export const Navigation: React.FC = () => {
           </div>
         </div>
 
-        {/* Persona Badge & Mobile Menu Toggle */}
+        {/* Persona Badge, Sign Out & Mobile Menu Toggle */}
         <div className="flex items-center space-x-3">
           <div className="text-right hidden sm:block">
             <span className="text-[11px] text-slate-400 block">Current Persona</span>
@@ -96,6 +98,15 @@ export const Navigation: React.FC = () => {
               {persona === 'technician' && 'Technician (Dave Miller)'}
             </span>
           </div>
+
+          <button
+            onClick={simulateSignOut}
+            className="flex items-center space-x-1 px-2.5 py-1 bg-slate-800/80 hover:bg-red-950/60 hover:text-red-300 hover:border-red-800 border border-slate-700 text-slate-300 text-xs rounded transition cursor-pointer"
+            title="Simulate signing out of the current demo session"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Sign Out</span>
+          </button>
 
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}

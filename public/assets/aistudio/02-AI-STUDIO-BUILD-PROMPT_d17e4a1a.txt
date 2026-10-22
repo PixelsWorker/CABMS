@@ -1,0 +1,171 @@
+Build CABMS G00 as ONE coherent, responsive WEB application UI/UX demonstration.
+
+This instruction is for the separately authorised AI Studio authoring session. It grants NO GitHub, local-repository, cloud provisioning, sharing, deployment or live-integration permission. Work only inside this single AI Studio demo project. Do not create or connect a GitHub repository.
+
+PURPOSE AND TECHNOLOGY
+
+CABMS coordinates jobs, automation and compliance across three configurable business profiles: Solarcell, Gold Coast Smart Home Solutions, and Gold Coast CCTV. It reuses MYOB for customer and financial records, Google Calendar for appointments, Google Maps for navigation, email for messages, and existing websites for public entry points. All integration behaviour below is SIMULATED unless explicitly described as a user-clicked public Maps link.
+
+Use React + TypeScript with Vite. Build a practical business application, not a landing page, native mobile app, disconnected mockups or a generic SaaS template. Use one consistent layout, readable typography, restrained colour, clear primary actions, labelled forms, keyboard/focus support, accessible contrast and comfortable phone controls. Allow brand accent/logo configuration without changing page structure. Use typographic placeholder logos, system fonts and self-contained synthetic assets.
+
+Use the authorised minimal preview scaffold. Do not add optional UI kits, state frameworks, databases, SDKs or services without reporting the proposed dependency for approval. Report the actual generated package names/versions and scripts; do not assume older version recommendations are accepted. Required application source, package manifest and TypeScript/Vite configuration belong in the demo output. Keep any genuinely generated lockfile; do not invent one. Do not generate local workspace AGENTS.md, project SETUP.md/TODO.md, deployment workflows or a licence.
+
+Maintain this exact visible banner on every screen, customer link and document preview:
+DEMO — NO LIVE INTEGRATIONS
+
+STRICT ISOLATION
+
+No Gemini API or other AI runtime, chatbot, MYOB OAuth, live MYOB financial/customer writes, Google Workspace connection, Calendar API, email/SMTP sending, Firebase, production database/authentication, server business APIs, telemetry, cloud deployment or paid service. No API keys, secrets, .env requirement, real customer data, client documents, personal contacts, account/licence/ABN identifiers or real signatures. Do not request camera, microphone or geolocation permissions. An environment-provided preview server is not a CABMS backend.
+
+Do not add inventory, payroll, subscriptions, route optimisation, public tenant signup, customer account dashboards, unrestricted document converters or general workflow builders. Do not publish/share the app or enable GitHub sync. Stop and report any platform limitation that would require an excluded service; do not silently replace the frontend direction.
+
+No application-owned external fetch/XHR/WebSocket/beacon calls. Distinguish platform preview assets/tooling from CABMS business requests. The only planned external navigation is an explicitly clicked Google Maps demonstration link. No external fonts/images/CDNs or real business links are necessary.
+
+STATE, OWNERSHIP AND DEMO CONTROLS
+
+Use typed synthetic fixtures with one small mock-service boundary and a shared in-memory state model, so actions update the same records across screens. Mocks are not an accepted future HTTP/API contract. Use deterministic IDs, fixed response delays and explicit success/failure/uncertain scenarios, not random errors or wall-clock randomness.
+
+Provide a clearly marked Demo Controls panel: persona selector, named scenario selector, fixed demo clock/advance action and Reset demo. Use a visibly labelled fictional business clock initially set to 2 November 2026, 09:00, UTC+10. Reset restores all seed records, pending tasks, versions, activity, persona, brand and clock. No state needs to survive a browser refresh; disclose that refresh resets the demo.
+
+Use Demo Customer 01-04, addresses labelled fictional, email addresses ending @example.invalid, and non-operational contact placeholders. Use identifiers such as CUSTOMER-DEMO-001 and MYOB-DEMO-001. Never invent plausible actual account numbers or legal identifiers.
+
+Seed connected examples across all three brands:
+- A documentation-required visit with JSA and smoke-alarm demo forms, initially missing a required sign-off; it supports the complete quotation-to-review walkthrough.
+- A direct-to-invoice service with no required quote or forms. Show that exception explicitly.
+- An electrical-document example with the missing-Part-B/issuer warning visible.
+- A cabling inspection with TCA1/TCA2 examples and a NEEDS_REVISIT scenario.
+- An unassigned job for the Technician's denied-access demonstration.
+Use a shared synthetic customer in two brands to show one MYOB customer identity, not separate brand customer masters. These applicability choices are DEMO SCENARIOS, not approved trade/legal rules.
+
+Keep operational job status separate from quotation, invoice/payment and integration status. Proposed mock job states are NEW, SCHEDULED, IN_PROGRESS, NEEDS_REVISIT, COMPLETED and CANCELLED. Never persist COMPLETION_CHECK, INVOICED as an operational state, or a generic blocked-job state.
+
+A job carries its brand. Switching the active workspace must not silently change a job's brand or relabel an existing quote/document. Historical accepted/signed records store their content and version snapshot, not a pointer to whatever wording is current later.
+
+A. SHARED SHELL AND DEMO ACCESS
+
+Include simulated sign-in, desktop navigation, mobile navigation, active-brand indicator, dashboard, customer/job lists, schedule, document access, communications/activity and role-appropriate settings. Keep primary navigation compact; related detail tabs may share screens.
+
+Provide Super Admin, Owner/Admin, Office Staff and Technician personas. Label this as simulated UX, not real authorisation. Proposed DEMO permission matrix:
+- Super Admin: business profiles and technical integration settings.
+- Owner/Admin: operational oversight, supported content/templates, reminder configuration and synthetic required-form rules; not technical credentials.
+- Office Staff: customer entry/search, jobs, scheduling, quote preparation and communication actions; no technical settings or template publishing.
+- Technician: only assigned jobs/sites, mobile forms, sample attachments and completion attempts; no whole customer directory, financial writes or settings.
+These are proposed demo roles, not a verified production policy. Include direct-route denied views and clear state when switching personas; hiding a menu alone is insufficient even for the demo.
+
+B. SUPER ADMIN BUSINESS AND INTEGRATION SETUP
+
+Create/edit the three named profiles, preview placeholder logo changes and colours, and show legal-issuer/contact placeholders. An Add Business example demonstrates another configurable profile ONLY, not independent-company accounting or public SaaS onboarding.
+
+Show ONE shared Connect MYOB simulation for ONE reported company file. Put separate per-brand quotation/invoice template mappings under that shared connection. Do not claim the real MYOB API supports selecting these templates; label that support unverified.
+
+Show mock connected/disconnected/failed states, email sender/SMTP status with no usable credentials, a primary Calendar mapping plus up to THREE optional mappings, and brand-specific Google review-link placeholders. Owner/Admin must not receive technical credential controls. No real connection flow or authentication screen should contact a provider.
+
+C. OWNER/ADMIN CONTENT AND TEMPLATE SETTINGS
+
+Permit bounded edits to supported form labels/help/dropdown values, standard wording, Terms, email templates and reminder settings. Include a simple required-forms-by-demo-job-type matrix with a version label and a no-required-forms example. Do not build an unrestricted form/workflow designer.
+
+Demonstrate draft -> review -> published versions. New records/drafts may select the new version; old accepted quotations and signed documents remain unchanged. Keep completed-job applicability snapshots unchanged rather than retrospectively rewriting completion history.
+
+Simulate DOCX/PDF template selection from a built-in synthetic sample library. Show a document preview and Pending mapping/review status. Do not open/upload real files, parse arbitrary documents into forms, or imply that upload establishes legal correctness. Provide an unsupported/missing-document state. Use generic sample Terms and label them non-legal demonstration text, not original client contract clauses.
+
+D. MYOB-CONNECTED CUSTOMERS AND OPERATIONAL JOBS
+
+Provide customer search, shared customer history and a CABMS customer-entry interface labelled MYOB write-through simulation. Show duplicate warnings and pending, successful, failed and uncertain outcomes. Keep an unsynced entry as a recoverable draft, not a saved authoritative customer master; assign a fake MYOB reference only after the simulated acknowledgement. An uncertain result offers reconciliation before retrying to avoid duplicates.
+
+Provide job creation, site details distinct from customer details, technician assignments, job/document/activity history, search and filters. Support both documentation-required and direct-to-invoice jobs. Show a separate MYOB invoice/payment panel with mock preparation/status/reconciliation actions; do not implement accounting, stock or payment processing.
+
+E. SCHEDULING AND MAPS
+
+Provide a practical appointment/day/week or agenda view, technician assignment, rescheduling and cancellation. Show event-sync status for a primary calendar plus zero to three optional calendars.
+
+Show confirmation and reminder previews. On reschedule/cancel, invalidate the old scheduled reminder and show why it was suppressed. Failure of a provider simulation must not discard the local appointment/job. The virtual clock and explicit actions drive the simulation; there is no real background worker or real email.
+
+Include Open in Google Maps as a deliberate external navigation action to a safe public demo destination, clearly separate from the fictional job address. Use Sydney Opera House as the PUBLIC EXAMPLE destination, labelled "Public demo destination - not this fictional customer's address". Use a directions URL, no Maps SDK, no API key, no embedded tracking and no geolocation request. Other integration buttons remain internal simulations.
+
+F. MOBILE TECHNICIAN FORMS AND DOCUMENTS
+
+Support assigned-job detail and site information on phones. Use the following SANITISED FIELD GROUPS derived from supplied, unapproved text extracts. Do not copy original identity values, signatures, logos, legal paragraphs or assert final template approval. Do not invent missing official sections.
+
+JSA / risk assessment:
+1. Job/site details: job reference, date, customer, site contact placeholder, site address, task description and assets.
+2. Personnel/competency: fictional name/role, licence placeholder, expiry placeholder and induction/competency Yes/No.
+3. Risk-rating reference and L/M/H/E selections; this is a demo structure, not an approved safety assessment.
+4. Repeatable task steps, hazards, initial risk, controls, residual risk and responsible role.
+5. PPE/equipment table: checked/available Yes/No/N/A and notes.
+6. Isolations/permits/high-risk items: Required Yes/No/N/A and reference/notes.
+7. Emergency-preparedness fields using non-operational placeholders, not real contacts.
+8. Demo sign-off rows: fictional name, role, synthetic sign-off mark and timestamp.
+9. Document control: form reference/revision, issuer placeholder, issue/review dates and brand.
+
+Electrical certificate:
+- Certificate/job references and date of test.
+- Customer, installation address, site contact and owner/occupier role.
+- Contractor/electrician fields with placeholder identity/licence/issuer wording.
+- Repeatable description of work performed/tested with Pass/Fail.
+- Standards/documents-relied-on field structure and Part A certification placeholder.
+- Non-compliance/limitations and consumer-rights placeholder panels.
+- Technician/authorised-representative DEMO sign-off.
+- Explicit persistent notice: "Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred." Do not manufacture those fields or hide the notice after demo sign-off.
+
+Smoke-alarm certificate:
+- Certificate/job/date, issued-by placeholders and issued-to owner/manager/tenant roles.
+- Property type, storeys, bedrooms and occupancy.
+- Scope-of-work checkboxes, attendance/testing dates and work-order reference.
+- Certification placeholder, not a copied legal certification.
+- Repeatable alarm schedule: room, brand/model, standard/marking placeholder, expiry/replace field, power source and Pass/Fail selection.
+- Test rows: button test, interconnection and manufacturer-instruction test, date/result and corrective-action notes.
+- Related electrical-work/certificate reference and attachment status.
+- Limitations, consumer-rights and rental-note placeholder panels; demo sign-offs.
+- Mark per-alarm Pass/Fail, earlier room/model-count notes and expiry wording as PROVISIONAL where source variants differ. Do not silently impose a 15-room/10-model cap or calculate a legally approved replacement date from conflicting notes.
+
+TCA1 cabling:
+- Registered cabler/provider and employer details as placeholders.
+- Description and location of installed/altered/repaired/relocated/tested work and supervision.
+- Customer/contact fields, certification placeholder and DEMO signature/date.
+- Show registration/expiry/issuer approval unresolved; do not select a disputed expiry value.
+
+TCA2 cabling non-compliance:
+- Business/cabler placeholders, customer/site/job and inspection date.
+- Existing/new/both cabling, cabling-type choices, locations and description.
+- Non-compliance description, requirement reference placeholder, risk-category selections and sample-photo indication.
+- Rectification recommendation, responsible-party choice, urgency, quotation reference and target date.
+- Demo customer acknowledgement, date/time/version and office-review checklist.
+- Do not claim that completing TCA2 makes cabling compliant or substitutes for unresolved legal wording.
+
+Use safe synthetic sample photo/file previews from an in-app sample library, not a real upload/camera service. Include loading, failed and missing-attachment states. Use an explicit Apply DEMO sign-off control; do not collect actual signatures. Finalised demo records retain their version snapshots.
+
+Provide branded print-ready document/PDF previews and a browser Print/Save demo PDF action where the environment permits it. Label the rendering accurately as a demo preview. Never give HTML a .pdf extension or claim a PDF download exists without a genuine file. All preview/sample output retains the demo banner and unresolved issuer/template notices.
+
+G. COMPLETION ACTION
+
+Show Complete job returning a structured missing-requirements panel with links to required forms/sign-offs. A failed attempt leaves the existing operational state unchanged. When the synthetic scenario's applicable requirements are finalised, show simulated completion success. Demonstrate a no-required-forms job as well.
+
+Use a dedicated documentation-success scenario such as JSA + smoke-alarm demo fields; do not require invented Electrical Part B to fake success. Electrical previews retain their unresolved-source warning. Demo completion validates only the selected synthetic requirements, not real legal compliance or backend enforcement. A non-compliance/revisit scenario must not silently turn into an all-passed certificate.
+
+H. QUOTATIONS AND CUSTOMER ACCEPTANCE
+
+Show MYOB-linked quote preparation/management using selected customer/job data, fake external quotation references, branded previews and attached Terms versions. The quote source is MYOB simulation; do not create an independent accounting/pricing engine or imply tested template/PDF API support.
+
+Provide basic customer-specific acceptance-link UX with exact quote/Terms snapshots, checkbox acceptance, confirmation and mock timestamp/history. No customer account/dashboard. Link scenarios: valid, invalid, expired, revoked, superseded and already accepted. Repeating acceptance must not duplicate its history event. These are named DEMO link states, not cryptographic security or legally effective signing.
+
+For detailed/higher-value contracts show ONLY "Detailed contract / electronic signature - deferred to the working test system" and manual owner referral. Retain this requirement as undelivered; referral is not implementation. Do not build a signing-provider workflow. Do not route by the proposed $3,300 figure or any amount threshold. Demo scenarios are selected explicitly; applicability and final wording remain unapproved.
+
+I. COMMUNICATIONS, AUTOMATION AND REVIEW REQUESTS
+
+Provide appointment confirmation/reminder, selected-certificate delivery and brand-specific review-request previews, with a linked activity history. All events are mock-only. Show pending/sent/failed/uncertain status and useful recovery actions.
+
+Demonstrate manual review selection and automatic completion/invoice-related trigger scenarios using Demo Controls, without claiming a trigger policy is approved. Prevent duplicate logical review requests for the same job. Repeated clicks/triggers or uncertain outcomes cannot silently send again. Reconciliation is required before retrying an uncertain remote outcome, especially a simulated financial write. Keep invoice/payment state separate from operational job status and preserve local data on failure. Review URLs are synthetic and preview-only; do not open a real review page.
+
+J. EXISTING-WEBSITE HANDOFF
+
+Provide an internal "Simulate existing-site submission" action creating a labelled synthetic pending enquiry. Show office review, duplicate/customer matching and an explicit decision to continue into the job workflow. Do not silently create an authoritative customer/job on receipt. No new public website, live form connector, webhook or unapproved website implementation.
+
+QUALITY, EVIDENCE AND FINISH
+
+Cover every A-J area within this same app. Include loading, empty, field-validation, access-denied, expired-link, missing-document and integration-failure states. Inputs and primary controls must work; required journeys cannot be placeholder-only. Only deliberately deferred/out-of-scope actions should have clear explanatory placeholders.
+
+Preserve all ten requested capabilities: customers/jobs; quotations/contracts/acceptance; forms/compliance/PDFs; three-brand branding; owner content management; appointment notifications; review requests; completion requirements; Google/MYOB integration experiences; and maintainable extension boundaries. Extension means small typed modules/configuration, not building future features.
+
+Run only checks available with the authorised preview tooling. Provide actual build/type/lint/demo-test results, including failures and NOT RUN checks; do not invent test receipts or screenshots. Do not silently install a new test framework. Exercise role denial, customer duplication, version preservation, completion failure, reminder suppression, review deduplication, reset and both main job journeys.
+
+Finish with a short report: A-J coverage, actual files/packages/scripts, run checks and their evidence, mock versus real actions, unresolved placeholders and defects. Keep the project private and ready for manual ZIP export review. Do not deploy, connect GitHub, commit, push or declare G00 accepted. Rockson reviews the whole demo and feedback before explicit acceptance.

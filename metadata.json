@@ -1,0 +1,6 @@
+{
+  "name": "CABMS — Complete G00 Full-Application UI/UX Demo",
+  "description": "Three-brand business automation, job coordination, and compliance system demo for Solarcell, Gold Coast Smart Home Solutions, and Gold Coast CCTV.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

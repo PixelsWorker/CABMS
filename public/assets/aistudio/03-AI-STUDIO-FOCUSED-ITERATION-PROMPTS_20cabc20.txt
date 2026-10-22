@@ -1,0 +1,44 @@
+CABMS G00 - Focused iteration prompts
+Status: PREPARED FOR REVIEW. Use only after separate AI Studio authoring approval.
+
+Apply one prompt only when the observed demo/export needs it. Work in the SAME AI Studio app. Do not restart or create a second app/repository. Prompts 1-7 are in-scope corrections, not new delivery groups. Prompt 8 captures feedback before any new scope is authorised.
+
+GLOBAL BOUNDARY FOR EVERY ITERATION
+
+Keep React + TypeScript + Vite, all A-J coverage and the persistent DEMO — NO LIVE INTEGRATIONS label. No Gemini runtime, business APIs, credentials, production auth/database, Firebase, email sending, live Calendar/MYOB, GitHub sync, public sharing or deployment. Keep the same shared deterministic fixtures and reset behaviour. Do not add packages without approval. Preserve accepted/signed version snapshots and explicit deferred signing. Report changed files, actual checks, unresolved defects and anything NOT RUN. No passing claim without evidence.
+
+PROMPT 1 - FULL-APP COVERAGE AND CONNECTED JOURNEYS
+
+Review the current CABMS demo against the original A-J specification and ten capability areas. Produce an A-J matrix of routes, working actions, failure states and gaps. Correct missing IN-SCOPE routes/actions in the same app without redesigning completed sections. Ensure the same synthetic customer/job persists across quotation, appointment, technician forms, completion, document delivery and review activity. Also exercise the direct-to-invoice/no-required-forms route and pending existing-site submission. Do not replace missing interactions with decorative cards. Keep only detailed signing and explicitly excluded capabilities as labelled deferred features. Report the corrected paths and any remaining gap; no new scope or dependencies.
+
+PROMPT 2 - MOBILE, ACCESSIBILITY AND PERSONA BOUNDARIES
+
+Audit the existing app at representative phone, tablet and desktop widths. Correct clipped content, unusable tables, obscured controls, inconsistent spacing, missing labels/focus states and keyboard navigation. Preserve current information architecture and restrained brand design. Verify all four demo personas and direct-route denial: Technician sees assigned work only; Office Staff cannot publish templates; Owner/Admin cannot change technical credentials. Switch brand/persona while a detail screen is open and clear stale privileged views without losing legitimate shared records. Report which screens and interactions were actually checked. These remain UX checks, not production server authorisation.
+
+PROMPT 3 - SOURCE-FAITHFUL MOBILE FORMS AND VERSIONING
+
+Inspect JSA, electrical, smoke-alarm, TCA1 and TCA2 against the SANITISED FIELD GROUPS in the original Build prompt. Restore missing sections and useful phone controls without inserting original legal clauses or real identity values. Keep missing Electrical Part B, issuer conflicts, cabler-expiry conflicts and smoke-alarm variant controls explicitly unresolved/provisional. Do not auto-approve a template upload or impose disputed limits. Verify draft/review/publish flow, synthetic file previews, DEMO sign-off and branded print previews. Publish a new form/Terms version and demonstrate that a previously signed/accepted record still renders its original snapshot. Keep any HTML preview honestly labelled; report actual PDF/print behaviour separately.
+
+PROMPT 4 - MYOB OWNERSHIP, COMPLETION AND SAFE RECOVERY
+
+Correct only the customer/job/financial simulation. Shared customer entry must remain a draft until a fake MYOB acknowledgement supplies the reference; duplicate, failed and uncertain outcomes must not create a competing customer master. Keep job operational status separate from quote/invoice/payment/sync state. Failed completion returns missing applicable requirements and leaves the previous state unchanged. Demonstrate simulated success and the no-required-forms path. Remove any persisted COMPLETION_CHECK or generic blocked-job state. An uncertain simulated remote write requires reconciliation before retry, not a blind second submission. Preserve unresolved compliance banners and non-compliance/revisit cases. Report the scenarios actually exercised.
+
+PROMPT 5 - SCHEDULE, REMINDERS, COMMUNICATIONS AND REVIEW DEDUPLICATION
+
+Correct appointment and automation behaviour using the fixed demo clock. Show primary plus up to three optional calendar mappings, reschedule/cancel, sync failures and local-data preservation. Old reminder versions must be visibly suppressed after reschedule/cancel. Exercise confirmations, certificate delivery and correct-brand review previews. Repeated manual clicks and automatic mock triggers must resolve to the same logical per-job review request. An uncertain outcome must remain uncertain until an explicit reconciliation scenario, not become a new send automatically. Keep pending/sent/failed/uncertain activity linked to the actual job. Do not send anything or connect a real account. Report proof for stale-reminder suppression and duplicate prevention.
+
+PROMPT 6 - QUOTATION AND ACCEPTANCE BOUNDARY
+
+Check quote preparation through the MYOB mock, customer/job prefill, external-reference display, brand and frozen Terms/quote versions. Exercise valid, invalid, expired, revoked, superseded and already-accepted customer links without a customer account dashboard. Duplicate acceptance must not append another success event. Changing current Terms must not rewrite the accepted snapshot. Ensure detailed e-signing remains an explicitly deferred requirement/manual referral, with no invented signing provider or amount-based routing. Do not treat the proposed $3,300 number as executable policy. Report which route/state combinations were checked and any unresolved UX issue.
+
+PROMPT 7 - EXPORT READINESS AND NO-LIVE-SERVICE AUDIT
+
+Inspect the actual project before manual ZIP export. List all files, packages/versions, package scripts and app-owned external network operations. Remove only unapproved generated scaffolding such as Gemini SDK/runtime calls, Firebase/Workspace connectors, credentials, production business servers, telemetry, public deployment or GitHub workflows, while preserving approved frontend behaviour. Do not remove platform preview infrastructure blindly; distinguish it and report limitations. Keep only a deliberate Maps link to the labelled safe public example. Check synthetic assets, document metadata, examples, comments and logs for real/private data. Do not print secrets if found; identify the affected path safely and stop the affected export. Run authorised available checks, list failures/skips/NOT RUN, and leave one project ready for manual ZIP export. No publication, commit, push or automatic export-to-GitHub.
+
+PROMPT 8 - CLIENT FEEDBACK TRIAGE, WITHOUT AUTOMATIC SCOPE EXPANSION
+
+Using the feedback supplied WITH this message, classify each item as an in-scope defect, clarification, new capability, requested scope removal, or unresolved legal/integration decision. Return a compact table: feedback, affected screen/journey, proposed change, acceptance impact and effort impact. Do not implement new scope, delete an original capability, resolve legal wording or rewrite the whole app. Implement only the specific in-scope corrections explicitly approved in the accompanying message; otherwise produce the table and stop. Keep the same G00 app, deferred-signing obligation and privacy boundaries. Do not ask again for the already supplied workload figures.
+
+RETURN EVIDENCE FOR ANY USED PROMPT
+
+Provide the actual changed-file list, screenshot/interaction evidence where available, exact check/result or NOT RUN, remaining issues and any package/security/scope deviation requiring a decision. An AI Studio success message is not Rockson's G00 acceptance.

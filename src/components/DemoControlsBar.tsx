@@ -1,0 +1,139 @@
+/**
+ * Demo Controls Panel
+ * Persona switcher, Scenario selector, Fixed demo business clock controls, and Reset Demo action
+ */
+
+import React from 'react';
+import { useCabms, DemoScenario } from '../context/CabmsContext.tsx';
+import { Persona, BrandId } from '../types/cabms.ts';
+import {
+  Clock,
+  RotateCcw,
+  UserCheck,
+  Building2,
+  Workflow,
+  FastForward,
+  HelpCircle,
+} from 'lucide-react';
+
+export const DemoControlsBar: React.FC = () => {
+  const {
+    persona,
+    setPersona,
+    activeBrandId,
+    setActiveBrandId,
+    brands,
+    demoClock,
+    advanceClock,
+    resetDemo,
+    activeScenario,
+    setActiveScenario,
+  } = useCabms();
+
+  const formattedDate = new Date(demoClock).toLocaleString('en-AU', {
+    timeZone: 'Australia/Brisbane',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return (
+    <div className="bg-slate-900 text-slate-100 border-b border-slate-800 px-3 py-2 text-xs md:text-sm">
+      <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+        {/* Left Section: Persona & Brand */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Persona Selector */}
+          <div className="flex items-center space-x-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+            <UserCheck className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-slate-400 text-xs hidden sm:inline">Persona:</span>
+            <select
+              value={persona}
+              onChange={e => setPersona(e.target.value as Persona)}
+              className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
+              aria-label="Demo Persona Selector"
+            >
+              <option value="super_admin" className="bg-slate-900 text-white">Super Admin</option>
+              <option value="owner_admin" className="bg-slate-900 text-white">Owner / Admin</option>
+              <option value="office_staff" className="bg-slate-900 text-white">Office Staff</option>
+              <option value="technician" className="bg-slate-900 text-white">Technician (Dave M.)</option>
+            </select>
+          </div>
+
+          {/* Active Brand Switcher */}
+          <div className="flex items-center space-x-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+            <Building2 className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-slate-400 text-xs hidden sm:inline">Workspace:</span>
+            <select
+              value={activeBrandId}
+              onChange={e => setActiveBrandId(e.target.value as BrandId)}
+              className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
+              aria-label="Active Brand Workspace Selector"
+            >
+              {Object.values(brands).map(b => (
+                <option key={b.id} value={b.id} className="bg-slate-900 text-white">
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Named Scenario Selector */}
+          <div className="flex items-center space-x-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+            <Workflow className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-slate-400 text-xs hidden sm:inline">Scenario:</span>
+            <select
+              value={activeScenario}
+              onChange={e => setActiveScenario(e.target.value as DemoScenario)}
+              className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
+              aria-label="Named Scenario Preset Selector"
+            >
+              <option value="default" className="bg-slate-900 text-white">1. Default Seed (Connected Flow)</option>
+              <option value="doc_missing_signoff" className="bg-slate-900 text-white">2. Documentation (JSA Missing Sign-off)</option>
+              <option value="direct_to_invoice" className="bg-slate-900 text-white">3. Direct-to-Invoice (No Forms)</option>
+              <option value="cabling_revisit" className="bg-slate-900 text-white">4. Cabling Revisit (TCA1/TCA2 Defect)</option>
+              <option value="unassigned_denied" className="bg-slate-900 text-white">5. Tech Denied Access (Unassigned)</option>
+              <option value="myob_failed" className="bg-slate-900 text-white">6. MYOB Write-Through Failure</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Right Section: Virtual Clock & Reset */}
+        <div className="flex items-center gap-2">
+          {/* Fictional Business Clock */}
+          <div className="flex items-center space-x-1.5 bg-slate-800/80 px-2 py-1 rounded border border-slate-700/80 text-xs">
+            <Clock className="w-3.5 h-3.5 text-amber-300" />
+            <span className="text-slate-300 font-mono tracking-tight">{formattedDate} UTC+10</span>
+            <div className="flex items-center ml-1 space-x-0.5 border-l border-slate-700 pl-1">
+              <button
+                onClick={() => advanceClock(1)}
+                title="Advance virtual business clock by 1 hour"
+                className="hover:bg-slate-700 px-1.5 py-0.5 rounded text-[10px] text-sky-300 flex items-center transition"
+              >
+                +1h
+              </button>
+              <button
+                onClick={() => advanceClock(24)}
+                title="Advance virtual business clock by 1 day"
+                className="hover:bg-slate-700 px-1.5 py-0.5 rounded text-[10px] text-sky-300 flex items-center transition"
+              >
+                +1d
+              </button>
+            </div>
+          </div>
+
+          {/* Reset Demo */}
+          <button
+            onClick={resetDemo}
+            className="flex items-center space-x-1 bg-red-950/60 hover:bg-red-900/80 text-red-200 border border-red-800/60 px-2.5 py-1 rounded text-xs font-medium transition cursor-pointer"
+            title="Reset all seed records, pending drafts, versions and virtual clock"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Reset Demo</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

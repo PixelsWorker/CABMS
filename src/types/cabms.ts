@@ -20,6 +20,7 @@ export interface BrandConfig {
   tagline: string;
   primaryColor: string;
   accentColor: string;
+  logoGlyph: string;
   legalIssuerName: string;
   abnPlaceholder: string;
   electricalLicencePlaceholder: string;
@@ -31,6 +32,13 @@ export interface BrandConfig {
   calendarMappingName: string;
   quoteTemplateName: string;
   invoiceTemplateName: string;
+}
+
+export interface ActivityLogEntry {
+  timestamp: string;
+  action: string;
+  actor: string;
+  notes?: string;
 }
 
 export interface Customer {
@@ -46,6 +54,16 @@ export interface Customer {
   notes?: string;
   createdAt: string;
   isRecoverableDraft?: boolean;
+  activityHistory?: ActivityLogEntry[];
+}
+
+export interface JobTypeConfig {
+  id: string;
+  name: string;
+  brandId: BrandId;
+  formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+  isDirectToInvoice: boolean;
+  version: string;
 }
 
 export interface Job {
@@ -54,6 +72,7 @@ export interface Job {
   customerId: string;
   title: string;
   jobType: string;
+  jobTypeVersion: string;
   siteAddress: string;
   siteContact: string;
   sitePhone: string;
@@ -70,9 +89,11 @@ export interface Job {
   invoice?: Invoice;
   reviewRequest: ReviewRequest;
   reminders: ScheduledReminder[];
+  attachedSampleIds: string[];
   completedAt?: string;
   completionNotes?: string;
   unresolvedWarnings: string[];
+  activityHistory: ActivityLogEntry[];
 }
 
 export interface Quote {
@@ -94,16 +115,12 @@ export interface Quote {
   }[];
   termsVersion: string;
   termsContentSnapshot: string;
+  frozenIssuerSnapshot: string;
   acceptanceStatus: 'DRAFT' | 'SENT' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED' | 'SUPERSEDED';
   linkScenario: 'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted';
   acceptedAt?: string;
   acceptedByName?: string;
-  acceptanceHistory: {
-    timestamp: string;
-    action: string;
-    actor: string;
-    notes?: string;
-  }[];
+  acceptanceHistory: ActivityLogEntry[];
 }
 
 export interface Invoice {
@@ -123,7 +140,7 @@ export interface ReviewRequest {
   sentTimestamp?: string;
   reviewLink: string;
   brandName: string;
-  channel: 'SMS_AND_EMAIL_SIMULATED';
+  channel: 'EMAIL_SIMULATED';
   uncertainReconciliationNeeded?: boolean;
   history: {
     timestamp: string;
@@ -134,9 +151,11 @@ export interface ReviewRequest {
 
 export interface ScheduledReminder {
   id: string;
+  targetAppointmentTime: string;
   scheduledFor: string;
+  leadHours: number;
   type: 'CONFIRMATION' | 'REMINDER_24HR' | 'REMINDER_2HR';
-  channel: 'SMS_AND_EMAIL_SIMULATED';
+  channel: 'EMAIL_SIMULATED';
   suppressed: boolean;
   suppressionReason?: string;
   delivered: boolean;
@@ -196,6 +215,8 @@ export interface JsaFormData {
   signedTimestamp?: string;
   formRevision: string;
   issuerPlaceholder: string;
+  frozenIssuerSnapshot?: string;
+  attachedSampleIds: string[];
 }
 
 // Sanitised field groups for Electrical Certificate
@@ -227,6 +248,8 @@ export interface ElectricalCertData {
   signedByTechName?: string;
   signedTimestamp?: string;
   unresolvedNotice: string; // "Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred."
+  frozenIssuerSnapshot?: string;
+  attachedSampleIds: string[];
 }
 
 // Sanitised field groups for Smoke Alarm Certificate
@@ -259,6 +282,7 @@ export interface SmokeAlarmCertData {
     buttonTestPass: boolean;
     interconnectionPass: boolean;
     complianceStatusProvisional: 'Pass' | 'Fail' | 'Provisional';
+    correctiveNotes?: string;
   }[];
   relatedElectricalCertRef: string;
   attachmentsLinked: boolean;
@@ -267,6 +291,8 @@ export interface SmokeAlarmCertData {
   signedByTechName?: string;
   signedTimestamp?: string;
   provisionalNote: string;
+  frozenIssuerSnapshot?: string;
+  attachedSampleIds: string[];
 }
 
 // Sanitised field groups for TCA1 Cabling Certificate
@@ -287,6 +313,8 @@ export interface Tca1CertData {
   signedByTechName?: string;
   signedTimestamp?: string;
   unresolvedRegistrationExpiryNotice: string;
+  frozenIssuerSnapshot?: string;
+  attachedSampleIds: string[];
 }
 
 // Sanitised field groups for TCA2 Cabling Non-Compliance
@@ -314,10 +342,13 @@ export interface Tca2CertData {
   officeReviewCompleted: boolean;
   reviewedByOfficeStaff?: string;
   officeReviewTimestamp?: string;
+  rectificationFollowupJobId?: string;
   signedOff: boolean;
   signedByTechName?: string;
   signedTimestamp?: string;
   warningNotice: string;
+  frozenIssuerSnapshot?: string;
+  attachedSampleIds: string[];
 }
 
 export interface WebsiteEnquiry {
@@ -334,17 +365,25 @@ export interface WebsiteEnquiry {
   status: 'PENDING_REVIEW' | 'CONVERTED_TO_JOB' | 'DISMISSED';
   matchedExistingCustomerId?: string;
   convertedJobId?: string;
+  unresolvedCustomerWarning?: string;
+}
+
+export interface TemplateRevision {
+  version: string;
+  status: 'DRAFT' | 'REVIEW' | 'PUBLISHED';
+  content: string;
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface TemplateSetting {
   id: string;
   name: string;
   type: 'TERMS' | 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2' | 'EMAIL_CONFIRMATION' | 'REVIEW_REQUEST';
-  version: string;
-  status: 'DRAFT' | 'REVIEW' | 'PUBLISHED';
-  updatedAt: string;
-  updatedBy: string;
+  currentVersion: string;
+  activeStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED';
   content: string;
   sampleFileName?: string;
   mappingStatus: 'Mapped' | 'Pending Review' | 'Unsupported';
+  revisions: TemplateRevision[];
 }

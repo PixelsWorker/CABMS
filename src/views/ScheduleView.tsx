@@ -1,7 +1,7 @@
 /**
  * Area E: Scheduling and Maps
  * Day/Agenda calendar view, multi-calendar sync, rescheduling/cancellation with
- * reminder suppression, and safe public Google Maps navigation.
+ * reminder suppression, demo clock advance (G00-020), and safe public Google Maps navigation (G00-023).
  */
 
 import React, { useState } from 'react';
@@ -19,6 +19,7 @@ import {
   User,
   Building2,
   CalendarDays,
+  FastForward,
 } from 'lucide-react';
 import { Job } from '../types/cabms.ts';
 
@@ -29,6 +30,7 @@ export const ScheduleView: React.FC = () => {
     brands,
     persona,
     demoClock,
+    advanceClock,
     rescheduleJobAppointment,
     cancelJobAppointment,
     setSelectedJobId,
@@ -64,6 +66,11 @@ export const ScheduleView: React.FC = () => {
     setCancelTarget(null);
   };
 
+  const formatClock = (isoStr: string) => {
+    const d = new Date(isoStr);
+    return `${d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -77,12 +84,45 @@ export const ScheduleView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Primary and fleet calendar synchronization with automated appointment confirmations and reminder suppression.
+              Primary and fleet calendar synchronization with automated email confirmations and reminder suppression.
             </p>
           </div>
 
-          {/* Date Selector Pills */}
-          <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
+          {/* Demo Clock Advance Control (G00-020) */}
+          <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800 text-xs">
+            <div className="flex items-center space-x-1.5 text-slate-400">
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span className="font-mono text-white font-bold">{formatClock(demoClock)}</span>
+            </div>
+            <div className="flex items-center space-x-1 pl-2 border-l border-slate-800">
+              <button
+                onClick={() => advanceClock(1)}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold transition cursor-pointer"
+                title="Advance clock by 1 hour"
+              >
+                +1h
+              </button>
+              <button
+                onClick={() => advanceClock(2)}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold transition cursor-pointer"
+                title="Advance clock by 2 hours (triggers 2hr reminders)"
+              >
+                +2h
+              </button>
+              <button
+                onClick={() => advanceClock(24)}
+                className="px-2 py-1 bg-sky-900/60 hover:bg-sky-800 text-sky-200 border border-sky-700 rounded text-[11px] font-semibold transition cursor-pointer"
+                title="Advance clock by 24 hours"
+              >
+                +24h
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Date Selector Pills */}
+        <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+          <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
             {['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'].map(dateStr => (
               <button
                 key={dateStr}
@@ -97,9 +137,12 @@ export const ScheduleView: React.FC = () => {
               </button>
             ))}
           </div>
+          <span className="text-slate-400 text-xs">
+            Viewing appointments for: <strong className="text-white font-mono">{selectedDay}</strong>
+          </span>
         </div>
 
-        {/* Calendar Mappings Status (Area B & E: Primary + 3 Optional Calendars) */}
+        {/* Calendar Mappings Status */}
         <div className="mt-4 pt-4 border-t border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
           <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
@@ -119,7 +162,7 @@ export const ScheduleView: React.FC = () => {
 
           <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
             <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #2</span>
-            <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName}</span>
+            <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName || brands.smarthome?.calendarMappingName}</span>
             <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
               <CheckCircle2 className="w-3 h-3" /> Synced
             </div>
@@ -228,7 +271,7 @@ export const ScheduleView: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Site Address & Safe Google Maps Demonstration Link (Section E) */}
+                {/* Site Address & Safe Google Maps Demonstration Link (G00-023) */}
                 <div className="bg-slate-950 rounded-lg p-3 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                   <div className="flex items-center space-x-2 text-slate-300">
                     <MapPin className="w-4 h-4 text-red-400 shrink-0" />
@@ -238,11 +281,7 @@ export const ScheduleView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Safe Public Demo Destination Link strictly per prompt specification:
-                      "Include Open in Google Maps as a deliberate external navigation action to a safe public demo destination,
-                       clearly separate from the fictional job address. Use Sydney Opera House as the PUBLIC EXAMPLE destination,
-                       labelled 'Public demo destination - not this fictional customer's address'. Use a directions URL, no Maps SDK,
-                       no API key, no embedded tracking and no geolocation request." */}
+                  {/* Safe Public Demo Destination Link: Sydney Opera House strictly per specification */}
                   <a
                     href="https://www.google.com/maps/dir/?api=1&destination=Sydney+Opera+House"
                     target="_blank"
@@ -255,12 +294,12 @@ export const ScheduleView: React.FC = () => {
                   </a>
                 </div>
 
-                {/* Scheduled Reminders & Suppression Log */}
+                {/* Scheduled Reminders & Suppression Log (G00-019, G00-041) */}
                 {job.reminders.length > 0 && (
                   <div className="pt-2 border-t border-slate-800/80 text-xs space-y-1.5">
                     <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1">
                       <Bell className="w-3 h-3 text-amber-400" />
-                      <span>Automated Reminders & Suppression History</span>
+                      <span>Automated Email Reminders & Suppression History</span>
                     </span>
                     <div className="space-y-1">
                       {job.reminders.map(rem => (
@@ -275,7 +314,7 @@ export const ScheduleView: React.FC = () => {
                           }`}
                         >
                           <div>
-                            <span className="font-bold">{rem.type}</span> • Scheduled for {rem.scheduledFor}
+                            <span className="font-bold">{rem.type}</span> • Scheduled for {rem.scheduledFor} (Email)
                             {rem.suppressionReason && (
                               <span className="text-red-400 block no-underline font-sans mt-0.5 font-normal">
                                 ↳ Suppressed: {rem.suppressionReason}
@@ -288,7 +327,9 @@ export const ScheduleView: React.FC = () => {
                             ) : rem.delivered ? (
                               <span className="text-emerald-400 font-bold">SENT</span>
                             ) : (
-                              <span className="text-slate-400">QUEUED</span>
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                QUEUED
+                              </span>
                             )}
                           </div>
                         </div>
@@ -312,7 +353,7 @@ export const ScheduleView: React.FC = () => {
             </h3>
 
             <p className="text-xs text-slate-400">
-              Rescheduling invalidates earlier scheduled reminders and attaches a clear suppression audit notice.
+              Rescheduling recalculates reminder lead times (2h & 24h prior) and marks earlier scheduled reminders as suppressed.
             </p>
 
             <form onSubmit={handleRescheduleSubmit} className="space-y-3 text-xs">
@@ -368,7 +409,7 @@ export const ScheduleView: React.FC = () => {
             </h3>
 
             <p className="text-xs text-slate-400">
-              Cancelling appointment marks the job as CANCELLED and invalidates all queued reminders.
+              Cancelling appointment marks the visit as cancelled and invalidates all queued reminders with clear suppression notices.
             </p>
 
             <form onSubmit={handleCancelSubmit} className="space-y-3 text-xs">

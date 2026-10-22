@@ -2,6 +2,7 @@
  * Area C: Owner/Admin Content and Template Settings
  * Bounded template management, versioning workflow (Draft -> Review -> Published),
  * required-forms-by-job-type matrix, and synthetic sample library preview.
+ * Strictly enforces unconditional hook declarations (G00-008).
  */
 
 import React, { useState } from 'react';
@@ -19,19 +20,25 @@ import {
   Upload,
   AlertTriangle,
   Eye,
+  Plus,
 } from 'lucide-react';
 import { TemplateSetting } from '../types/cabms.ts';
 
 export const TemplatesSettingsView: React.FC = () => {
+  // Hooks called unconditionally at top (G00-008)
   const {
     persona,
     templates,
     publishTemplateVersion,
-    createTemplateDraft,
+    createTemplateDraftRevision,
     demoClock,
   } = useCabms();
 
-  // Role Gate: Owner/Admin or Super Admin only
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('TPL-001');
+  const [editingContent, setEditingContent] = useState<string>('');
+  const [previewModalDoc, setPreviewModalDoc] = useState<TemplateSetting | null>(null);
+
+  // Role Gate: Owner/Admin or Super Admin only (evaluated AFTER hooks)
   if (persona === 'technician') {
     return (
       <AccessDeniedView
@@ -42,14 +49,10 @@ export const TemplatesSettingsView: React.FC = () => {
     );
   }
 
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('TPL-001');
-  const [editingContent, setEditingContent] = useState<string>('');
-  const [previewModalDoc, setPreviewModalDoc] = useState<TemplateSetting | null>(null);
-
   const currentTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
 
   const handleStartDraft = () => {
-    createTemplateDraft(
+    createTemplateDraftRevision(
       currentTemplate.id,
       editingContent || currentTemplate.content + ' [Draft Revision Update]'
     );
@@ -142,10 +145,10 @@ export const TemplatesSettingsView: React.FC = () => {
         {/* Left: Template Catalog (5 cols) */}
         <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
           <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-            Template Library & Sample Library Selection
+            Template Library & Sample Selection
           </h3>
           <p className="text-xs text-slate-400">
-            Select built-in synthetic DOCX/PDF templates to inspect content snapshots and version states.
+            Select built-in synthetic templates to inspect content snapshots and version states.
           </p>
 
           <div className="space-y-2 max-h-[500px] overflow-y-auto">
@@ -171,16 +174,18 @@ export const TemplatesSettingsView: React.FC = () => {
                         <span className="font-bold text-white text-xs">{tpl.name}</span>
                       </div>
                       <div className="font-mono text-[11px] text-slate-400 mt-1">
-                        Version: <strong className="text-sky-400">{tpl.version}</strong>
+                        Version: <strong className="text-sky-400">{tpl.currentVersion}</strong>
                       </div>
                     </div>
 
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      tpl.status === 'PUBLISHED'
-                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                        : 'bg-amber-950 text-amber-400 border border-amber-800'
-                    }`}>
-                      {tpl.status}
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        tpl.activeStatus === 'PUBLISHED'
+                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                          : 'bg-amber-950 text-amber-400 border border-amber-800'
+                      }`}
+                    >
+                      {tpl.activeStatus}
                     </span>
                   </div>
 
@@ -204,10 +209,10 @@ export const TemplatesSettingsView: React.FC = () => {
                 </span>
               </div>
               <h3 className="text-base font-bold text-white mt-0.5">
-                {currentTemplate.name} ({currentTemplate.version})
+                {currentTemplate.name} ({currentTemplate.currentVersion})
               </h3>
               <span className="text-xs text-slate-400">
-                Last updated {currentTemplate.updatedAt} by {currentTemplate.updatedBy}
+                Active Status: <strong className="text-sky-400">{currentTemplate.activeStatus}</strong> • Revisions: {currentTemplate.revisions?.length || 1}
               </span>
             </div>
 
@@ -275,7 +280,9 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
                 <h3 className="text-base font-bold text-white">{previewModalDoc.name}</h3>
-                <span className="text-xs text-sky-400 font-mono">Version: {previewModalDoc.version} ({previewModalDoc.status})</span>
+                <span className="text-xs text-sky-400 font-mono">
+                  Version: {previewModalDoc.currentVersion} ({previewModalDoc.activeStatus})
+                </span>
               </div>
               <button
                 onClick={() => setPreviewModalDoc(null)}

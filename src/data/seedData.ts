@@ -1,12 +1,14 @@
 /**
  * Deterministic synthetic seed data for CABMS G00 Full-Application Demo
  * All data strictly fictional per G00 specifications
+ * MYOB Business — Client-Reported Shared Company File (Simulated)
  */
 
 import {
   BrandConfig,
   Customer,
   Job,
+  JobTypeConfig,
   JsaFormData,
   ElectricalCertData,
   SmokeAlarmCertData,
@@ -19,6 +21,11 @@ import {
 
 export const INITIAL_DEMO_CLOCK = '2026-11-02T09:00:00+10:00';
 
+export const INITIAL_TECHNICIANS = [
+  { id: 'TECH-001', name: 'Dave Miller', role: 'Lead Electrician & Safety Lead', licence: 'Q-ELEC-98765-DEMO' },
+  { id: 'TECH-002', name: 'Alex Taylor', role: 'ACMA Registered Cabler & CCTV Tech', licence: 'ACMA-T0842-DEMO' },
+];
+
 export const INITIAL_BRANDS: Record<string, BrandConfig> = {
   solarcell: {
     id: 'solarcell',
@@ -26,6 +33,7 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     tagline: 'Commercial & Residential Solar Energy Systems',
     primaryColor: '#ea580c', // orange-600
     accentColor: '#fbbf24', // amber-400
+    logoGlyph: 'S',
     legalIssuerName: 'Solarcell Technologies Pty Ltd (Fictional Placeholder)',
     abnPlaceholder: 'ABN 12 345 678 901 (Fictional)',
     electricalLicencePlaceholder: 'Q-ELEC-88219 (Fictional Demo)',
@@ -44,6 +52,7 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     tagline: 'Home Automation, Intelligent Lighting & Smoke Safety',
     primaryColor: '#0284c7', // sky-600
     accentColor: '#38bdf8', // sky-400
+    logoGlyph: 'G',
     legalIssuerName: 'Gold Coast Smart Home Systems Pty Ltd (Fictional Placeholder)',
     abnPlaceholder: 'ABN 23 456 789 012 (Fictional)',
     electricalLicencePlaceholder: 'Q-ELEC-77341 (Fictional Demo)',
@@ -62,6 +71,7 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     tagline: 'Enterprise CCTV, Access Control & Cabling Compliance',
     primaryColor: '#059669', // emerald-600
     accentColor: '#34d399', // emerald-400
+    logoGlyph: 'C',
     legalIssuerName: 'Gold Coast CCTV & Security Pty Ltd (Fictional Placeholder)',
     abnPlaceholder: 'ABN 34 567 890 123 (Fictional)',
     electricalLicencePlaceholder: 'Q-ELEC-66412 (Fictional Demo)',
@@ -80,6 +90,7 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     tagline: 'Commercial Battery Storage & Microgrids (Demo Only)',
     primaryColor: '#7c3aed', // violet-600
     accentColor: '#a78bfa',
+    logoGlyph: 'P',
     legalIssuerName: 'Pacific Eco-Energy Pty Ltd (Configurable Profile Example)',
     abnPlaceholder: 'ABN 45 678 901 234 (Fictional)',
     electricalLicencePlaceholder: 'Q-ELEC-55110 (Fictional)',
@@ -94,6 +105,41 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
   },
 };
 
+export const INITIAL_JOB_TYPES: JobTypeConfig[] = [
+  {
+    id: 'JT-001',
+    name: 'Commercial Solar PV Installation',
+    brandId: 'solarcell',
+    formsRequired: ['JSA', 'ELECTRICAL'],
+    isDirectToInvoice: false,
+    version: 'v4.2',
+  },
+  {
+    id: 'JT-002',
+    name: 'Residential Smoke Safety Audit',
+    brandId: 'smart_home',
+    formsRequired: ['JSA', 'SMOKE_ALARM'],
+    isDirectToInvoice: false,
+    version: 'v3.0',
+  },
+  {
+    id: 'JT-003',
+    name: 'Enterprise CCTV & Cabling Inspection',
+    brandId: 'cctv',
+    formsRequired: ['JSA', 'TCA1', 'TCA2'],
+    isDirectToInvoice: false,
+    version: 'v2.1',
+  },
+  {
+    id: 'JT-004',
+    name: 'Direct-to-Invoice Emergency Service',
+    brandId: 'smart_home',
+    formsRequired: [],
+    isDirectToInvoice: true,
+    version: 'v1.0',
+  },
+];
+
 export const INITIAL_CUSTOMERS: Customer[] = [
   {
     id: 'CUSTOMER-DEMO-001',
@@ -107,6 +153,10 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     syncStatus: 'SYNCED',
     notes: 'Shared synthetic customer across Solarcell and Smart Home Solutions to demonstrate unified MYOB customer master identity.',
     createdAt: '2026-10-01',
+    activityHistory: [
+      { timestamp: '2026-10-01 09:00', action: 'Created & Synced to MYOB Business', actor: 'Office Staff (Emma Wilson)', notes: 'MYOB-DEMO-001 acknowledged' },
+      { timestamp: '2026-10-27 10:00', action: 'Quotation MYOB-Q-88204 Issued', actor: 'Office Staff' },
+    ],
   },
   {
     id: 'CUSTOMER-DEMO-002',
@@ -120,6 +170,9 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     syncStatus: 'SYNCED',
     notes: 'Residential complex requiring annual smoke alarm testing across multiple units.',
     createdAt: '2026-10-05',
+    activityHistory: [
+      { timestamp: '2026-10-05 11:30', action: 'Created & Synced to MYOB Business', actor: 'Office Staff' },
+    ],
   },
   {
     id: 'CUSTOMER-DEMO-003',
@@ -133,6 +186,9 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     syncStatus: 'SYNCED',
     notes: 'Industrial warehouse facility with security cameras and data cabling.',
     createdAt: '2026-10-10',
+    activityHistory: [
+      { timestamp: '2026-10-10 14:00', action: 'Created & Synced to MYOB Business', actor: 'Office Staff' },
+    ],
   },
   {
     id: 'CUSTOMER-DEMO-004',
@@ -146,6 +202,9 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     syncStatus: 'SYNCED',
     notes: 'Luxury residential client with high-output 3-phase inverter solar installation.',
     createdAt: '2026-10-15',
+    activityHistory: [
+      { timestamp: '2026-10-15 08:30', action: 'Created & Synced to MYOB Business', actor: 'Office Staff' },
+    ],
   },
 ];
 
@@ -249,11 +308,12 @@ export const INITIAL_JSA_FORM: JsaFormData = {
   emergencyAssemblyArea: 'Front driveway by letterbox (Clear of overhead powerlines)',
   emergencyWardenPlaceholder: 'Lead Electrician / Dave Miller',
   firstAidOfficerPlaceholder: 'Dave Miller (Current CPR/LVR Certified)',
-  signedOff: false, // Initially false so completion fails!
+  signedOff: false, // Initially false for Job 101 to demonstrate completion failure
   signedByTechName: undefined,
   signedTimestamp: undefined,
   formRevision: 'Rev 4.2 - Oct 2026 (Safety Compliance Matrix)',
   issuerPlaceholder: 'Solarcell Technologies Workplace Health & Safety Division',
+  attachedSampleIds: ['ATT-004'],
 };
 
 export const INITIAL_SMOKE_ALARM_CERT: SmokeAlarmCertData = {
@@ -331,6 +391,7 @@ export const INITIAL_SMOKE_ALARM_CERT: SmokeAlarmCertData = {
   signedByTechName: 'Dave Miller',
   signedTimestamp: '2026-11-02 09:40',
   provisionalNote: 'PROVISIONAL NOTICE: Per-alarm Pass/Fail, room-count limits, and replacement calculation dates are marked provisional where source variants differ.',
+  attachedSampleIds: ['ATT-002'],
 };
 
 export const INITIAL_ELECTRICAL_CERT: ElectricalCertData = {
@@ -377,12 +438,13 @@ export const INITIAL_ELECTRICAL_CERT: ElectricalCertData = {
   signedByTechName: 'Dave Miller',
   signedTimestamp: '2026-11-02 10:20',
   unresolvedNotice: 'CRITICAL NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved in source extracts. No completed live certificate can be inferred.',
+  attachedSampleIds: ['ATT-001'],
 };
 
 export const INITIAL_TCA1_CERT: Tca1CertData = {
   certReference: 'TCA1-2026-904',
   jobReference: 'JOB-2026-104',
-  registeredCablerPlaceholder: 'Marcus Vance (Supervised by Dave Miller ACMA-T0842 Fictional)',
+  registeredCablerPlaceholder: 'Alex Taylor (ACMA-T0842-DEMO Fictional)',
   cablerRegistrationNumberPlaceholder: 'ACMA-REG-44210-DEMO',
   employerDetailsPlaceholder: 'Gold Coast CCTV & Cabling Division',
   dateOfWork: '2026-11-02',
@@ -393,9 +455,10 @@ export const INITIAL_TCA1_CERT: Tca1CertData = {
   customerContact: 'Marcus Vance (0400 000 003)',
   certificationPlaceholderText: 'I hereby certify that the telecommunications cabling work described above complies with the Telecommunications Cabling Provider Rules.',
   signedOff: true,
-  signedByTechName: 'Dave Miller',
+  signedByTechName: 'Alex Taylor',
   signedTimestamp: '2026-11-02 11:00',
   unresolvedRegistrationExpiryNotice: 'Unresolved Notice: Cabler registration number, expiry date verification and issuer endorsement remain unconfirmed demo placeholders.',
+  attachedSampleIds: [],
 };
 
 export const INITIAL_TCA2_CERT: Tca2CertData = {
@@ -422,10 +485,12 @@ export const INITIAL_TCA2_CERT: Tca2CertData = {
   officeReviewCompleted: false,
   reviewedByOfficeStaff: undefined,
   officeReviewTimestamp: undefined,
+  rectificationFollowupJobId: undefined,
   signedOff: true,
-  signedByTechName: 'Dave Miller',
+  signedByTechName: 'Alex Taylor',
   signedTimestamp: '2026-11-02 10:45',
   warningNotice: 'NON-COMPLIANCE NOTICE: Completing TCA2 documents an existing cabling defect; it does NOT certify the installation as compliant or relieve the owner of rectification obligations.',
+  attachedSampleIds: ['ATT-003'],
 };
 
 export const INITIAL_JOBS: Job[] = [
@@ -434,7 +499,8 @@ export const INITIAL_JOBS: Job[] = [
     brandId: 'solarcell',
     customerId: 'CUSTOMER-DEMO-001',
     title: '10kW Solar PV Inverter & Safety Audit',
-    jobType: 'Commercial/Residential Solar Maintenance',
+    jobType: 'Commercial Solar PV Installation',
+    jobTypeVersion: 'v4.2',
     siteAddress: '[Fictional] 42 Orchid Avenue, Surfers Paradise QLD 4217',
     siteContact: 'John Citizen',
     sitePhone: '0400 000 001',
@@ -447,6 +513,7 @@ export const INITIAL_JOBS: Job[] = [
     estimatedDurationHours: 3,
     isDirectToInvoice: false,
     formsRequired: ['JSA', 'SMOKE_ALARM'],
+    attachedSampleIds: ['ATT-002', 'ATT-004'],
     quote: {
       id: 'QUOTE-2026-042',
       jobId: 'JOB-2026-101',
@@ -462,14 +529,15 @@ export const INITIAL_JOBS: Job[] = [
         { id: 'LI-2', description: 'Photoelectric Interconnected Smoke Alarm Compliance Audit (4 units)', quantity: 4, unitPrice: 50.0, total: 200.0 },
       ],
       termsVersion: 'v2.4 - Oct 2026',
-      termsContentSnapshot: 'CABMS Standard Service Terms v2.4 (Non-legal demonstration text): Service performed subject to standard trade warranties and access conditions.',
+      termsContentSnapshot: 'CABMS Standard Service Terms v2.4: Service performed subject to standard trade warranties and access conditions.',
+      frozenIssuerSnapshot: 'Solarcell Technologies Pty Ltd (Fictional Placeholder) • ABN 12 345 678 901',
       acceptanceStatus: 'ACCEPTED',
       linkScenario: 'valid',
       acceptedAt: '2026-10-28 14:22',
       acceptedByName: 'John Citizen',
       acceptanceHistory: [
-        { timestamp: '2026-10-27 10:00', action: 'Quote Generated & Synced to MYOB', actor: 'Office Staff (Emma Wilson)', notes: 'External ref MYOB-Q-88204' },
-        { timestamp: '2026-10-27 10:05', action: 'Acceptance Link Sent via Email/SMS', actor: 'Automated Service', notes: 'Link scenario: valid' },
+        { timestamp: '2026-10-27 10:00', action: 'Quote Generated & Synced to MYOB Business', actor: 'Office Staff (Emma Wilson)', notes: 'External ref MYOB-Q-88204' },
+        { timestamp: '2026-10-27 10:05', action: 'Acceptance Link Sent via Email', actor: 'Automated Service', notes: 'Link scenario: valid' },
         { timestamp: '2026-10-28 14:22', action: 'Quote Accepted by Customer Online', actor: 'John Citizen', notes: 'IP snapshot logged (Synthetic Demo)' },
       ],
     },
@@ -486,24 +554,28 @@ export const INITIAL_JOBS: Job[] = [
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/solarcell-goldcoast',
       brandName: 'Solarcell',
-      channel: 'SMS_AND_EMAIL_SIMULATED',
+      channel: 'EMAIL_SIMULATED',
       history: [],
     },
     reminders: [
       {
         id: 'REM-101-1',
+        targetAppointmentTime: '2026-11-02 09:00',
+        leadHours: 24,
         scheduledFor: '2026-11-01 09:00',
         type: 'REMINDER_24HR',
-        channel: 'SMS_AND_EMAIL_SIMULATED',
+        channel: 'EMAIL_SIMULATED',
         suppressed: false,
         delivered: true,
         deliveredAt: '2026-11-01 09:00',
       },
       {
         id: 'REM-101-2',
+        targetAppointmentTime: '2026-11-02 09:00',
+        leadHours: 2,
         scheduledFor: '2026-11-02 07:00',
         type: 'REMINDER_2HR',
-        channel: 'SMS_AND_EMAIL_SIMULATED',
+        channel: 'EMAIL_SIMULATED',
         suppressed: false,
         delivered: true,
         deliveredAt: '2026-11-02 07:00',
@@ -512,13 +584,19 @@ export const INITIAL_JOBS: Job[] = [
     unresolvedWarnings: [
       'Provisional notice: Smoke alarm limits and expiry wording are provisional per unapproved source variants.',
     ],
+    activityHistory: [
+      { timestamp: '2026-10-27 09:30', action: 'Work order created & scheduled', actor: 'Office Staff' },
+      { timestamp: '2026-10-28 14:22', action: 'Customer accepted quotation MYOB-Q-88204', actor: 'John Citizen' },
+      { timestamp: '2026-11-02 09:00', action: 'Technician Dave Miller commenced work onsite', actor: 'Tech: Dave Miller' },
+    ],
   },
   {
     id: 'JOB-2026-102',
     brandId: 'smart_home',
     customerId: 'CUSTOMER-DEMO-001',
     title: 'Emergency Aircon Automation Inverter Reset',
-    jobType: 'Direct-to-Invoice Service Call',
+    jobType: 'Direct-to-Invoice Emergency Service',
+    jobTypeVersion: 'v1.0',
     siteAddress: '[Fictional] 42 Orchid Avenue, Surfers Paradise QLD 4217',
     siteContact: 'John Citizen',
     sitePhone: '0400 000 001',
@@ -531,6 +609,7 @@ export const INITIAL_JOBS: Job[] = [
     estimatedDurationHours: 1.5,
     isDirectToInvoice: true,
     formsRequired: [],
+    attachedSampleIds: [],
     invoice: {
       id: 'INV-2026-092',
       externalMyobRef: 'MYOB-INV-77103',
@@ -544,15 +623,17 @@ export const INITIAL_JOBS: Job[] = [
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/gc-smarthome',
       brandName: 'Gold Coast Smart Home Solutions',
-      channel: 'SMS_AND_EMAIL_SIMULATED',
+      channel: 'EMAIL_SIMULATED',
       history: [],
     },
     reminders: [
       {
         id: 'REM-102-1',
+        targetAppointmentTime: '2026-11-02 13:00',
+        leadHours: 2,
         scheduledFor: '2026-11-02 11:00',
         type: 'REMINDER_2HR',
-        channel: 'SMS_AND_EMAIL_SIMULATED',
+        channel: 'EMAIL_SIMULATED',
         suppressed: false,
         delivered: false,
       },
@@ -560,13 +641,17 @@ export const INITIAL_JOBS: Job[] = [
     unresolvedWarnings: [
       'Direct-to-invoice service: no compliance documentation required for operational completion.',
     ],
+    activityHistory: [
+      { timestamp: '2026-11-01 16:00', action: 'Emergency booking received and scheduled', actor: 'Office Staff' },
+    ],
   },
   {
     id: 'JOB-2026-103',
     brandId: 'solarcell',
     customerId: 'CUSTOMER-DEMO-004',
     title: '3-Phase Inverter Replacement & Testing',
-    jobType: 'Commercial Solar Inverter Upgrade',
+    jobType: 'Commercial Solar PV Installation',
+    jobTypeVersion: 'v4.2',
     siteAddress: '[Fictional] 15 Monaco Street, Broadbeach Waters QLD 4218',
     siteContact: 'Elena Rossi',
     sitePhone: '0400 000 004',
@@ -579,10 +664,36 @@ export const INITIAL_JOBS: Job[] = [
     estimatedDurationHours: 4,
     isDirectToInvoice: false,
     formsRequired: ['JSA', 'ELECTRICAL'],
+    attachedSampleIds: ['ATT-001'],
+    // G00-006: Provide a fresh unaccepted quote on Job 103 for acceptance testing!
+    quote: {
+      id: 'QUOTE-2026-043',
+      jobId: 'JOB-2026-103',
+      customerId: 'CUSTOMER-DEMO-004',
+      brandId: 'solarcell',
+      externalMyobRef: 'MYOB-Q-88205',
+      title: 'Commercial 3-Phase Inverter Replacement & Testing Package',
+      subtotal: 1350.0,
+      gst: 135.0,
+      total: 1485.0,
+      lineItems: [
+        { id: 'LI-103-1', description: 'Supply & Mount 3-Phase Commercial Solar Inverter', quantity: 1, unitPrice: 1100.0, total: 1100.0 },
+        { id: 'LI-103-2', description: 'Electrical Isolation, Polarity & RCD Commissioning', quantity: 1, unitPrice: 250.0, total: 250.0 },
+      ],
+      termsVersion: 'v2.4 - Oct 2026',
+      termsContentSnapshot: 'CABMS Standard Service Terms v2.4: Service performed subject to standard trade warranties and access conditions.',
+      frozenIssuerSnapshot: 'Solarcell Technologies Pty Ltd (Fictional Placeholder) • ABN 12 345 678 901',
+      acceptanceStatus: 'SENT', // Ready for customer acceptance testing!
+      linkScenario: 'valid',
+      acceptanceHistory: [
+        { timestamp: '2026-11-01 14:00', action: 'Quote Generated & Synced to MYOB Business', actor: 'Office Staff (Emma Wilson)' },
+        { timestamp: '2026-11-01 14:05', action: 'Acceptance Link Sent via Email', actor: 'Automated Service' },
+      ],
+    },
     invoice: {
       id: 'INV-2026-093',
       externalMyobRef: 'MYOB-INV-77104',
-      amount: 1450.0,
+      amount: 1485.0,
       status: 'DRAFT',
       issuedDate: '2026-11-03',
       dueDate: '2026-11-17',
@@ -592,15 +703,17 @@ export const INITIAL_JOBS: Job[] = [
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/solarcell-goldcoast',
       brandName: 'Solarcell',
-      channel: 'SMS_AND_EMAIL_SIMULATED',
+      channel: 'EMAIL_SIMULATED',
       history: [],
     },
     reminders: [
       {
         id: 'REM-103-1',
+        targetAppointmentTime: '2026-11-03 08:30',
+        leadHours: 24,
         scheduledFor: '2026-11-02 08:30',
         type: 'REMINDER_24HR',
-        channel: 'SMS_AND_EMAIL_SIMULATED',
+        channel: 'EMAIL_SIMULATED',
         suppressed: false,
         delivered: true,
         deliveredAt: '2026-11-02 08:30',
@@ -609,25 +722,31 @@ export const INITIAL_JOBS: Job[] = [
     unresolvedWarnings: [
       'CRITICAL NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred.',
     ],
+    activityHistory: [
+      { timestamp: '2026-10-30 11:00', action: 'Quote MYOB-Q-88205 prepared and dispatched', actor: 'Office Staff' },
+      { timestamp: '2026-11-01 09:00', action: 'Site scheduled for 03/11 with Dave Miller', actor: 'Office Staff' },
+    ],
   },
   {
     id: 'JOB-2026-104',
     brandId: 'cctv',
     customerId: 'CUSTOMER-DEMO-003',
     title: 'Warehouse Security Camera Cabling & Compliance Audit',
-    jobType: 'Enterprise CCTV & ACMA Cabling Audit',
+    jobType: 'Enterprise CCTV & Cabling Inspection',
+    jobTypeVersion: 'v2.1',
     siteAddress: '[Fictional] 88 Distribution Court, Yatala QLD 4207',
     siteContact: 'Marcus Vance',
     sitePhone: '0400 000 003',
     description: 'Cabling inspection with TCA1 installation certificate and TCA2 non-compliance report. Placed in NEEDS_REVISIT state due to high-risk electrical/cabling defect.',
     status: 'NEEDS_REVISIT',
-    assignedTechId: 'TECH-001',
-    assignedTechName: 'Dave Miller',
+    assignedTechId: 'TECH-002', // Assigned to Alex Taylor (TECH-002)!
+    assignedTechName: 'Alex Taylor',
     scheduledDate: '2026-11-02',
     scheduledTime: '10:00',
     estimatedDurationHours: 3.5,
     isDirectToInvoice: false,
     formsRequired: ['JSA', 'TCA1', 'TCA2'],
+    attachedSampleIds: ['ATT-003'],
     invoice: {
       id: 'INV-2026-094',
       externalMyobRef: 'MYOB-INV-77105',
@@ -641,7 +760,7 @@ export const INITIAL_JOBS: Job[] = [
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/gc-cctv',
       brandName: 'Gold Coast CCTV',
-      channel: 'SMS_AND_EMAIL_SIMULATED',
+      channel: 'EMAIL_SIMULATED',
       history: [],
     },
     reminders: [],
@@ -649,18 +768,23 @@ export const INITIAL_JOBS: Job[] = [
       'NON-COMPLIANCE RECORDED: TCA2 defect requires remediation quotation before operational sign-off.',
       'Notice: Cabler registration and expiry details remain synthetic demo placeholders.',
     ],
+    activityHistory: [
+      { timestamp: '2026-11-02 10:45', action: 'TCA2 non-compliance logged by Alex Taylor', actor: 'Tech: Alex Taylor' },
+      { timestamp: '2026-11-02 11:00', action: 'Operational status set to NEEDS_REVISIT', actor: 'System' },
+    ],
   },
   {
     id: 'JOB-2026-105',
     brandId: 'smart_home',
     customerId: 'CUSTOMER-DEMO-002',
     title: 'Strata Complex Lighting Automation Upgrade',
-    jobType: 'Strata Smart Lighting Control',
+    jobType: 'Residential Smoke Safety Audit',
+    jobTypeVersion: 'v3.0',
     siteAddress: '[Fictional] Suite 4, 180 Hedges Avenue, Mermaid Beach QLD 4218',
     siteContact: 'Sarah Jenkins',
     sitePhone: '0400 000 002',
     description: 'Unassigned job used specifically to demonstrate Technician denied-access and permission boundaries.',
-    status: 'SCHEDULED',
+    status: 'NEW',
     assignedTechId: null, // UNASSIGNED!
     assignedTechName: null,
     scheduledDate: '2026-11-04',
@@ -668,16 +792,20 @@ export const INITIAL_JOBS: Job[] = [
     estimatedDurationHours: 4,
     isDirectToInvoice: false,
     formsRequired: ['JSA'],
+    attachedSampleIds: [],
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/gc-smarthome',
       brandName: 'Gold Coast Smart Home Solutions',
-      channel: 'SMS_AND_EMAIL_SIMULATED',
+      channel: 'EMAIL_SIMULATED',
       history: [],
     },
     reminders: [],
     unresolvedWarnings: [
       'Unassigned job: Technician cannot view detail view under strict role boundaries.',
+    ],
+    activityHistory: [
+      { timestamp: '2026-11-01 10:00', action: 'New unassigned work order created', actor: 'Office Staff' },
     ],
   },
 ];
@@ -687,61 +815,103 @@ export const INITIAL_TEMPLATES: TemplateSetting[] = [
     id: 'TPL-001',
     name: 'General Commercial Service Terms & Conditions',
     type: 'TERMS',
-    version: 'v2.4 - Oct 2026',
-    status: 'PUBLISHED',
-    updatedAt: '2026-10-15 11:30',
-    updatedBy: 'Owner / Admin',
+    currentVersion: 'v2.4',
+    activeStatus: 'PUBLISHED',
     content: 'CABMS Standard Service Terms v2.4 (Non-legal demonstration text): Service performed subject to standard trade warranties and access conditions.',
     sampleFileName: 'terms-and-conditions-v2.4.docx',
     mappingStatus: 'Mapped',
+    revisions: [
+      {
+        version: 'v2.4',
+        status: 'PUBLISHED',
+        content: 'CABMS Standard Service Terms v2.4 (Non-legal demonstration text): Service performed subject to standard trade warranties and access conditions.',
+        updatedAt: '2026-10-15 11:30',
+        updatedBy: 'Owner / Admin',
+      },
+      {
+        version: 'v2.3',
+        status: 'PUBLISHED',
+        content: 'CABMS Standard Service Terms v2.3 (Archived historical snapshot): Prior terms edition with standard 14-day settlement.',
+        updatedAt: '2026-08-01 09:00',
+        updatedBy: 'Owner / Admin',
+      },
+    ],
   },
   {
     id: 'TPL-002',
     name: 'JSA Safe Work Method Statement Matrix',
     type: 'JSA',
-    version: 'v4.2 - Oct 2026',
-    status: 'PUBLISHED',
-    updatedAt: '2026-10-20 14:00',
-    updatedBy: 'Owner / Admin',
+    currentVersion: 'v4.2',
+    activeStatus: 'PUBLISHED',
     content: 'JSA Template with 9 Sanitised Field Groups: Job/Site, Competency, Risk Rating L/M/H/E, Steps, PPE, Isolations, Emergency, Sign-off, Doc Control.',
     sampleFileName: 'jsa-risk-assessment-template.docx',
     mappingStatus: 'Mapped',
+    revisions: [
+      {
+        version: 'v4.2',
+        status: 'PUBLISHED',
+        content: 'JSA Template v4.2 with 9 Sanitised Field Groups.',
+        updatedAt: '2026-10-20 14:00',
+        updatedBy: 'Owner / Admin',
+      },
+    ],
   },
   {
     id: 'TPL-003',
     name: 'Smoke Alarm QLD Legislation Compliance Certificate',
     type: 'SMOKE_ALARM',
-    version: 'v3.0 - Oct 2026',
-    status: 'PUBLISHED',
-    updatedAt: '2026-10-18 09:15',
-    updatedBy: 'Owner / Admin',
+    currentVersion: 'v3.0',
+    activeStatus: 'PUBLISHED',
     content: 'Sanitised smoke alarm schedule with per-alarm Pass/Fail, provisional notes, and testing verification.',
     sampleFileName: 'smoke-alarm-cert-template.docx',
     mappingStatus: 'Mapped',
+    revisions: [
+      {
+        version: 'v3.0',
+        status: 'PUBLISHED',
+        content: 'Smoke Alarm Certificate v3.0 per Queensland 2022 smoke alarm mandate.',
+        updatedAt: '2026-10-18 09:15',
+        updatedBy: 'Owner / Admin',
+      },
+    ],
   },
   {
     id: 'TPL-004',
     name: 'Electrical Safety Certificate (Part A Sanitised)',
     type: 'ELECTRICAL',
-    version: 'v1.8 - Oct 2026',
-    status: 'PUBLISHED',
-    updatedAt: '2026-10-12 16:40',
-    updatedBy: 'Owner / Admin',
+    currentVersion: 'v1.8',
+    activeStatus: 'PUBLISHED',
     content: 'Sanitised Part A fields with mandatory persistent notice: Electrical Part B / sections 7-8 not supplied or unresolved.',
     sampleFileName: 'electrical-safety-cert-template.docx',
     mappingStatus: 'Mapped',
+    revisions: [
+      {
+        version: 'v1.8',
+        status: 'PUBLISHED',
+        content: 'Electrical Part A test certificate with permanent unresolved Part B notice.',
+        updatedAt: '2026-10-12 16:40',
+        updatedBy: 'Owner / Admin',
+      },
+    ],
   },
   {
     id: 'TPL-005',
-    name: 'Proposed Terms v2.5 (Draft Commercial Terms)',
-    type: 'TERMS',
-    version: 'v2.5 - Draft Review',
-    status: 'DRAFT',
-    updatedAt: '2026-10-22 08:00',
-    updatedBy: 'Owner / Admin',
-    content: 'DRAFT CABMS Commercial Terms v2.5: Proposed revision updating payment terms from 14 days to 7 days for commercial customers. (Under review)',
-    sampleFileName: 'draft-terms-v2.5-proposal.docx',
-    mappingStatus: 'Pending Review',
+    name: 'TCA1 & TCA2 Telecommunications Compliance Forms',
+    type: 'TCA1',
+    currentVersion: 'v2.1',
+    activeStatus: 'PUBLISHED',
+    content: 'ACMA Telecommunications cabling compliance certificate and non-compliance defect report forms.',
+    sampleFileName: 'tca1-tca2-cabling-templates.docx',
+    mappingStatus: 'Mapped',
+    revisions: [
+      {
+        version: 'v2.1',
+        status: 'PUBLISHED',
+        content: 'ACMA TCA1/TCA2 templates with non-compliance risk categories.',
+        updatedAt: '2026-10-10 10:00',
+        updatedBy: 'Owner / Admin',
+      },
+    ],
   },
 ];
 

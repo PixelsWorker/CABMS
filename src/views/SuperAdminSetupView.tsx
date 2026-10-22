@@ -1,8 +1,9 @@
 /**
  * Area B: Super Admin Business and Integration Setup
- * Multi-brand profiles editor, ONE shared MYOB AccountRight connection simulation,
- * per-brand template mappings, mock SMTP status, and multi-calendar mapping.
- * Strictly restricted to Super Admin persona.
+ * Multi-brand profiles editor, ONE shared MYOB Business connection simulation,
+ * Add Business Profile modal (G00-024), per-brand template mappings,
+ * mock SMTP status, and multi-calendar mapping.
+ * Strictly restricted to Super Admin persona (with unconditional hook ordering G00-008).
  */
 
 import React, { useState } from 'react';
@@ -21,10 +22,12 @@ import {
   Plus,
   Sliders,
   ExternalLink,
+  X,
 } from 'lucide-react';
 import { BrandConfig, BrandId } from '../types/cabms.ts';
 
 export const SuperAdminSetupView: React.FC = () => {
+  // Hooks called unconditionally at top (G00-008)
   const {
     persona,
     brands,
@@ -34,7 +37,35 @@ export const SuperAdminSetupView: React.FC = () => {
     setMyobStatus,
   } = useCabms();
 
-  // Role Gate: Super Admin ONLY per specification!
+  const [editingBrandId, setEditingBrandId] = useState<string>('solarcell');
+  const [isAddProfileModalOpen, setIsAddProfileModalOpen] = useState(false);
+
+  // Editable brand fields
+  const activeEditingBrand = brands[editingBrandId] || brands.solarcell || Object.values(brands)[0];
+  const [formBrandName, setFormBrandName] = useState(activeEditingBrand?.name || '');
+  const [formTagline, setFormTagline] = useState(activeEditingBrand?.tagline || '');
+  const [formColor, setFormColor] = useState(activeEditingBrand?.primaryColor || '#f59e0b');
+  const [formIssuer, setFormIssuer] = useState(activeEditingBrand?.legalIssuerName || '');
+  const [formAbn, setFormAbn] = useState(activeEditingBrand?.abnPlaceholder || '');
+  const [formElecLicence, setFormElecLicence] = useState(activeEditingBrand?.electricalLicencePlaceholder || '');
+  const [formAcma, setFormAcma] = useState(activeEditingBrand?.acmaCablerPlaceholder || '');
+  const [formQbcc, setFormQbcc] = useState(activeEditingBrand?.qbccLicencePlaceholder || '');
+  const [formReviewUrl, setFormReviewUrl] = useState(activeEditingBrand?.reviewUrlPlaceholder || '');
+  const [formQuoteTpl, setFormQuoteTpl] = useState(activeEditingBrand?.quoteTemplateName || '');
+  const [formInvTpl, setFormInvTpl] = useState(activeEditingBrand?.invoiceTemplateName || '');
+
+  // New Profile Form State (G00-024)
+  const [newBrandId, setNewBrandId] = useState('');
+  const [newBrandName, setNewBrandName] = useState('');
+  const [newBrandTagline, setNewBrandTagline] = useState('');
+  const [newBrandColor, setNewBrandColor] = useState('#0284c7');
+  const [newLegalIssuer, setNewLegalIssuer] = useState('');
+  const [newAbn, setNewAbn] = useState('11 222 333 444');
+  const [newElecLic, setNewElecLic] = useState('QLD-ELEC-99999');
+  const [newAcma, setNewAcma] = useState('T-99999');
+  const [newQbcc, setNewQbcc] = useState('QBCC-999999');
+
+  // Role Gate: Super Admin ONLY (evaluated AFTER hooks)
   if (persona !== 'super_admin') {
     return (
       <AccessDeniedView
@@ -45,25 +76,8 @@ export const SuperAdminSetupView: React.FC = () => {
     );
   }
 
-  const [editingBrandId, setEditingBrandId] = useState<BrandId>('solarcell');
-  const [isAddProfileModalOpen, setIsAddProfileModalOpen] = useState(false);
-
-  // Editable brand fields
-  const activeEditingBrand = brands[editingBrandId] || brands.solarcell;
-  const [formBrandName, setFormBrandName] = useState(activeEditingBrand.name);
-  const [formTagline, setFormTagline] = useState(activeEditingBrand.tagline);
-  const [formColor, setFormColor] = useState(activeEditingBrand.primaryColor);
-  const [formIssuer, setFormIssuer] = useState(activeEditingBrand.legalIssuerName);
-  const [formAbn, setFormAbn] = useState(activeEditingBrand.abnPlaceholder);
-  const [formElecLicence, setFormElecLicence] = useState(activeEditingBrand.electricalLicencePlaceholder);
-  const [formAcma, setFormAcma] = useState(activeEditingBrand.acmaCablerPlaceholder);
-  const [formQbcc, setFormQbcc] = useState(activeEditingBrand.qbccLicencePlaceholder);
-  const [formReviewUrl, setFormReviewUrl] = useState(activeEditingBrand.reviewUrlPlaceholder);
-  const [formQuoteTpl, setFormQuoteTpl] = useState(activeEditingBrand.quoteTemplateName);
-  const [formInvTpl, setFormInvTpl] = useState(activeEditingBrand.invoiceTemplateName);
-
   // Sync state when switching brand tab
-  const handleSwitchEditingBrand = (id: BrandId) => {
+  const handleSwitchEditingBrand = (id: string) => {
     setEditingBrandId(id);
     const b = brands[id];
     if (b) {
@@ -83,6 +97,7 @@ export const SuperAdminSetupView: React.FC = () => {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!activeEditingBrand) return;
     updateBrandConfig({
       ...activeEditingBrand,
       name: formBrandName,
@@ -97,6 +112,37 @@ export const SuperAdminSetupView: React.FC = () => {
       quoteTemplateName: formQuoteTpl,
       invoiceTemplateName: formInvTpl,
     });
+  };
+
+  const handleCreateNewProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBrandName) return;
+
+    const generatedId = newBrandId.trim().toLowerCase().replace(/\s+/g, '_') || `brand_${Date.now().toString().slice(-4)}`;
+
+    const newProfile: BrandConfig = {
+      id: generatedId as any,
+      name: newBrandName,
+      tagline: newBrandTagline || 'Quality Electrical & Automation Services',
+      primaryColor: newBrandColor,
+      accentColor: '#38bdf8',
+      logoGlyph: newBrandName.charAt(0).toUpperCase() || 'B',
+      legalIssuerName: newLegalIssuer || `${newBrandName} Pty Ltd`,
+      abnPlaceholder: newAbn,
+      electricalLicencePlaceholder: newElecLic,
+      acmaCablerPlaceholder: newAcma,
+      qbccLicencePlaceholder: newQbcc,
+      contactEmail: 'admin@example.invalid',
+      contactPhone: '07 5500 0000',
+      reviewUrlPlaceholder: `https://g.page/r/${generatedId}/review`,
+      quoteTemplateName: `${newBrandName} Quotation Master`,
+      invoiceTemplateName: `${newBrandName} Tax Invoice`,
+      calendarMappingName: `${newBrandName} Fleet Calendar`,
+    };
+
+    addNewBrandProfile(newProfile);
+    setIsAddProfileModalOpen(false);
+    handleSwitchEditingBrand(generatedId);
   };
 
   return (
@@ -116,9 +162,18 @@ export const SuperAdminSetupView: React.FC = () => {
             </p>
           </div>
 
-          <div className="bg-purple-950/80 border border-purple-800 text-purple-300 text-xs px-3 py-1.5 rounded-lg font-bold flex items-center space-x-1.5">
-            <ShieldCheck className="w-4 h-4 text-purple-400" />
-            <span>Super Admin Credential Control Active</span>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setIsAddProfileModalOpen(true)}
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Business Profile</span>
+            </button>
+            <div className="bg-purple-950/80 border border-purple-800 text-purple-300 text-xs px-3 py-1.5 rounded-lg font-bold flex items-center space-x-1.5">
+              <ShieldCheck className="w-4 h-4 text-purple-400" />
+              <span>Super Admin Active</span>
+            </div>
           </div>
         </div>
       </div>
@@ -131,7 +186,7 @@ export const SuperAdminSetupView: React.FC = () => {
               One Shared Accounting Link
             </span>
             <h2 className="text-base font-bold text-white mt-0.5">
-              MYOB AccountRight Live Company Connection
+              MYOB Business — Client-Reported Shared Company File (Simulated)
             </h2>
             <p className="text-xs text-slate-400">
               Single shared MYOB company file used across all business profiles. No separate company file authentication required.
@@ -158,7 +213,7 @@ export const SuperAdminSetupView: React.FC = () => {
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              Disconnected
+              Simulate Disconnected
             </button>
             <button
               onClick={() => setMyobStatus('FAILED')}
@@ -168,184 +223,166 @@ export const SuperAdminSetupView: React.FC = () => {
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              Simulate API Failure
+              Simulate Token Expired
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1">
-            <span className="text-slate-500 uppercase text-[10px] font-bold block">Company File Name</span>
-            <span className="text-white font-semibold">{myobConnection.companyFile}</span>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs bg-slate-950 p-4 rounded-xl border border-slate-800">
+          <div>
+            <span className="text-slate-500 uppercase text-[10px] block">Company File Name:</span>
+            <span className="font-bold text-white">{myobConnection.companyFile}</span>
           </div>
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1">
-            <span className="text-slate-500 uppercase text-[10px] font-bold block">MYOB Company Identifier</span>
-            <span className="font-mono text-sky-400 font-bold">{myobConnection.companyId}</span>
+          <div>
+            <span className="text-slate-500 uppercase text-[10px] block">MYOB Company ID:</span>
+            <span className="font-mono text-sky-400">{myobConnection.companyId}</span>
           </div>
-          <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1">
-            <span className="text-slate-500 uppercase text-[10px] font-bold block">Last Heartbeat Ping</span>
-            <span className="text-slate-300 font-mono">{myobConnection.lastSync}</span>
+          <div>
+            <span className="text-slate-500 uppercase text-[10px] block">Connection State:</span>
+            <span
+              className={`font-bold ${
+                myobConnection.status === 'CONNECTED'
+                  ? 'text-emerald-400'
+                  : myobConnection.status === 'DISCONNECTED'
+                  ? 'text-amber-400'
+                  : 'text-red-400'
+              }`}
+            >
+              {myobConnection.status}
+            </span>
           </div>
-        </div>
-
-        {myobConnection.status === 'FAILED' && (
-          <div className="p-3 rounded-lg bg-red-950/60 border border-red-800 text-red-200 text-xs flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
-            <span>{myobConnection.errorMessage}</span>
+          <div>
+            <span className="text-slate-500 uppercase text-[10px] block">Last Sync Timestamp:</span>
+            <span className="font-mono text-slate-300">{myobConnection.lastSync}</span>
           </div>
-        )}
-
-        {/* Per-Brand Template Mapping Disclosure (Unverified support per Section B) */}
-        <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 space-y-1">
-          <span className="font-bold text-amber-400 block text-[11px] uppercase tracking-wider">
-            Per-Brand Template Mapping Notice (MYOB API Compatibility)
-          </span>
-          <p className="text-[11px] text-slate-400 leading-relaxed">
-            CABMS maps separate quotation and invoice templates per brand profile under this single company connection. <em>Note: Live MYOB API support for programmatic template selection is unverified in standard AccountRight endpoints and is represented as an operational prototype.</em>
-          </p>
         </div>
       </div>
 
-      {/* SECTION 2: MULTI-BRAND BUSINESS PROFILES CONFIGURATOR */}
+      {/* SECTION 2: MULTI-BRAND BUSINESS PROFILE CONFIGURATION */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-              Three-Brand Operating System
+            <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
+              Multi-Brand Identity
             </span>
             <h2 className="text-base font-bold text-white mt-0.5">
-              Configurable Brand Profiles & Legal Issuers
+              Configurable Business Profiles & Legal Issuers
             </h2>
-            <p className="text-xs text-slate-400">
-              Customize trade names, typographic logo accents, licence numbers, and legal disclaimer placeholders.
-            </p>
           </div>
 
-          <div className="flex items-center space-x-2">
+          {/* Profile Switcher Tabs */}
+          <div className="flex space-x-2">
             {Object.values(brands).map(b => (
               <button
                 key={b.id}
                 onClick={() => handleSwitchEditingBrand(b.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5 ${
                   editingBrandId === b.id
                     ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
+                    : 'bg-slate-950 text-slate-400 hover:text-white'
                 }`}
               >
-                {b.name.split(' ')[0]}
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: b.primaryColor }} />
+                <span>{b.name}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Brand Editor Form */}
+        {/* Profile Settings Form */}
         <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">Brand Operating Name</label>
+              <label className="text-slate-300 block font-semibold mb-1">Trading Name *</label>
               <input
                 type="text"
+                required
                 value={formBrandName}
                 onChange={e => setFormBrandName(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">Tagline</label>
+              <label className="text-slate-300 block font-semibold mb-1">Marketing Tagline</label>
               <input
                 type="text"
                 value={formTagline}
                 onChange={e => setFormTagline(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">Primary Accent Color</label>
+              <label className="text-slate-300 block font-semibold mb-1">Brand Theme Color</label>
               <div className="flex items-center space-x-2">
                 <input
                   type="color"
                   value={formColor}
                   onChange={e => setFormColor(e.target.value)}
-                  className="w-8 h-8 rounded bg-transparent border-0 cursor-pointer"
+                  className="w-9 h-9 rounded bg-slate-950 border border-slate-800 cursor-pointer p-0.5"
                 />
                 <input
                   type="text"
                   value={formColor}
                   onChange={e => setFormColor(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white font-mono"
+                  className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
                 />
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">Legal Issuer Name (Placeholder)</label>
+              <label className="text-slate-300 block font-semibold mb-1">
+                Legal Document Issuer (Entity Name) *
+              </label>
               <input
                 type="text"
+                required
                 value={formIssuer}
                 onChange={e => setFormIssuer(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-bold"
               />
+              <span className="text-[10px] text-slate-500 mt-0.5 block">
+                Appears on all printed compliance certificates, quotes, and legal documents.
+              </span>
             </div>
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">ABN Placeholder</label>
+              <label className="text-slate-300 block font-semibold mb-1">Australian Business Number (ABN)</label>
               <input
                 type="text"
                 value={formAbn}
                 onChange={e => setFormAbn(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">Electrical Contractor Licence</label>
+              <label className="text-slate-300 block font-semibold mb-1">Electrical Contractor Licence</label>
               <input
                 type="text"
                 value={formElecLicence}
                 onChange={e => setFormElecLicence(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">ACMA Telecommunications Cabler</label>
+              <label className="text-slate-300 block font-semibold mb-1">ACMA Registered Cabler No.</label>
               <input
                 type="text"
                 value={formAcma}
                 onChange={e => setFormAcma(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
               />
             </div>
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">QBCC Licence Placeholder</label>
+              <label className="text-slate-300 block font-semibold mb-1">QBCC Licence Placeholder</label>
               <input
                 type="text"
                 value={formQbcc}
                 onChange={e => setFormQbcc(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-slate-300 font-semibold mb-1">Google Review URL Placeholder</label>
-              <input
-                type="text"
-                value={formReviewUrl}
-                onChange={e => setFormReviewUrl(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white font-mono focus:outline-none focus:border-amber-500"
-              />
-            </div>
-            <div>
-              <label className="block text-slate-300 font-semibold mb-1">MYOB Quote Template Mapping</label>
-              <input
-                type="text"
-                value={formQuoteTpl}
-                onChange={e => setFormQuoteTpl(e.target.value)}
-                className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white font-mono focus:outline-none focus:border-amber-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
               />
             </div>
           </div>
@@ -370,7 +407,7 @@ export const SuperAdminSetupView: React.FC = () => {
             <h3 className="font-bold text-white text-sm">Email Sender & SMTP Status</h3>
           </div>
           <p className="text-slate-400 text-xs">
-            Simulation mock only. No real SMTP credentials, mailbox connections, or external mail dispatch.
+            Simulation mock only. Email is the single approved communication channel.
           </p>
           <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-1 font-mono text-[11px] text-slate-300">
             <div>Sender: <span className="text-sky-400">noreply-cabms@example.invalid</span></div>
@@ -396,6 +433,126 @@ export const SuperAdminSetupView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* ADD BUSINESS PROFILE MODAL (G00-024) */}
+      {isAddProfileModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                <Building2 className="w-5 h-5 text-purple-400" />
+                <span>Add Business Profile (Super Admin)</span>
+              </h3>
+              <button
+                onClick={() => setIsAddProfileModalOpen(false)}
+                className="text-slate-400 hover:text-white text-lg font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Configure an additional business profile with isolated branding, legal entity disclosures, and calendar mappings.
+            </p>
+
+            <form onSubmit={handleCreateNewProfile} className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-300 block font-semibold mb-1">Brand Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Gold Coast Air Conditioning"
+                  value={newBrandName}
+                  onChange={e => setNewBrandName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 block font-semibold mb-1">Tagline</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Premium Commercial & Residential HVAC"
+                  value={newBrandTagline}
+                  onChange={e => setNewBrandTagline(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 block font-semibold mb-1">Brand ID (Slug)</label>
+                  <input
+                    type="text"
+                    placeholder="air_con"
+                    value={newBrandId}
+                    onChange={e => setNewBrandId(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 block font-semibold mb-1">Theme Color</label>
+                  <input
+                    type="color"
+                    value={newBrandColor}
+                    onChange={e => setNewBrandColor(e.target.value)}
+                    className="w-full h-8 bg-slate-950 border border-slate-700 rounded cursor-pointer p-0.5"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 block font-semibold mb-1">Legal Issuer Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Gold Coast Air Con Pty Ltd"
+                  value={newLegalIssuer}
+                  onChange={e => setNewLegalIssuer(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 block font-semibold mb-1">ABN Placeholder</label>
+                  <input
+                    type="text"
+                    value={newAbn}
+                    onChange={e => setNewAbn(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 block font-semibold mb-1">Electrical Licence</label>
+                  <input
+                    type="text"
+                    value={newElecLic}
+                    onChange={e => setNewElecLic(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsAddProfileModalOpen(false)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded cursor-pointer"
+                >
+                  Add Profile
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

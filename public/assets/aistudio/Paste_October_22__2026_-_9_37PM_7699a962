@@ -1,0 +1,692 @@
+# CABMS G00 — COMPLETE APPLICATION CORRECTION AND WORKFLOW INTEGRATION
+
+## YOUR MISSION
+
+You are continuing development of the EXISTING **CABMS — Complete G00 Full-Application UI/UX Demo** in this Google AI Studio project.
+
+The current application is built with React, TypeScript and Vite. It already contains the application shell, ten major views, shared mock state, synthetic fixtures and some tests.
+
+**DO NOT REBUILD THE APPLICATION FROM SCRATCH. DO NOT CREATE A NEW PROJECT.**
+
+Your task is to correct all 42 issues identified in the CABMS G00 workflow audit, connect the existing screens into a coherent working demonstration, and preserve functionality that already works.
+
+If the file `CABMS-G00-FULL-WORKFLOW-GAP-REPORT-2026-10-22.md` is attached, use it as the detailed issue register. The instructions below are self-contained and take priority where a correction is clarified.
+
+### Current application baseline
+
+- Application: CABMS G00
+- Inspected source: PixelsWorker/CABMS
+- Inspected commit: `6862b78113cc0b46b1e66b2c73e755ef823d217e`
+- Framework: React + TypeScript + Vite
+- Architecture: One responsive frontend with in-memory, deterministic mock services
+- Delivery group: G00 — Complete Application UI/UX Demo
+
+Work inside the EXISTING AI Studio application only.
+
+Do not connect, commit, push, synchronize, merge or modify either GitHub repository. Repository identity and integration remain subject to separate owner approval.
+
+## NON-NEGOTIABLE PRODUCT RULES
+
+CABMS is a configurable business automation, job coordination and compliance system serving three brands:
+
+1. Solarcell
+2. Gold Coast Smart Home Solutions
+3. Gold Coast CCTV
+
+The client reports one shared **MYOB Business** company file, with brand-specific quotation and invoice templates.
+
+MYOB remains the intended master for customers, quotations, invoices, payments and stock. CABMS demonstrates a customer-entry interface that writes through to MYOB, not an independent customer master.
+
+Google Calendar is for scheduling integration, Google Maps for safe navigation, email for notifications, and existing websites for enquiries.
+
+G00 MUST remain a synthetic interactive demonstration.
+
+Maintain a persistent banner:
+
+**DEMO — NO LIVE INTEGRATIONS**
+
+Do not introduce:
+
+- Real MYOB OAuth or financial writes
+- Live Google Calendar connections
+- Real email sending or SMTP credentials
+- Gemini API requests, AI assistants or chatbots
+- Firebase, backend APIs, databases or GCP deployments
+- Production authentication or real customer records
+- Customer account dashboards
+- Payroll, inventory, billing subscriptions or route optimisation
+- Unrestricted workflow/form builders
+- Real client documents, licences, signatures, account identifiers or private URLs
+
+Use EMAIL as the approved notification channel. Do not introduce SMS as a required baseline feature.
+
+Preserve Electrical Part B as unresolved. Preserve provisional issuer, smoke-alarm, cabling and template wording without inventing legal validity.
+
+Detailed electronic signing remains explicitly DEFERRED. Manual owner referral is not equivalent to implementing it. The proposed $3,300 threshold is provisional and must not cause automatic legal routing.
+
+## EXECUTION RULES
+
+First inspect the existing components, types, fixtures, utilities and state operations. Preserve working features.
+
+Implement corrections in dependency order. Keep all corrections within the SAME G00 application and shared state.
+
+Use small, maintainable components and typed models. Prefer correcting existing code over adding libraries or restructuring the project.
+
+After each correction batch, verify affected interactions and avoid regressions in completed batches.
+
+Do not add external packages unless genuinely essential and separately approved. Do not modify GitHub history, repository settings, licence declarations, protected project instructions, or public repository assets automatically.
+
+If the complete repair exceeds one execution, finish at a coherent checkpoint, identify the exact completed issue IDs and remaining IDs, and resume within this same application when prompted. Never claim an unimplemented or untested issue is completed.
+
+---
+
+# CORRECTION BATCH 1 — IDENTITY, ACCESS AND CRITICAL RECORD SAFETY
+
+Resolve G00-001, 003, 005, 006, 008, 029, 036 and 037.
+
+### 1. Unified permissions
+
+Create one consistent simulated permission policy for Super Admin, Owner/Admin, Office Staff and Technician.
+
+Apply it to navigation, direct view entry, selected records and mutation actions.
+
+Technicians may access their assigned jobs and relevant documents only. They must not access another technician's jobs, master customer directory, technical settings, office review controls or unauthorized financial actions.
+
+Office Staff may view approved operational information but must not mutate or publish master templates unless expressly permitted by the defined demo role matrix.
+
+Denied actions must not mutate any shared state.
+
+Fix React hook ordering: no conditional hook execution or hooks after early returns.
+
+### 2. Brand and job ownership
+
+Ensure each job, quotation, form, document and communication permanently references the correct business profile.
+
+Switching the active brand must never rewrite another brand's record or issuer.
+
+Give drafts the issuer belonging to their job. Finalized documents must use frozen branding and issuer snapshots.
+
+Prevent stale selected jobs from remaining visible after brand or persona changes without explicit authorized cross-brand context.
+
+### 3. Independent job forms
+
+Remove all fallback behaviour that borrows completed forms from other jobs.
+
+Every new form must begin as an independent unsigned draft associated with its own job, customer, service site, brand and template version.
+
+Never inherit another job's signature, site information, testing results or completed record.
+
+### 4. Safe quotation states
+
+Remove the unsafe quotation fallback to another job's quote.
+
+A job without a quote must display a clear empty state and a legitimate mock Prepare/Link Quote action.
+
+Never display another customer's quote or dereference undefined quotation data.
+
+### 5. Demo sign-in and navigation
+
+Add a lightweight simulated sign-in/logout/session-expired experience while preserving reviewer persona switching.
+
+No real credentials or authentication provider.
+
+Support predictable navigation into a specific job and a minimal customer acceptance view. Browser back/forward or equivalent scoped navigation must not show unauthorized stale records.
+
+---
+
+# CORRECTION BATCH 2 — COMPLETE CUSTOMER AND JOB MANAGEMENT
+
+Resolve G00-009 through G00-015, G00-018, G00-035 and G00-041.
+
+### 6. MYOB customer entry
+
+Complete the mock customer write-through journey:
+
+- Search existing customers.
+- Detect matching name, email or phone.
+- Display possible duplicates.
+- Allow selecting an existing record or correcting the new entry.
+- Prevent automatic duplicate creation.
+- Demonstrate PENDING, SYNCED, FAILED and UNCERTAIN outcomes.
+- Preserve recoverable drafts.
+- Provide retry, reconciliation and resolved/cancelled outcomes.
+
+When simulated MYOB is disconnected, do not report a successful write.
+
+Use fake external MYOB references only after simulated acknowledgement.
+
+### 7. Job creation, assignment and history
+
+Allow Office Staff or an authorized owner to:
+
+- Select an existing or acknowledged customer.
+- Enter a job title and service-site details.
+- Select a configured job type.
+- Create a NEW unassigned and unscheduled job.
+- Assign one of at least two synthetic technicians.
+- Schedule an appointment separately.
+- Start work, record progress and complete or request a revisit.
+- View customer, job, document, appointment and communication history.
+
+Do not force assignment to TECH-001.
+
+Do not create invoices automatically for every newly created job.
+
+### 8. Job-type requirements
+
+Make the configuration matrix actually control applicable forms.
+
+When a job is created, snapshot the applicable rules and their version.
+
+Keep documentation applicability separate from invoice routing.
+
+Demonstrate a direct-to-invoice job with no applicable forms, but never allow a checkbox to silently bypass otherwise required documents.
+
+Overrides must be explicit, permission-controlled and labelled as synthetic policy.
+
+### 9. Separate operational and appointment states
+
+Keep appointment cancellation separate from job cancellation.
+
+Prevent cancelled jobs from completing without an appropriate allowed transition.
+
+Support revisit, rebooking and explicit job cancellation.
+
+Keep operational job status independent from quotation, invoice and payment status.
+
+Do not introduce a persisted COMPLETION_CHECK status.
+
+### 10. MYOB invoice handoff
+
+Add a minimal synthetic MYOB-linked invoice preparation and status demonstration.
+
+Show draft, issued/unpaid, paid, failure and uncertain/reconciliation scenarios without building accounting logic.
+
+Never fabricate a successful invoice reference when the simulated write fails.
+
+### 11. Website enquiry conversion
+
+Preserve the existing website inbox.
+
+Add explicit customer matching and job-type selection.
+
+If MYOB customer resolution fails, keep the enquiry pending or create a clearly labelled unresolved operational draft.
+
+Never report clean customer sync or completed financial handoff when acknowledgement is absent.
+
+Prevent duplicate conversion of the same enquiry.
+
+### 12. Correct product terminology
+
+Replace unsupported references to MYOB AccountRight, AccountRight Live and Production AccountRight File with:
+
+"MYOB Business — Client-Reported Shared Company File (Simulated)"
+
+Brand-specific template API compatibility remains unverified.
+
+Remove invented policy/product assumptions and replace realistic-looking legal/account identifiers with unmistakably synthetic placeholders.
+
+---
+
+# CORRECTION BATCH 3 — FULLY EDITABLE TECHNICIAN FORMS AND VERSIONED DOCUMENTS
+
+Resolve G00-002, 004, 007, 025, 026, 027 and 028.
+
+THIS IS A CRITICAL PART OF THE APPLICATION.
+
+### 13. Complete all five form families
+
+Build proper interactive mobile form workflows for:
+
+**JSA / Risk Assessment**
+- Editable job/site/personnel/task details
+- Induction and competency controls
+- L/M/H/E risk selection
+- Add/edit/remove hazard and task rows
+- Controls and residual-risk fields
+- PPE Yes/No/N/A and notes
+- Isolation and permit controls
+- Emergency and document-control fields
+- Validation and DEMO technician sign-off
+
+**Electrical Certificate**
+- Editable customer, occupier and work details
+- Repeatable tested-work rows
+- Editable insulation, polarity, earth continuity and RCD results
+- Pass/Fail controls
+- Standards, limitations and sign-off
+- Permanent visible warning for missing Electrical Part B
+
+**Smoke Alarm Certificate**
+- Editable property and inspection information
+- Scope-of-work checkboxes
+- Repeatable alarm schedule
+- Room, model, power source and provisional expiry information
+- Individual Pass/Fail, button-test and interconnection results
+- Corrective-action notes
+- Related electrical-document references and attachments
+- Visible unapproved-field notices
+
+**TCA1**
+- Cabler/employer/customer information
+- Work description, date and service site
+- Registration placeholder
+- Actual supervision selection
+- Certification and DEMO sign-off
+
+**TCA2**
+- Defect description
+- Cabling type, location and scope
+- Risk category, urgency and responsible party
+- Rectification recommendation and date
+- Photo/evidence linkage
+- Customer acknowledgement
+- Office review
+- Mock rectification follow-up
+
+All inputs must change the selected job's OWN typed mock state.
+
+Leaving and returning to the form must preserve entered values until Reset Demo.
+
+Show validation errors before finalization.
+
+### 14. Document snapshots and PDF previews
+
+Replace the generic document preview with a truthful preview of the selected form.
+
+It must show its actual field values, issuer, brand, template version, document status, attachments, DEMO signer and actual simulated sign-off timestamp.
+
+Unsigned documents must display DRAFT / NOT SIGNED.
+
+Never display hardcoded sign-off or timestamp information.
+
+Finalization freezes the document's content, issuer, branding, version, attachments and signature evidence.
+
+Printing/Save PDF must isolate the selected document from the application navigation and include the DEMO notice and unresolved-source warnings.
+
+### 15. Version lifecycle
+
+Implement an actual:
+
+DRAFT → REVIEW → PUBLISHED
+
+workflow with immutable published revisions.
+
+Editing a published template creates a separate draft revision rather than overwriting the old record.
+
+Allow reviewing, publishing and reopening historical versions.
+
+New documents and quotations use the current published revision.
+
+Previously finalized forms and accepted Terms retain their original versions and contents.
+
+### 16. Owner configuration
+
+Add bounded editors for:
+
+- Supported form labels
+- Help text
+- Dropdown choices
+- Standard wording
+- Terms
+- Email subjects/bodies
+- Reminder lead times
+- Supported job-type requirement rules
+
+This is NOT an unrestricted form builder.
+
+Office Staff and Technician cannot change restricted master settings.
+
+### 17. Template review and attachment linkage
+
+Demonstrate built-in synthetic Word/PDF sample selection, preview, pending mapping, review, supported/unsupported outcomes and publication readiness.
+
+Selecting a file never automatically proves that it can become a digital form or that the document is legally correct.
+
+Allow technicians to select synthetic photos/files and attach them to specific forms and jobs.
+
+Support preview, unlink/remove and missing-attachment errors.
+
+### 18. Completion and non-compliance
+
+Validate the actual required answers and finalized documents.
+
+Preserve failed inspection results as Fail.
+
+Distinguish the outcome of an inspection from rectification still outstanding.
+
+Use a clearly labelled provisional demo rule for revisit decisions, not an invented universal legal rule.
+
+Completion failure must return meaningful missing requirements without changing the operational status.
+
+---
+
+# CORRECTION BATCH 4 — QUOTATIONS, TERMS AND CUSTOMER ACCEPTANCE
+
+Resolve G00-016 and G00-017.
+
+### 19. MYOB-linked quotation preparation
+
+Create a minimal synthetic quotation journey:
+
+1. Open a job without a quotation.
+2. Select Prepare/Link MYOB Quote.
+3. Prefill customer, job and brand information.
+4. Demonstrate editable quotation preparation fields without building competing accounting infrastructure.
+5. Simulate acknowledgement with a fake MYOB quotation reference.
+6. Apply the correct published Terms snapshot.
+7. Preview and mark as sent.
+8. Generate a synthetic customer acceptance-link scenario.
+
+Include one new, unaccepted quotation fixture.
+
+Support revision, revocation and supersession in the simulated workflow.
+
+### 20. Independent recipient-link experience
+
+Provide a customer-facing acceptance view without office navigation, customer-account registration or a customer dashboard.
+
+Support valid, invalid, expired, revoked, superseded and already-accepted states.
+
+Show exact quote, customer, amount, brand and frozen Terms version.
+
+Consent must be bound to the selected quote/revision and reset when switching context.
+
+One successful acceptance creates one history event.
+
+Keep the detailed electronic-signature feature labelled DEFERRED and retain manual referral as a placeholder only.
+
+---
+
+# CORRECTION BATCH 5 — SCHEDULING AND AUTOMATION
+
+Resolve G00-019 through G00-023.
+
+### 21. Appointment reminders
+
+Calculate reminder due times from appointment time and configured lead time using a consistent Australian business timezone.
+
+Example: appointment at 14:00 with a two-hour reminder must schedule the reminder for 12:00.
+
+Rescheduling must suppress the old pending reminders and create new reminders linked to the new appointment revision.
+
+Cancellation must suppress applicable pending reminders.
+
+### 22. Functional virtual clock
+
+Make the existing demo clock process deterministic mock due events.
+
+Advancing the clock across a reminder due time should move the message through an observable pending/sent/failed/uncertain outcome.
+
+Repeated clock advances must not duplicate the same dispatch.
+
+No real timers, cloud queues or email services.
+
+### 23. Simulated Google Calendar setup
+
+Show one primary Calendar mapping with up to three optional mappings.
+
+Allow synthetic selection, removal, assignment and connection outcomes.
+
+Demonstrate successful sync, denied permission, failed update, uncertain update, retry and recovery.
+
+Preserve local appointments during simulated Calendar failures.
+
+Keep Google Maps navigation limited to safe public example navigation without an SDK or API key.
+
+### 24. Review automation
+
+Use one logical review invitation per job.
+
+Support manual triggers and separately labelled provisional automatic triggers.
+
+Implement:
+
+NOT_SENT → PENDING → SENT / FAILED / UNCERTAIN
+
+Prevent duplicate sending when PENDING, SENT or UNCERTAIN.
+
+Reconciliation must support confirmed sent, confirmed not sent and still uncertain.
+
+Only confirmed non-delivery can permit a controlled retry.
+
+### 25. Email previews and selected certificates
+
+Provide branded previews of:
+
+- Appointment confirmations
+- Appointment reminders
+- Rescheduling/cancellation messages
+- Selected compliance certificate delivery
+- Review requests
+
+Certificate selection must list only actual finalized in-memory documents as deliverable attachments.
+
+Unsigned or missing documents must not be labelled as signed PDFs.
+
+Show simulated recipient, sender brand, subject, content, attachments, delivery status and recovery history.
+
+Use EMAIL only unless another communication channel receives separate approval.
+
+---
+
+# CORRECTION BATCH 6 — BUSINESS SETUP, DEMO QUALITY AND RESPONSIVENESS
+
+Resolve G00-024, 030, 038, 039 and 040.
+
+### 26. Complete Super Admin setup
+
+Implement the actual Add Business interaction.
+
+Start with the three required brands; demonstrate an optional fourth profile through the UI.
+
+Allow safe synthetic logo selection, colour preview, contact placeholders, issuer placeholders, quotation/invoice template mappings, review URL settings and sender configuration.
+
+Keep one shared simulated MYOB company connection.
+
+Profile creation must not imply independent-company accounting or public SaaS registration.
+
+### 27. Deterministic scenario state
+
+Remove `Date.now()` from generated mock IDs.
+
+Use controlled sequential IDs and deterministic fixtures.
+
+Reset Demo must restore all in-memory records, clock, connections, forms, configurations, messages and scenario controls.
+
+Switching back to Default Scenario must restore the documented default scenario rather than leaving previous failure states active.
+
+Ensure open dialogs and unsaved local draft state do not survive a complete reset unexpectedly.
+
+### 28. Accessibility and responsive design
+
+Maintain the existing practical business-management styling but improve actual usability.
+
+Use accessible labels, adequate contrast, readable typography and touch-friendly form controls.
+
+Replace clickable non-semantic containers with appropriate accessible interactions.
+
+Dialogs must support logical focus, Escape dismissal and focus restoration.
+
+Test desktop, tablet and phone layouts, especially the technician forms and modal dialogs.
+
+### 29. Complete representative UI states
+
+Demonstrate meaningful:
+
+- Loading
+- Empty
+- Validation error
+- Permission denied
+- Expired link
+- Missing form/document
+- Missing attachment
+- Integration failure
+- Uncertain result
+- Successful recovery
+
+Every important failure must preserve the correct state and provide a useful next action.
+
+---
+
+# CORRECTION BATCH 7 — ISOLATION, EXPORT QUALITY AND REVIEW EVIDENCE
+
+Resolve G00-031, 032, 033, 034 and 042.
+
+### 30. Remove unintended runtime assumptions
+
+Review `package.json`, `metadata.json`, `.env.example` and application imports.
+
+The G00 frontend must not require Gemini API, Express backend, Firebase, Cloud Run, MYOB OAuth or SMTP credentials.
+
+Identify unused AI Studio scaffold declarations.
+
+Correct unnecessary capability claims inside the existing AI Studio project where safe. Do not introduce dependencies or services to satisfy the scaffold.
+
+### 31. Public assets and source safeguards
+
+Inventory the three planning/prompt files under `public/assets/aistudio/` and all seven committed AI Studio PNG artifacts.
+
+Flag anything that should not be packaged or published.
+
+Do not delete artifacts, rewrite history or change public Git files automatically. Report the recommended disposition for owner review.
+
+Review the Apache-2.0 SPDX header's provenance; do not automatically remove legitimate third-party attribution or declare a project-wide licence.
+
+Use only synthetic fixtures and placeholder branding.
+
+### 32. Reproducible verification
+
+Verify available type-check, build and unit-test commands.
+
+The existing `npm run lint` runs TypeScript checking, not ESLint. Report these separately.
+
+Do not claim tests passed simply because a test file exists.
+
+Extend the existing regression coverage to cover the corrected shared-state behaviour. Run browser interaction and visual checks if the environment supports them.
+
+For every verification report, identify whether it is PASSED, FAILED, NOT RUN or UNAVAILABLE.
+
+### 33. Repository and approval boundary
+
+The inspected application is associated with `PixelsWorker/CABMS`, while the earlier planned canonical repository was `chinedigitaldeveloper-ui/CABMS`.
+
+This discrepancy is not permission to create another repository, migrate code or change Git settings.
+
+Do not GitHub-sync, commit, push, merge, deploy, change visibility, modify protected manager documents or publish new assets.
+
+Preserve the complete corrected AI Studio application for review and later separately approved ZIP export.
+
+---
+
+# MANDATORY END-TO-END ACCEPTANCE TESTS
+
+After implementing the corrections, verify the 30 scenarios from the consolidated G00 audit, including:
+
+QA-01: Unsigned JSA shows actual draft state.
+
+QA-02: Document issuer follows job brand, not active workspace.
+
+QA-03: New jobs receive independent unsigned forms.
+
+QA-04: New jobs without quotes display safe empty states.
+
+QA-05: New quotation can be prepared, issued and accepted exactly once.
+
+QA-06: Consent does not transfer between quotations.
+
+QA-07: Technician is denied unauthorized screens and jobs.
+
+QA-08: Office Staff cannot modify restricted master templates.
+
+QA-09: Repeated persona switching does not cause React hook errors.
+
+QA-10: Duplicate customer matching prevents default duplicate creation.
+
+QA-11: Disconnected MYOB allows draft recovery but no false sync success.
+
+QA-12: Website conversion preserves unresolved customer linkage.
+
+QA-13: New jobs support unassigned and second-technician workflows.
+
+QA-14: New rule versions apply to new jobs without rewriting old snapshots.
+
+QA-15: Form field edits persist and appear in document previews.
+
+QA-16: Synthetic attachments are linked to the correct job and form.
+
+QA-17: Finalized version A stays immutable after version B is published.
+
+QA-18: A 14:00 appointment's two-hour reminder is due at 12:00.
+
+QA-19: Advancing the clock causes one due dispatch without duplicates.
+
+QA-20: Cancelling a visit is distinct from cancelling a job.
+
+QA-21: Defect/revisit scenarios preserve truthful failed results.
+
+QA-22: Calendar sync failures are visible and recoverable.
+
+QA-23: Manual and automatic review triggers share deduplication.
+
+QA-24: Only finalized, selected documents can be mock-delivered.
+
+QA-25: Add Business and profile configuration are interactive.
+
+QA-26: Synthetic template samples support review and error states.
+
+QA-27: Reset restores all demo state and deterministic IDs.
+
+QA-28: Main journeys work on mobile and using a keyboard.
+
+QA-29: Print/PDF output contains only the correct selected document.
+
+QA-30: Export/dependency/network review confirms no unapproved live runtime.
+
+**All 30 checks must be reported truthfully. If a browser or tool is unavailable, mark that check NOT RUN rather than claiming success.**
+
+# FINAL ACCEPTANCE JOURNEYS
+
+The demo is not complete until a reviewer can perform these connected journeys:
+
+**Journey 1 — New customer through completion**
+
+Create a synthetic customer → resolve simulated MYOB acknowledgement → create a job → assign technician → prepare/link quotation → customer accepts → schedule → technician completes applicable forms → finalizes documents → office checks completion → sends selected documents → triggers review request.
+
+Use the SAME customer and SAME job throughout.
+
+**Journey 2 — Direct-to-invoice**
+
+Create a legitimate no-required-forms service → perform work → complete operationally → prepare/link simulated MYOB invoice → demonstrate financial and review-trigger states.
+
+**Journey 3 — Cabling defect**
+
+Create/select CCTV job → record TCA2 failure → link synthetic evidence → obtain demo acknowledgement → complete office review → create follow-up/revisit → preserve original defect and document history.
+
+**Journey 4 — Configuration and version preservation**
+
+Finalize a document under version A → revise and publish version B → create new work using B → reopen the original document and confirm A is unchanged.
+
+**Journey 5 — Recovery and permissions**
+
+Demonstrate disconnected MYOB, denied-access persona, duplicate customer, Calendar failure, rescheduled reminder and uncertain review outcome without corrupting unrelated records.
+
+# REQUIRED FINAL REPORT
+
+When finished, provide:
+
+1. Exactly which G00-001 through G00-042 issues were corrected.
+2. Which issues remain incomplete, blocked or require owner approval.
+3. Files/components changed inside AI Studio.
+4. New or corrected user journeys.
+5. Actual test results and execution evidence.
+6. Desktop and mobile visual verification results.
+7. Remaining privacy/dependency/export concerns.
+8. Any changes that require separate Rockson approval before GitHub integration.
+9. An explicit G00 readiness verdict: PASS, CHANGES REQUIRED or BLOCKED.
+
+Do not claim production readiness, legal compliance or real integration.
+
+Do not mark G00 accepted on Rockson's behalf.
+
+**Begin correcting the EXISTING CABMS application now, following the dependency-ordered batches above. Preserve its useful foundation and complete the real simulated business journeys—not just their screen layouts.**

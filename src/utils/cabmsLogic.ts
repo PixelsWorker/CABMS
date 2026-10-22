@@ -3,7 +3,16 @@
  * Decoupled from UI to enable fast unit testing via node:test and tsx
  */
 
-import { Customer, Job, JsaFormData, ElectricalCertData, SmokeAlarmCertData, Tca1CertData, Tca2CertData, Persona } from '../types/cabms.ts';
+import {
+  Customer,
+  Job,
+  JsaFormData,
+  ElectricalCertData,
+  SmokeAlarmCertData,
+  Tca1CertData,
+  Tca2CertData,
+  Persona,
+} from '../types/cabms.ts';
 
 export interface CompletionValidationResult {
   canComplete: boolean;
@@ -25,14 +34,29 @@ export function validateJobCompletion(
   const missingRequirements: string[] = [];
   const warnings: string[] = [];
 
-  // Direct-to-invoice jobs require no compliance forms
-  if (job.isDirectToInvoice) {
+  // G00-014: A cancelled job cannot complete without reopening
+  if (job.status === 'CANCELLED') {
+    return {
+      canComplete: false,
+      missingRequirements: ['Job is currently CANCELLED. Operational reopening is required before completion.'],
+      warnings: [],
+      isDirectToInvoice: job.isDirectToInvoice,
+    };
+  }
+
+  // G00-012: Direct-to-invoice only bypasses forms if formsRequired is genuinely empty
+  if (job.isDirectToInvoice && job.formsRequired.length === 0) {
     return {
       canComplete: true,
       missingRequirements: [],
       warnings: ['Direct-to-invoice service: no compliance documentation required for operational completion.'],
       isDirectToInvoice: true,
     };
+  }
+
+  // If formsRequired has items, they must be validated regardless of isDirectToInvoice flag
+  if (job.formsRequired.length === 0 && !job.isDirectToInvoice) {
+    warnings.push('Advisory: No compliance documents registered for this work order.');
   }
 
   // Check each required form for this job type
@@ -44,6 +68,8 @@ export function validateJobCompletion(
           missingRequirements.push('JSA / Risk Assessment record not started');
         } else if (!jsa.signedOff) {
           missingRequirements.push('JSA / Risk Assessment requires technician DEMO sign-off');
+        } else if (!jsa.inductionCompleted || !jsa.competencyVerified) {
+          missingRequirements.push('JSA requires site induction and competency verification to be confirmed');
         } else if (jsa.steps.length === 0) {
           missingRequirements.push('JSA must have at least one hazard/control task step');
         }
@@ -70,7 +96,7 @@ export function validateJobCompletion(
           // Check for any failing alarm in schedule
           const failingAlarms = smoke.alarmSchedule.filter(a => a.passFail === 'Fail');
           if (failingAlarms.length > 0) {
-            warnings.push(`Warning: ${failingAlarms.length} smoke alarm(s) marked Fail in schedule.`);
+            warnings.push(`Warning: ${failingAlarms.length} smoke alarm(s) marked Fail in schedule. Remediation required.`);
           }
         }
         warnings.push('Provisional notice: Room/model count limits and expiry wording are provisional per unapproved source variants.');
@@ -111,7 +137,7 @@ export function validateJobCompletion(
     canComplete: missingRequirements.length === 0,
     missingRequirements,
     warnings,
-    isDirectToInvoice: false,
+    isDirectToInvoice: job.isDirectToInvoice,
   };
 }
 
@@ -144,6 +170,26 @@ export function deduplicateReviewRequest(
   return { allowed: true, result };
 }
 
+/**
+ * G00-019: Calculate reminder lead time in business format.
+ * E.g., for appointment at 2026-11-02 14:00 with leadHours = 2, returns "2026-11-02 12:00".
+ */
+export function calculateReminderDueTime(dateStr: string, timeStr: string, leadHours: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const [hour, minute] = timeStr.split(':').map(Number);
+  const date = new Date(year, month - 1, day, hour, minute);
+  date.setHours(date.getHours() - leadHours);
+
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const y = date.getFullYear();
+  const m = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const min = pad(date.getMinutes());
+
+  return `${y}-${m}-${d} ${h}:${min}`;
+}
+
 export function suppressOldReminders(
   job: Job,
   reason: string,
@@ -154,7 +200,7 @@ export function suppressOldReminders(
       return {
         ...r,
         suppressed: true,
-        suppressionReason: `${reason} at ${nowIso}`,
+        suppressionReason: `${reason} at ${nowIso.slice(0, 16)}`,
       };
     }
     return r;
@@ -185,7 +231,7 @@ export function checkCustomerDuplicate(
 
 export function verifyPersonaAccess(
   persona: Persona,
-  resource: 'all_customers' | 'technical_integrations' | 'template_publishing' | 'financial_writes' | 'assigned_job' | 'unassigned_job',
+  resource: 'all_customers' | 'technical_integrations' | 'template_publishing' | 'template_editing' | 'financial_writes' | 'assigned_job' | 'unassigned_job',
   jobAssignment?: { assignedTechId: string | null; currentTechId: string }
 ): { allowed: boolean; reason?: string } {
   switch (persona) {
@@ -196,7 +242,7 @@ export function verifyPersonaAccess(
       if (resource === 'technical_integrations') {
         return {
           allowed: false,
-          reason: 'Owner/Admin has operational oversight but cannot alter Super Admin technical credentials.',
+          reason: 'Owner/Admin has operational oversight but cannot alter Super Admin technical credentials or bindings.',
         };
       }
       return { allowed: true };
@@ -205,8 +251,8 @@ export function verifyPersonaAccess(
       if (resource === 'technical_integrations') {
         return { allowed: false, reason: 'Office Staff cannot access technical integration settings.' };
       }
-      if (resource === 'template_publishing') {
-        return { allowed: false, reason: 'Office Staff can view templates but cannot publish or alter master compliance templates.' };
+      if (resource === 'template_publishing' || resource === 'template_editing') {
+        return { allowed: false, reason: 'Office Staff can view templates but cannot edit or publish master compliance templates.' };
       }
       return { allowed: true };
 
@@ -214,15 +260,20 @@ export function verifyPersonaAccess(
       if (resource === 'all_customers') {
         return { allowed: false, reason: 'Technician access is restricted to assigned jobs and sites only; full customer directory is not permitted.' };
       }
-      if (resource === 'technical_integrations' || resource === 'template_publishing' || resource === 'financial_writes') {
-        return { allowed: false, reason: 'Technician role cannot access settings, templates, or financial accounting writes.' };
+      if (
+        resource === 'technical_integrations' ||
+        resource === 'template_publishing' ||
+        resource === 'template_editing' ||
+        resource === 'financial_writes'
+      ) {
+        return { allowed: false, reason: 'Technician role cannot access technical settings, master templates, or financial accounting writes.' };
       }
       if (resource === 'unassigned_job') {
         return { allowed: false, reason: 'Technician can only access jobs assigned to them. Direct route to unassigned work is denied.' };
       }
       if (resource === 'assigned_job') {
-        if (jobAssignment && jobAssignment.assignedTechId !== jobAssignment.currentTechId) {
-          return { allowed: false, reason: 'This job is assigned to another technician.' };
+        if (!jobAssignment || !jobAssignment.assignedTechId || jobAssignment.assignedTechId !== jobAssignment.currentTechId) {
+          return { allowed: false, reason: 'This job is not assigned to you.' };
         }
         return { allowed: true };
       }

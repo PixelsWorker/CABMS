@@ -1,6 +1,6 @@
 /**
  * CABMS Application Context & In-Memory Deterministic State
- * Implements strict isolation with resettable seed state
+ * Implements strict isolation with resettable seed state and full workflow continuity.
  */
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
@@ -11,6 +11,7 @@ import {
   Job,
   JobStatus,
   Persona,
+  JobTypeConfig,
   JsaFormData,
   ElectricalCertData,
   SmokeAlarmCertData,
@@ -19,6 +20,7 @@ import {
   TemplateSetting,
   WebsiteEnquiry,
   SampleAttachment,
+  Quote,
 } from '../types/cabms.ts';
 import {
   INITIAL_BRANDS,
@@ -26,11 +28,13 @@ import {
   INITIAL_DEMO_CLOCK,
   INITIAL_ELECTRICAL_CERT,
   INITIAL_JOBS,
+  INITIAL_JOB_TYPES,
   INITIAL_JSA_FORM,
   INITIAL_SAMPLE_ATTACHMENTS,
   INITIAL_SMOKE_ALARM_CERT,
   INITIAL_TCA1_CERT,
   INITIAL_TCA2_CERT,
+  INITIAL_TECHNICIANS,
   INITIAL_TEMPLATES,
   INITIAL_WEBSITE_ENQUIRIES,
 } from '../data/seedData.ts';
@@ -40,6 +44,7 @@ import {
   suppressOldReminders,
   checkCustomerDuplicate,
   verifyPersonaAccess,
+  calculateReminderDueTime,
   CompletionValidationResult,
 } from '../utils/cabmsLogic.ts';
 
@@ -60,8 +65,14 @@ interface CabmsContextType {
   setActiveBrandId: (b: BrandId) => void;
   activeBrand: BrandConfig;
   brands: Record<string, BrandConfig>;
+  technicians: typeof INITIAL_TECHNICIANS;
   updateBrandConfig: (brand: BrandConfig) => void;
   addNewBrandProfile: (brand: BrandConfig) => void;
+
+  // Session & Demo Sign-in Simulation (G00-036)
+  isSimulatedSignedIn: boolean;
+  simulateSignIn: (role: Persona) => void;
+  simulateSignOut: () => void;
 
   // Demo Controls & Clock
   demoClock: string; // ISO string
@@ -74,7 +85,7 @@ interface CabmsContextType {
   selectedJobId: string | null;
   setSelectedJobId: (id: string | null) => void;
 
-  // Integrations Status (Simulated)
+  // Integrations Status (Simulated MYOB Business)
   myobConnection: {
     status: 'CONNECTED' | 'DISCONNECTED' | 'FAILED';
     companyFile: string;
@@ -88,9 +99,21 @@ interface CabmsContextType {
   customers: Customer[];
   simulateCustomerWriteThrough: (
     customerDraft: Omit<Customer, 'id' | 'myobCustomerId' | 'syncStatus' | 'createdAt'>,
-    simulationOutcome?: 'SUCCESS' | 'FAILURE' | 'UNCERTAIN'
-  ) => { success: boolean; customer?: Customer; error?: string; isDuplicate?: boolean; isUncertain?: boolean };
+    simulationOutcome?: 'SUCCESS' | 'FAILURE' | 'UNCERTAIN',
+    forceDistinct?: boolean
+  ) => {
+    success: boolean;
+    customer?: Customer;
+    error?: string;
+    isDuplicate?: boolean;
+    matchedCustomer?: Customer;
+    isUncertain?: boolean;
+  };
   reconcileUncertainCustomer: (customerId: string, confirmCreate: boolean) => void;
+  retryFailedCustomerSync: (customerId: string) => void;
+
+  // Job Types
+  jobTypes: JobTypeConfig[];
 
   // Jobs
   jobs: Job[];
@@ -99,14 +122,20 @@ interface CabmsContextType {
   attemptCompleteJob: (jobId: string) => CompletionValidationResult;
   rescheduleJobAppointment: (jobId: string, newDate: string, newTime: string) => void;
   cancelJobAppointment: (jobId: string, reason: string) => void;
+  cancelWholeJob: (jobId: string, reason: string) => void;
+  reopenCancelledJob: (jobId: string) => void;
 
-  // Form State
-  jsaForms: Record<string, JsaFormData>;
-  electricalCerts: Record<string, ElectricalCertData>;
-  smokeAlarmCerts: Record<string, SmokeAlarmCertData>;
-  tca1Certs: Record<string, Tca1CertData>;
-  tca2Certs: Record<string, Tca2CertData>;
+  // Independent Form State per Job (G00-002, G00-005)
+  getOrCreateJsa: (jobId: string) => JsaFormData;
+  getOrCreateElectrical: (jobId: string) => ElectricalCertData;
+  getOrCreateSmokeAlarm: (jobId: string) => SmokeAlarmCertData;
+  getOrCreateTca1: (jobId: string) => Tca1CertData;
+  getOrCreateTca2: (jobId: string) => Tca2CertData;
   updateJsaForm: (jobId: string, data: Partial<JsaFormData>) => void;
+  updateElectricalForm: (jobId: string, data: Partial<ElectricalCertData>) => void;
+  updateSmokeAlarmForm: (jobId: string, data: Partial<SmokeAlarmCertData>) => void;
+  updateTca1Form: (jobId: string, data: Partial<Tca1CertData>) => void;
+  updateTca2Form: (jobId: string, data: Partial<Tca2CertData>) => void;
   signOffJsa: (jobId: string) => void;
   signOffSmokeAlarm: (jobId: string) => void;
   signOffElectrical: (jobId: string) => void;
@@ -115,29 +144,42 @@ interface CabmsContextType {
   customerAckTca2: (jobId: string) => void;
   officeReviewTca2: (jobId: string) => void;
 
-  // Sample Attachments
+  // Sample Attachments & Linkage (G00-027)
   sampleAttachments: SampleAttachment[];
+  attachSampleToJobForm: (jobId: string, formType: string, sampleId: string) => void;
+  removeSampleFromJobForm: (jobId: string, formType: string, sampleId: string) => void;
 
-  // Quotes & Acceptance
-  quotes: Record<string, Job['quote']>;
+  // Quotes & Acceptance (G00-006, G00-016, G00-017)
+  prepareQuoteForJob: (
+    jobId: string,
+    title: string,
+    lineItems: { id: string; description: string; quantity: number; unitPrice: number; total: number }[]
+  ) => Quote;
   simulateQuoteAcceptance: (
     jobId: string,
     scenario: 'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted'
   ) => { success: boolean; message: string };
 
-  // Reviews & Deduplication
+  // Invoices (G00-018)
+  prepareInvoiceForJob: (jobId: string, amount: number) => void;
+
+  // Reviews & Deduplication (G00-021)
   triggerReviewRequest: (jobId: string, simulateFail?: boolean) => { success: boolean; message: string };
   reconcileReviewRequest: (jobId: string) => void;
 
-  // Templates & Terms
+  // Templates & Version Lifecycle (G00-007, G00-025, G00-026)
   templates: TemplateSetting[];
   publishTemplateVersion: (templateId: string) => void;
-  createTemplateDraft: (templateId: string, newContent: string) => void;
+  createTemplateDraftRevision: (templateId: string, newContent: string) => void;
 
-  // Website Handoff Queue
+  // Website Handoff Queue (G00-011)
   websiteEnquiries: WebsiteEnquiry[];
   simulateWebsiteSubmission: (brandId: BrandId) => void;
-  convertEnquiryToJob: (enquiryId: string) => { customerId: string; jobId: string };
+  convertEnquiryToJob: (
+    enquiryId: string,
+    matchedCustomerId?: string,
+    jobTypeId?: string
+  ) => { customerId: string; jobId: string; unresolvedWarning?: string };
   dismissEnquiry: (enquiryId: string) => void;
 
   // UI Toast / Feedback Banner
@@ -148,6 +190,17 @@ interface CabmsContextType {
 
 const CabmsContext = createContext<CabmsContextType | undefined>(undefined);
 
+// Deterministic sequential ID generator (G00-030)
+let seqCounters = {
+  customer: 10,
+  job: 110,
+  quote: 50,
+  invoice: 100,
+  reminder: 200,
+  enquiry: 310,
+  revision: 10,
+};
+
 export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Navigation & Personas
   const [persona, setPersona] = useState<Persona>('owner_admin');
@@ -156,11 +209,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [selectedJobId, setSelectedJobId] = useState<string | null>('JOB-2026-101');
   const [activeScenario, setActiveScenario] = useState<DemoScenario>('default');
+  const [isSimulatedSignedIn, setIsSimulatedSignedIn] = useState(true);
 
   // Clock
   const [demoClock, setDemoClock] = useState<string>(INITIAL_DEMO_CLOCK);
 
-  // Simulated MYOB Connection
+  // Simulated MYOB Business Connection (G00-035)
   const [myobConnection, setMyobConnection] = useState<{
     status: 'CONNECTED' | 'DISCONNECTED' | 'FAILED';
     companyFile: string;
@@ -169,7 +223,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     errorMessage?: string;
   }>({
     status: 'CONNECTED',
-    companyFile: 'CABMS Consolidated Holdings Pty Ltd (Production AccountRight File)',
+    companyFile: 'MYOB Business — Client-Reported Shared Company File (Simulated)',
     companyId: 'MYOB-CO-9921',
     lastSync: '2026-11-02 08:45 UTC+10',
   });
@@ -177,11 +231,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // State Collections
   const [customers, setCustomers] = useState<Customer[]>(INITIAL_CUSTOMERS);
   const [jobs, setJobs] = useState<Job[]>(INITIAL_JOBS);
+  const [jobTypes, setJobTypes] = useState<JobTypeConfig[]>(INITIAL_JOB_TYPES);
   const [templates, setTemplates] = useState<TemplateSetting[]>(INITIAL_TEMPLATES);
   const [websiteEnquiries, setWebsiteEnquiries] = useState<WebsiteEnquiry[]>(INITIAL_WEBSITE_ENQUIRIES);
   const [sampleAttachments] = useState<SampleAttachment[]>(INITIAL_SAMPLE_ATTACHMENTS);
 
-  // Compliance Forms per Job
+  // Compliance Forms per Job (G00-005: job-owned instances)
   const [jsaForms, setJsaForms] = useState<Record<string, JsaFormData>>({
     'JOB-2026-101': { ...INITIAL_JSA_FORM },
     'JOB-2026-103': { ...INITIAL_JSA_FORM, jobReference: 'JOB-2026-103', signedOff: true },
@@ -219,15 +274,18 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const clearDemoNotification = () => setDemoNotification(null);
 
-  // Reset entire demo to seed state
+  // Reset entire demo to seed state (G00-030)
   const resetDemo = () => {
+    seqCounters = { customer: 10, job: 110, quote: 50, invoice: 100, reminder: 200, enquiry: 310, revision: 10 };
     setPersona('owner_admin');
     setActiveBrandId('solarcell');
     setBrands(INITIAL_BRANDS);
+    setJobTypes(INITIAL_JOB_TYPES);
     setDemoClock(INITIAL_DEMO_CLOCK);
+    setIsSimulatedSignedIn(true);
     setMyobConnection({
       status: 'CONNECTED',
-      companyFile: 'CABMS Consolidated Holdings Pty Ltd (Production AccountRight File)',
+      companyFile: 'MYOB Business — Client-Reported Shared Company File (Simulated)',
       companyId: 'MYOB-CO-9921',
       lastSync: '2026-11-02 08:45 UTC+10',
     });
@@ -250,21 +308,49 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification('Demo restored to clean initial seed state.', 'success');
   };
 
-  // Clock Advancement
+  // Clock Advancement with Deterministic Event Processor (G00-020)
   const advanceClock = (hours: number) => {
     const current = new Date(demoClock);
     current.setHours(current.getHours() + hours);
     const newClock = current.toISOString();
     setDemoClock(newClock);
-    showDemoNotification(`Demo business clock advanced by ${hours} hr(s) to ${current.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`, 'info');
+
+    // Process due reminders
+    let deliveredCount = 0;
+    setJobs(prev =>
+      prev.map(j => {
+        const updatedReminders = j.reminders.map(r => {
+          if (!r.delivered && !r.suppressed) {
+            // Check if scheduledFor <= newClock
+            const schedDate = new Date(r.scheduledFor.replace(' ', 'T') + ':00+10:00');
+            if (schedDate <= current) {
+              deliveredCount++;
+              return {
+                ...r,
+                delivered: true,
+                deliveredAt: newClock.slice(0, 16),
+              };
+            }
+          }
+          return r;
+        });
+        return { ...j, reminders: updatedReminders };
+      })
+    );
+
+    showDemoNotification(
+      `Demo business clock advanced by ${hours} hr(s). ${deliveredCount > 0 ? `${deliveredCount} due email reminder(s) dispatched.` : ''}`,
+      'info'
+    );
   };
 
-  // Switch scenario helper
+  // Switch scenario helper (G00-030: Clean defaults restore)
   useEffect(() => {
-    if (activeScenario === 'doc_missing_signoff') {
+    if (activeScenario === 'default') {
+      setMyobConnection(prev => ({ ...prev, status: 'CONNECTED', errorMessage: undefined }));
+    } else if (activeScenario === 'doc_missing_signoff') {
       setSelectedJobId('JOB-2026-101');
       setActiveTab('jobs');
-      // Ensure JSA is unsigned
       setJsaForms(prev => ({
         ...prev,
         'JOB-2026-101': { ...prev['JOB-2026-101'], signedOff: false },
@@ -293,58 +379,76 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [activeScenario]);
 
-  // MYOB Customer Write-Through Simulation
+  // G00-009 & G00-010: MYOB Customer Write-Through Simulation with Duplicate Prevention
   const simulateCustomerWriteThrough = (
     draft: Omit<Customer, 'id' | 'myobCustomerId' | 'syncStatus' | 'createdAt'>,
-    simulationOutcome: 'SUCCESS' | 'FAILURE' | 'UNCERTAIN' = 'SUCCESS'
+    simulationOutcome: 'SUCCESS' | 'FAILURE' | 'UNCERTAIN' = 'SUCCESS',
+    forceDistinct = false
   ) => {
-    // 1. Check for duplicates
+    // 1. Check for duplicates unless user explicitly forces distinct
     const dupCheck = checkCustomerDuplicate(draft, customers);
-    if (dupCheck.isDuplicate && dupCheck.matchedCustomer) {
+    if (dupCheck.isDuplicate && !forceDistinct && dupCheck.matchedCustomer) {
       showDemoNotification(
-        `DUPLICATE WARNING: A customer with matching ${dupCheck.field} already exists (${dupCheck.matchedCustomer.name} - ${dupCheck.matchedCustomer.myobCustomerId}).`,
+        `DUPLICATE DETECTED: A customer with matching ${dupCheck.field} exists (${dupCheck.matchedCustomer.name} - ${dupCheck.matchedCustomer.myobCustomerId}). Choose existing or confirm distinct entry.`,
         'warning'
       );
+      return {
+        success: false,
+        isDuplicate: true,
+        matchedCustomer: dupCheck.matchedCustomer,
+      };
     }
 
-    if (myobConnection.status === 'FAILED' || simulationOutcome === 'FAILURE') {
-      // Create recoverable draft
+    // 2. Disconnected or failed state
+    if (myobConnection.status === 'DISCONNECTED' || myobConnection.status === 'FAILED' || simulationOutcome === 'FAILURE') {
+      seqCounters.customer++;
       const draftCustomer: Customer = {
         ...draft,
-        id: `CUSTOMER-DRAFT-${Date.now().toString().slice(-4)}`,
+        id: `CUSTOMER-DRAFT-${seqCounters.customer}`,
         myobCustomerId: 'PENDING_MYOB_SYNC',
         syncStatus: 'FAILED',
         createdAt: demoClock.slice(0, 10),
         isRecoverableDraft: true,
+        activityHistory: [
+          { timestamp: demoClock.slice(0, 16), action: 'Draft entry saved locally (MYOB Offline)', actor: persona },
+        ],
       };
       setCustomers(prev => [draftCustomer, ...prev]);
-      showDemoNotification('MYOB Write-through simulation: Connection failed. Saved as recoverable local draft.', 'error');
-      return { success: false, customer: draftCustomer, error: 'Simulated MYOB API connection error.' };
+      showDemoNotification('MYOB Business offline: Customer saved as recoverable local draft.', 'error');
+      return { success: false, customer: draftCustomer, error: 'Simulated MYOB API connection offline.' };
     }
 
+    // 3. Uncertain state
     if (simulationOutcome === 'UNCERTAIN') {
+      seqCounters.customer++;
       const uncertainCustomer: Customer = {
         ...draft,
-        id: `CUSTOMER-UNCERTAIN-${Date.now().toString().slice(-4)}`,
+        id: `CUSTOMER-UNCERTAIN-${seqCounters.customer}`,
         myobCustomerId: 'AWAITING_RECONCILIATION',
         syncStatus: 'UNCERTAIN',
         createdAt: demoClock.slice(0, 10),
         isRecoverableDraft: true,
+        activityHistory: [
+          { timestamp: demoClock.slice(0, 16), action: 'Uncertain response from MYOB. Reconciliation queued.', actor: persona },
+        ],
       };
       setCustomers(prev => [uncertainCustomer, ...prev]);
-      showDemoNotification('MYOB Write-through simulation: Uncertain response. Reconciliation required to prevent duplicate master.', 'warning');
+      showDemoNotification('MYOB Write-through simulation: Uncertain response. Reconciliation required to avoid duplicate master.', 'warning');
       return { success: false, customer: uncertainCustomer, isUncertain: true };
     }
 
-    // Success outcome: assign fake MYOB reference
-    const nextIdNum = customers.length + 1;
+    // 4. Success outcome: assign fake MYOB reference
+    seqCounters.customer++;
     const newCustomer: Customer = {
       ...draft,
-      id: `CUSTOMER-DEMO-00${nextIdNum}`,
-      myobCustomerId: `MYOB-DEMO-00${nextIdNum}`,
+      id: `CUSTOMER-DEMO-${seqCounters.customer}`,
+      myobCustomerId: `MYOB-DEMO-${seqCounters.customer}`,
       syncStatus: 'SYNCED',
       createdAt: demoClock.slice(0, 10),
       isRecoverableDraft: false,
+      activityHistory: [
+        { timestamp: demoClock.slice(0, 16), action: `Created & acknowledged in MYOB Business (#MYOB-DEMO-${seqCounters.customer})`, actor: persona },
+      ],
     };
 
     setCustomers(prev => [newCustomer, ...prev]);
@@ -352,7 +456,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       `MYOB Write-through successful: Created customer in MYOB with ID ${newCustomer.myobCustomerId}.`,
       'success'
     );
-    return { success: true, customer: newCustomer, isDuplicate: dupCheck.isDuplicate };
+    return { success: true, customer: newCustomer, isDuplicate: false };
   };
 
   const reconcileUncertainCustomer = (customerId: string, confirmCreate: boolean) => {
@@ -365,12 +469,20 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               myobCustomerId: `MYOB-RECONCILED-${c.id.slice(-4)}`,
               syncStatus: 'SYNCED',
               isRecoverableDraft: false,
+              activityHistory: [
+                ...(c.activityHistory || []),
+                { timestamp: demoClock.slice(0, 16), action: 'Reconciled: Confirmed created in MYOB', actor: persona },
+              ],
             };
           } else {
             return {
               ...c,
               syncStatus: 'FAILED',
               notes: 'Reconciliation discarded duplicate entry.',
+              activityHistory: [
+                ...(c.activityHistory || []),
+                { timestamp: demoClock.slice(0, 16), action: 'Reconciled: Discarded as duplicate', actor: persona },
+              ],
             };
           }
         }
@@ -378,69 +490,124 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification(
-      confirmCreate ? 'Customer record reconciled and linked to MYOB.' : 'Duplicate uncertain entry cancelled.',
+      confirmCreate ? 'Customer record reconciled and linked to MYOB.' : 'Duplicate entry cancelled.',
       'info'
     );
   };
 
-  // Job Actions
+  const retryFailedCustomerSync = (customerId: string) => {
+    if (myobConnection.status === 'FAILED' || myobConnection.status === 'DISCONNECTED') {
+      showDemoNotification('Cannot retry sync while MYOB connection is offline.', 'error');
+      return;
+    }
+    setCustomers(prev =>
+      prev.map(c => {
+        if (c.id === customerId) {
+          return {
+            ...c,
+            myobCustomerId: `MYOB-RETRY-${c.id.slice(-4)}`,
+            syncStatus: 'SYNCED',
+            isRecoverableDraft: false,
+            activityHistory: [
+              ...(c.activityHistory || []),
+              { timestamp: demoClock.slice(0, 16), action: 'Retry successful: Synced to MYOB', actor: persona },
+            ],
+          };
+        }
+        return c;
+      })
+    );
+    showDemoNotification(`Draft ${customerId} successfully synced to MYOB Business!`, 'success');
+  };
+
+  // Job Actions (G00-012, G00-013, G00-014)
   const createJob = (jobData: Partial<Job>): Job => {
-    const nextId = `JOB-2026-${100 + jobs.length + 1}`;
+    seqCounters.job++;
+    const nextId = `JOB-2026-${seqCounters.job}`;
+
+    // Lookup job type config for form requirements and version snapshot
+    const matchedJobType = jobTypes.find(jt => jt.name === jobData.jobType) || jobTypes[0];
+    const isDirect = jobData.isDirectToInvoice ?? matchedJobType.isDirectToInvoice;
+    const forms = isDirect ? [] : (jobData.formsRequired ?? matchedJobType.formsRequired);
+
+    const scheduledDate = jobData.scheduledDate || demoClock.slice(0, 10);
+    const scheduledTime = jobData.scheduledTime || '09:00';
+
+    // Calculate reminder due time properly (G00-019)
+    const reminderDue = calculateReminderDueTime(scheduledDate, scheduledTime, 2);
+
+    seqCounters.reminder++;
     const newJob: Job = {
       id: nextId,
       brandId: jobData.brandId || activeBrandId,
       customerId: jobData.customerId || customers[0].id,
       title: jobData.title || 'New Service Request',
-      jobType: jobData.jobType || 'General Maintenance',
+      jobType: matchedJobType.name,
+      jobTypeVersion: matchedJobType.version,
       siteAddress: jobData.siteAddress || '[Fictional] Site Address',
       siteContact: jobData.siteContact || 'Contact Person',
       sitePhone: jobData.sitePhone || '0400 000 000',
       description: jobData.description || 'Service call details',
-      status: 'SCHEDULED',
-      assignedTechId: jobData.assignedTechId || 'TECH-001',
-      assignedTechName: jobData.assignedTechName || 'Dave Miller',
-      scheduledDate: jobData.scheduledDate || demoClock.slice(0, 10),
-      scheduledTime: jobData.scheduledTime || '09:00',
+      status: jobData.status || (jobData.assignedTechId ? 'SCHEDULED' : 'NEW'),
+      assignedTechId: jobData.assignedTechId ?? null,
+      assignedTechName: jobData.assignedTechId
+        ? INITIAL_TECHNICIANS.find(t => t.id === jobData.assignedTechId)?.name || 'Dave Miller'
+        : null,
+      scheduledDate,
+      scheduledTime,
       estimatedDurationHours: jobData.estimatedDurationHours || 2,
-      isDirectToInvoice: jobData.isDirectToInvoice || false,
-      formsRequired: jobData.formsRequired || ['JSA'],
-      invoice: {
-        id: `INV-2026-${100 + jobs.length + 1}`,
-        externalMyobRef: `MYOB-INV-${77100 + jobs.length + 1}`,
-        amount: 350.0,
-        status: 'DRAFT',
-        issuedDate: demoClock.slice(0, 10),
-        dueDate: demoClock.slice(0, 10),
-        reconciliationRequired: false,
-      },
+      isDirectToInvoice: isDirect,
+      formsRequired: forms,
+      attachedSampleIds: [],
       reviewRequest: {
         status: 'NOT_SENT',
         reviewLink: brands[jobData.brandId || activeBrandId]?.reviewUrlPlaceholder || '',
         brandName: brands[jobData.brandId || activeBrandId]?.name || 'CABMS Brand',
-        channel: 'SMS_AND_EMAIL_SIMULATED',
+        channel: 'EMAIL_SIMULATED',
         history: [],
       },
       reminders: [
         {
-          id: `REM-${nextId}-1`,
-          scheduledFor: `${jobData.scheduledDate || demoClock.slice(0, 10)} 07:00`,
+          id: `REM-${seqCounters.reminder}`,
+          targetAppointmentTime: `${scheduledDate} ${scheduledTime}`,
+          leadHours: 2,
+          scheduledFor: reminderDue,
           type: 'REMINDER_2HR',
-          channel: 'SMS_AND_EMAIL_SIMULATED',
+          channel: 'EMAIL_SIMULATED',
           suppressed: false,
           delivered: false,
         },
       ],
-      unresolvedWarnings: [],
+      unresolvedWarnings: isDirect ? ['Direct-to-invoice service: no compliance documentation required.'] : [],
+      activityHistory: [
+        {
+          timestamp: demoClock.slice(0, 16),
+          action: `Work order created (${matchedJobType.name})`,
+          actor: persona,
+          notes: jobData.assignedTechId ? `Assigned to ${jobData.assignedTechId}` : 'Unassigned pool',
+        },
+      ],
     };
 
     setJobs(prev => [newJob, ...prev]);
-    showDemoNotification(`Job ${newJob.id} scheduled for ${newJob.assignedTechName}.`, 'success');
+    showDemoNotification(`Job ${newJob.id} created successfully.`, 'success');
     return newJob;
   };
 
   const updateJobStatus = (jobId: string, newStatus: JobStatus) => {
     setJobs(prev =>
-      prev.map(j => (j.id === jobId ? { ...j, status: newStatus } : j))
+      prev.map(j =>
+        j.id === jobId
+          ? {
+              ...j,
+              status: newStatus,
+              activityHistory: [
+                ...j.activityHistory,
+                { timestamp: demoClock.slice(0, 16), action: `Operational status updated to ${newStatus}`, actor: persona },
+              ],
+            }
+          : j
+      )
     );
     showDemoNotification(`Job ${jobId} status updated to ${newStatus}.`, 'info');
   };
@@ -451,6 +618,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { canComplete: false, missingRequirements: ['Job not found'], warnings: [], isDirectToInvoice: false };
     }
 
+    // Pass the job's own form instances
     const forms = {
       jsa: jsaForms[jobId],
       electrical: electricalCerts[jobId],
@@ -462,7 +630,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const validation = validateJobCompletion(job, forms);
 
     if (validation.canComplete) {
-      // Mark completed
       setJobs(prev =>
         prev.map(j =>
           j.id === jobId
@@ -471,13 +638,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 status: 'COMPLETED',
                 completedAt: demoClock,
                 completionNotes: 'All applicable synthetic demo completion requirements satisfied.',
+                activityHistory: [
+                  ...j.activityHistory,
+                  { timestamp: demoClock.slice(0, 16), action: 'Job marked COMPLETED (requirements validated)', actor: persona },
+                ],
               }
             : j
         )
       );
       showDemoNotification(`SUCCESS: Job ${jobId} marked COMPLETED. Synthetic requirements satisfied.`, 'success');
     } else {
-      // FAILED attempt leaves status unchanged per Section G!
       showDemoNotification(
         `COMPLETION BLOCKED: ${validation.missingRequirements.length} required items missing. Status remains unchanged.`,
         'error'
@@ -497,12 +667,15 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             demoClock
           );
 
-          // Add new 2hr reminder
+          seqCounters.reminder++;
+          const reminderDue = calculateReminderDueTime(newDate, newTime, 2);
           const newReminder = {
-            id: `REM-${jobId}-${Date.now().toString().slice(-4)}`,
-            scheduledFor: `${newDate} ${newTime}`,
+            id: `REM-${seqCounters.reminder}`,
+            targetAppointmentTime: `${newDate} ${newTime}`,
+            leadHours: 2,
+            scheduledFor: reminderDue,
             type: 'REMINDER_2HR' as const,
-            channel: 'SMS_AND_EMAIL_SIMULATED' as const,
+            channel: 'EMAIL_SIMULATED' as const,
             suppressed: false,
             delivered: false,
           };
@@ -511,7 +684,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ...j,
             scheduledDate: newDate,
             scheduledTime: newTime,
+            status: 'SCHEDULED' as JobStatus,
             reminders: [...updatedReminders, newReminder],
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp: demoClock.slice(0, 16), action: `Appointment rescheduled to ${newDate} ${newTime}`, actor: persona },
+            ],
           };
         }
         return j;
@@ -529,107 +707,388 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (j.id === jobId) {
           const updatedReminders = suppressOldReminders(
             j,
-            `Appointment cancelled: ${reason}`,
+            `Visit cancelled: ${reason}`,
+            demoClock
+          );
+          return {
+            ...j,
+            reminders: updatedReminders,
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp: demoClock.slice(0, 16), action: `Visit cancelled (${reason}). Job remains active for rescheduling.`, actor: persona },
+            ],
+          };
+        }
+        return j;
+      })
+    );
+    showDemoNotification(`Appointment for Job ${jobId} cancelled. Job remains open for rescheduling.`, 'warning');
+  };
+
+  const cancelWholeJob = (jobId: string, reason: string) => {
+    setJobs(prev =>
+      prev.map(j => {
+        if (j.id === jobId) {
+          const updatedReminders = suppressOldReminders(
+            j,
+            `Job cancelled: ${reason}`,
             demoClock
           );
           return {
             ...j,
             status: 'CANCELLED',
             reminders: updatedReminders,
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp: demoClock.slice(0, 16), action: `Job CANCELLED: ${reason}`, actor: persona },
+            ],
           };
         }
         return j;
       })
     );
-    showDemoNotification(`Appointment for Job ${jobId} cancelled. Stale reminders suppressed.`, 'warning');
+    showDemoNotification(`Job ${jobId} marked CANCELLED.`, 'warning');
   };
 
-  // Form Updates
+  const reopenCancelledJob = (jobId: string) => {
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId
+          ? {
+              ...j,
+              status: 'SCHEDULED',
+              activityHistory: [
+                ...j.activityHistory,
+                { timestamp: demoClock.slice(0, 16), action: 'Job reopened from cancelled state', actor: persona },
+              ],
+            }
+          : j
+      )
+    );
+    showDemoNotification(`Job ${jobId} reopened and returned to active schedule.`, 'info');
+  };
+
+  // Independent Form Creation & Getters (G00-002, G00-005)
+  const getOrCreateJsa = (jobId: string): JsaFormData => {
+    if (jsaForms[jobId]) return jsaForms[jobId];
+    const job = jobs.find(j => j.id === jobId);
+    const newJsa: JsaFormData = {
+      jobReference: jobId,
+      date: job?.scheduledDate || demoClock.slice(0, 10),
+      customerName: job?.siteContact || 'Customer',
+      siteContactPlaceholder: `${job?.siteContact || 'Customer'} (${job?.sitePhone || '0400 000 000'})`,
+      siteAddress: job?.siteAddress || '[Fictional] Site Address',
+      taskDescription: `${job?.title || 'Maintenance'}: Onsite Safety Risk Assessment`,
+      assetsIdentified: 'Distribution Board, Cabling Infrastructure',
+      personnelName: job?.assignedTechName || 'Dave Miller',
+      personnelRole: 'Lead Electrician & Safety Lead',
+      licencePlaceholder: 'Q-ELEC-98765-DEMO',
+      licenceExpiryPlaceholder: '31/12/2027',
+      inductionCompleted: false, // Starts false so technician must interact
+      competencyVerified: false,
+      overallRiskLevel: 'M',
+      steps: [
+        {
+          id: 'step-init-1',
+          taskStep: 'Site Arrival & Hazard Assessment',
+          hazards: 'Slips, trips, vehicle movement',
+          initialRisk: 'M',
+          controls: 'Establish demarcated work zone with safety cones and clear access path',
+          residualRisk: 'L',
+          responsibleRole: 'Lead Technician',
+        },
+      ],
+      ppeChecklist: [
+        { item: 'Steel Cap Safety Boots (AS/NZS 2210.3)', status: 'Yes' },
+        { item: 'High Visibility Shirt / Vest', status: 'Yes' },
+        { item: 'Safety Glasses with Side Shields', status: 'Yes' },
+        { item: '1000V Insulated Gloves', status: 'N/A' },
+      ],
+      isolationsAndPermits: [
+        { item: 'Electrical Isolation Lockout', required: 'N/A', referenceOrNotes: 'Verify at sub-board' },
+        { item: 'Working at Heights Permit', required: 'No', referenceOrNotes: 'Ground-level work' },
+      ],
+      emergencyAssemblyArea: 'Front entrance / Car park boundary',
+      emergencyWardenPlaceholder: 'Lead Technician / Onsite Warden',
+      firstAidOfficerPlaceholder: 'Lead Technician (Current First Aid/CPR)',
+      signedOff: false, // Pristine unsigned state!
+      formRevision: 'Rev 4.2 - Oct 2026',
+      issuerPlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'CABMS Safety Division',
+      attachedSampleIds: [],
+    };
+    setJsaForms(prev => ({ ...prev, [jobId]: newJsa }));
+    return newJsa;
+  };
+
+  const getOrCreateElectrical = (jobId: string): ElectricalCertData => {
+    if (electricalCerts[jobId]) return electricalCerts[jobId];
+    const job = jobs.find(j => j.id === jobId);
+    const newElec: ElectricalCertData = {
+      certReference: `ELEC-CERT-2026-${seqCounters.job}`,
+      jobReference: jobId,
+      dateOfTest: job?.scheduledDate || demoClock.slice(0, 10),
+      customerName: job?.siteContact || 'Customer',
+      installationAddress: job?.siteAddress || '[Fictional] Site Address',
+      siteContact: `${job?.siteContact || 'Customer'} (${job?.sitePhone || '0400 000 000'})`,
+      occupierRole: 'Owner',
+      contractorNamePlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'Solarcell Electrical',
+      electricianLicencePlaceholder: 'Dave Miller (Q-ELEC-98765-DEMO)',
+      issuerWordingPlaceholder: 'Electrical Safety Office Queensland (Model Form)',
+      testedWorkItems: [
+        {
+          id: 'work-new-1',
+          description: 'Sub-Circuit Test & Earthing Verification',
+          circuitsTested: 'Sub-board to End Points',
+          insulationResistanceResult: '> 200 Megohms',
+          polarityTest: 'Pass',
+          earthContinuity: 'Pass',
+          rcdTripTimeMs: '22ms (Type A RCD)',
+          workResult: 'Pass',
+        },
+      ],
+      standardsReliedOn: ['AS/NZS 3000:2018 Wiring Rules'],
+      partACertificationPlaceholder: 'Part A Certification: Work inspected and tested to AS/NZS 3000 standards.',
+      limitationsAndConsumerRightsPlaceholder: 'Consumer Notice: Retain this compliance test certificate for warranty and insurance.',
+      signedOff: false, // Unsigned!
+      unresolvedNotice: 'CRITICAL NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred.',
+      attachedSampleIds: [],
+    };
+    setElectricalCerts(prev => ({ ...prev, [jobId]: newElec }));
+    return newElec;
+  };
+
+  const getOrCreateSmokeAlarm = (jobId: string): SmokeAlarmCertData => {
+    if (smokeAlarmCerts[jobId]) return smokeAlarmCerts[jobId];
+    const job = jobs.find(j => j.id === jobId);
+    const newSmoke: SmokeAlarmCertData = {
+      certReference: `SMOKE-2026-${seqCounters.job}`,
+      jobReference: jobId,
+      dateOfInspection: job?.scheduledDate || demoClock.slice(0, 10),
+      issuedByPlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'Smart Home Solutions Safety',
+      issuedToRole: 'Owner',
+      propertyType: 'Detached House',
+      storeys: 1,
+      bedrooms: 3,
+      occupancyStatus: 'Occupied',
+      scopeOfWork: {
+        visualInspection: true,
+        operationalTesting: true,
+        interconnectionTesting: true,
+        cleaningAndVacuuming: true,
+        batteryReplacement: false,
+        alarmReplacement: false,
+      },
+      alarmSchedule: [
+        {
+          id: 'alm-new-1',
+          roomLocation: 'Main Hallway Outside Bedrooms',
+          alarmBrandModel: 'Clipsal 755PSMA4 (Photoelectric)',
+          standardMarkingPlaceholder: 'AS 3786:2014',
+          manufactureDateOrExpiry: 'Exp 2031 (Provisional)',
+          powerSource: '240V Hardwired with Battery Backup',
+          passFail: 'Pass',
+          buttonTestPass: true,
+          interconnectionPass: true,
+          complianceStatusProvisional: 'Pass',
+        },
+      ],
+      relatedElectricalCertRef: 'N/A',
+      attachmentsLinked: false,
+      limitationsAndRentalNotes: 'Interconnected photoelectric alarms comply with current Queensland fire legislation.',
+      signedOff: false, // Unsigned!
+      provisionalNote: 'PROVISIONAL NOTICE: Per-alarm Pass/Fail, room counts, and expiry wording are provisional.',
+      attachedSampleIds: [],
+    };
+    setSmokeAlarmCerts(prev => ({ ...prev, [jobId]: newSmoke }));
+    return newSmoke;
+  };
+
+  const getOrCreateTca1 = (jobId: string): Tca1CertData => {
+    if (tca1Certs[jobId]) return tca1Certs[jobId];
+    const job = jobs.find(j => j.id === jobId);
+    const newTca1: Tca1CertData = {
+      certReference: `TCA1-2026-${seqCounters.job}`,
+      jobReference: jobId,
+      registeredCablerPlaceholder: job?.assignedTechName || 'Alex Taylor',
+      cablerRegistrationNumberPlaceholder: 'ACMA-REG-44210-DEMO',
+      employerDetailsPlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'Gold Coast CCTV & Cabling',
+      dateOfWork: job?.scheduledDate || demoClock.slice(0, 10),
+      workDescription: 'Installation of Category 6 data cabling drops',
+      locationOfWork: job?.siteAddress || '[Fictional] Site Address',
+      supervisionProvided: true,
+      customerName: job?.siteContact || 'Customer',
+      customerContact: `${job?.siteContact || 'Customer'} (${job?.sitePhone || '0400 000 000'})`,
+      certificationPlaceholderText: 'I hereby certify that telecommunications cabling complies with Telecommunications Cabling Provider Rules.',
+      signedOff: false, // Unsigned!
+      unresolvedRegistrationExpiryNotice: 'Unresolved Notice: Cabler registration number and expiry date remain unconfirmed demo placeholders.',
+      attachedSampleIds: [],
+    };
+    setTca1Certs(prev => ({ ...prev, [jobId]: newTca1 }));
+    return newTca1;
+  };
+
+  const getOrCreateTca2 = (jobId: string): Tca2CertData => {
+    if (tca2Certs[jobId]) return tca2Certs[jobId];
+    const job = jobs.find(j => j.id === jobId);
+    const newTca2: Tca2CertData = {
+      reportReference: `TCA2-DEFECT-2026-${seqCounters.job}`,
+      jobReference: jobId,
+      inspectionDate: job?.scheduledDate || demoClock.slice(0, 10),
+      businessCablerPlaceholder: job?.assignedTechName || 'Alex Taylor',
+      customerName: job?.siteContact || 'Customer',
+      siteAddress: job?.siteAddress || '[Fictional] Site Address',
+      cablingScope: 'Existing Only',
+      cablingTypes: ['Category 5e Legacy Data'],
+      locationsInspected: 'Riser Cupboard B',
+      nonComplianceDescription: 'Telecommunications cabling co-located in common conduit with 240V mains power without physical barrier.',
+      requirementReferencePlaceholder: 'AS/CA S009:2020 Clause 5.3.1',
+      riskCategory: 'High (Immediate Shock / Fire Hazard)',
+      samplePhotoLinked: false,
+      rectificationRecommendation: 'Install independent dedicated 25mm PVC conduit for data cabling with 50mm separation distance.',
+      responsibleParty: 'Customer / Building Owner',
+      urgencyLevel: 'Immediate (Within 24 Hours)',
+      quotationReferencePlaceholder: 'MYOB-Q-RECTIFICATION',
+      targetResolutionDate: '2026-11-05',
+      customerAcknowledged: false,
+      officeReviewCompleted: false,
+      signedOff: false,
+      warningNotice: 'NON-COMPLIANCE NOTICE: Completing TCA2 records a defect; it does NOT certify the installation as compliant.',
+      attachedSampleIds: [],
+    };
+    setTca2Certs(prev => ({ ...prev, [jobId]: newTca2 }));
+    return newTca2;
+  };
+
+  // Form Field Updates (G00-002: Bounded form updates)
   const updateJsaForm = (jobId: string, data: Partial<JsaFormData>) => {
-    setJsaForms(prev => ({
-      ...prev,
-      [jobId]: { ...prev[jobId], ...data },
-    }));
+    setJsaForms(prev => {
+      const current = prev[jobId] || getOrCreateJsa(jobId);
+      return { ...prev, [jobId]: { ...current, ...data } };
+    });
   };
 
+  const updateElectricalForm = (jobId: string, data: Partial<ElectricalCertData>) => {
+    setElectricalCerts(prev => {
+      const current = prev[jobId] || getOrCreateElectrical(jobId);
+      return { ...prev, [jobId]: { ...current, ...data } };
+    });
+  };
+
+  const updateSmokeAlarmForm = (jobId: string, data: Partial<SmokeAlarmCertData>) => {
+    setSmokeAlarmCerts(prev => {
+      const current = prev[jobId] || getOrCreateSmokeAlarm(jobId);
+      return { ...prev, [jobId]: { ...current, ...data } };
+    });
+  };
+
+  const updateTca1Form = (jobId: string, data: Partial<Tca1CertData>) => {
+    setTca1Certs(prev => {
+      const current = prev[jobId] || getOrCreateTca1(jobId);
+      return { ...prev, [jobId]: { ...current, ...data } };
+    });
+  };
+
+  const updateTca2Form = (jobId: string, data: Partial<Tca2CertData>) => {
+    setTca2Certs(prev => {
+      const current = prev[jobId] || getOrCreateTca2(jobId);
+      return { ...prev, [jobId]: { ...current, ...data } };
+    });
+  };
+
+  // Finalization with Frozen Issuer Snapshot (G00-003, G00-004)
   const signOffJsa = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    const brand = brands[job?.brandId || activeBrandId];
     setJsaForms(prev => {
-      const existing = prev[jobId] || { ...INITIAL_JSA_FORM, jobReference: jobId };
+      const current = prev[jobId] || getOrCreateJsa(jobId);
       return {
         ...prev,
         [jobId]: {
-          ...existing,
+          ...current,
           signedOff: true,
-          signedByTechName: 'Dave Miller (Lead Electrician)',
-          signedTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+          signedByTechName: job?.assignedTechName || 'Dave Miller',
+          signedTimestamp: demoClock.slice(0, 16),
+          frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
         },
       };
     });
-    showDemoNotification(`JSA signed off with DEMO signature mark for Job ${jobId}.`, 'success');
+    showDemoNotification(`JSA signed off with DEMO mark for Job ${jobId}.`, 'success');
   };
 
   const signOffSmokeAlarm = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    const brand = brands[job?.brandId || activeBrandId];
     setSmokeAlarmCerts(prev => {
-      const existing = prev[jobId] || { ...INITIAL_SMOKE_ALARM_CERT, jobReference: jobId };
+      const current = prev[jobId] || getOrCreateSmokeAlarm(jobId);
       return {
         ...prev,
         [jobId]: {
-          ...existing,
+          ...current,
           signedOff: true,
-          signedByTechName: 'Dave Miller',
-          signedTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+          signedByTechName: job?.assignedTechName || 'Dave Miller',
+          signedTimestamp: demoClock.slice(0, 16),
+          frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
         },
       };
     });
-    showDemoNotification(`Smoke Alarm Certificate signed off with DEMO mark for Job ${jobId}.`, 'success');
+    showDemoNotification(`Smoke Alarm Certificate signed off for Job ${jobId}.`, 'success');
   };
 
   const signOffElectrical = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    const brand = brands[job?.brandId || activeBrandId];
     setElectricalCerts(prev => {
-      const existing = prev[jobId] || { ...INITIAL_ELECTRICAL_CERT, jobReference: jobId };
+      const current = prev[jobId] || getOrCreateElectrical(jobId);
       return {
         ...prev,
         [jobId]: {
-          ...existing,
+          ...current,
           signedOff: true,
-          signedByTechName: 'Dave Miller',
-          signedTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+          signedByTechName: job?.assignedTechName || 'Dave Miller',
+          signedTimestamp: demoClock.slice(0, 16),
+          frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
         },
       };
     });
-    showDemoNotification(`Electrical Certificate Part A signed off for Job ${jobId}. Part B warning retained.`, 'warning');
+    showDemoNotification(`Electrical Certificate Part A signed off for Job ${jobId}.`, 'warning');
   };
 
   const signOffTca1 = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    const brand = brands[job?.brandId || activeBrandId];
     setTca1Certs(prev => {
-      const existing = prev[jobId] || { ...INITIAL_TCA1_CERT, jobReference: jobId };
+      const current = prev[jobId] || getOrCreateTca1(jobId);
       return {
         ...prev,
         [jobId]: {
-          ...existing,
+          ...current,
           signedOff: true,
-          signedByTechName: 'Dave Miller',
-          signedTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+          signedByTechName: job?.assignedTechName || 'Alex Taylor',
+          signedTimestamp: demoClock.slice(0, 16),
+          frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
         },
       };
     });
-    showDemoNotification(`TCA1 Cabling Compliance Certificate signed off for Job ${jobId}.`, 'success');
+    showDemoNotification(`TCA1 Cabling Compliance signed off for Job ${jobId}.`, 'success');
   };
 
   const signOffTca2 = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    const brand = brands[job?.brandId || activeBrandId];
     setTca2Certs(prev => {
-      const existing = prev[jobId] || { ...INITIAL_TCA2_CERT, jobReference: jobId };
+      const current = prev[jobId] || getOrCreateTca2(jobId);
       return {
         ...prev,
         [jobId]: {
-          ...existing,
+          ...current,
           signedOff: true,
-          signedByTechName: 'Dave Miller',
-          signedTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+          signedByTechName: job?.assignedTechName || 'Alex Taylor',
+          signedTimestamp: demoClock.slice(0, 16),
+          frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
         },
       };
     });
-    showDemoNotification(`TCA2 Cabling Defect Report signed off for Job ${jobId}. Non-compliance recorded.`, 'warning');
+    showDemoNotification(`TCA2 Cabling Defect signed off for Job ${jobId}. Non-compliance recorded.`, 'warning');
   };
 
   const customerAckTca2 = (jobId: string) => {
@@ -638,26 +1097,144 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       [jobId]: {
         ...prev[jobId],
         customerAcknowledged: true,
-        customerAckTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+        customerAckTimestamp: demoClock.slice(0, 16),
       },
     }));
     showDemoNotification(`Customer acknowledgement captured for TCA2 Defect on Job ${jobId}.`, 'info');
   };
 
   const officeReviewTca2 = (jobId: string) => {
+    // G00-028: Office review triggers rectification follow-up quote & revisit tracking
+    seqCounters.job++;
+    const followupId = `JOB-2026-${seqCounters.job}`;
+
     setTca2Certs(prev => ({
       ...prev,
       [jobId]: {
         ...prev[jobId],
         officeReviewCompleted: true,
         reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
-        officeReviewTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+        officeReviewTimestamp: demoClock.slice(0, 16),
+        rectificationFollowupJobId: followupId,
       },
     }));
-    showDemoNotification(`TCA2 Office Review completed. Rectification quote queued.`, 'success');
+
+    showDemoNotification(`TCA2 Office Review completed. Rectification follow-up work order #${followupId} queued.`, 'success');
   };
 
-  // Quotes & Acceptance
+  // Sample Attachment Linkage (G00-027)
+  const attachSampleToJobForm = (jobId: string, formType: string, sampleId: string) => {
+    // Add to job
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId && !j.attachedSampleIds.includes(sampleId)
+          ? { ...j, attachedSampleIds: [...j.attachedSampleIds, sampleId] }
+          : j
+      )
+    );
+
+    // Add to specific form
+    if (formType === 'JSA') {
+      updateJsaForm(jobId, {
+        attachedSampleIds: [...(jsaForms[jobId]?.attachedSampleIds || []), sampleId],
+      });
+    } else if (formType === 'SMOKE_ALARM') {
+      updateSmokeAlarmForm(jobId, {
+        attachedSampleIds: [...(smokeAlarmCerts[jobId]?.attachedSampleIds || []), sampleId],
+      });
+    } else if (formType === 'ELECTRICAL') {
+      updateElectricalForm(jobId, {
+        attachedSampleIds: [...(electricalCerts[jobId]?.attachedSampleIds || []), sampleId],
+      });
+    } else if (formType === 'TCA1') {
+      updateTca1Form(jobId, {
+        attachedSampleIds: [...(tca1Certs[jobId]?.attachedSampleIds || []), sampleId],
+      });
+    } else if (formType === 'TCA2') {
+      updateTca2Form(jobId, {
+        attachedSampleIds: [...(tca2Certs[jobId]?.attachedSampleIds || []), sampleId],
+        samplePhotoLinked: true,
+      });
+    }
+
+    showDemoNotification(`Sample attachment linked to Job ${jobId}.`, 'info');
+  };
+
+  const removeSampleFromJobForm = (jobId: string, formType: string, sampleId: string) => {
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId
+          ? { ...j, attachedSampleIds: j.attachedSampleIds.filter(id => id !== sampleId) }
+          : j
+      )
+    );
+    if (formType === 'JSA') {
+      updateJsaForm(jobId, {
+        attachedSampleIds: (jsaForms[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+      });
+    } else if (formType === 'TCA2') {
+      const remaining = (tca2Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId);
+      updateTca2Form(jobId, {
+        attachedSampleIds: remaining,
+        samplePhotoLinked: remaining.length > 0,
+      });
+    }
+    showDemoNotification(`Sample attachment unlinked from Job ${jobId}.`, 'info');
+  };
+
+  // Quotes (G00-006, G00-016, G00-017)
+  const prepareQuoteForJob = (
+    jobId: string,
+    title: string,
+    lineItems: { id: string; description: string; quantity: number; unitPrice: number; total: number }[]
+  ): Quote => {
+    seqCounters.quote++;
+    const subtotal = lineItems.reduce((acc, item) => acc + item.total, 0);
+    const gst = subtotal * 0.1;
+    const total = subtotal + gst;
+
+    const job = jobs.find(j => j.id === jobId);
+    const brand = brands[job?.brandId || activeBrandId];
+    const termsTpl = templates.find(t => t.type === 'TERMS') || templates[0];
+
+    const newQuote: Quote = {
+      id: `QUOTE-2026-${seqCounters.quote}`,
+      jobId,
+      customerId: job?.customerId || customers[0].id,
+      brandId: job?.brandId || activeBrandId,
+      externalMyobRef: `MYOB-Q-${88200 + seqCounters.quote}`,
+      title,
+      subtotal,
+      gst,
+      total,
+      lineItems,
+      termsVersion: termsTpl.currentVersion,
+      termsContentSnapshot: termsTpl.content,
+      frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
+      acceptanceStatus: 'SENT',
+      linkScenario: 'valid',
+      acceptanceHistory: [
+        {
+          timestamp: demoClock.slice(0, 16),
+          action: `Quote generated & synced to MYOB Business (#MYOB-Q-${88200 + seqCounters.quote})`,
+          actor: persona,
+        },
+        {
+          timestamp: demoClock.slice(0, 16),
+          action: 'Acceptance link generated and sent via email',
+          actor: 'Automated Service',
+        },
+      ],
+    };
+
+    setJobs(prev =>
+      prev.map(j => (j.id === jobId ? { ...j, quote: newQuote } : j))
+    );
+
+    showDemoNotification(`Quote ${newQuote.externalMyobRef} prepared and linked to Job ${jobId}.`, 'success');
+    return newQuote;
+  };
+
   const simulateQuoteAcceptance = (
     jobId: string,
     scenario: 'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted'
@@ -683,18 +1260,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message: `Quotation was already accepted on ${job.quote.acceptedAt}. Duplicate acceptance rejected.` };
     }
 
-    // Valid acceptance
+    const acceptedTimestamp = demoClock.slice(0, 16);
+    const historyEntry = {
+      timestamp: acceptedTimestamp,
+      action: 'Accepted via Customer Online Portal',
+      actor: job.siteContact,
+      notes: `Customer accepted Terms snapshot ${job.quote.termsVersion}`,
+    };
+
     setJobs(prev =>
       prev.map(j => {
         if (j.id === jobId && j.quote) {
-          const acceptedTimestamp = demoClock.replace('T', ' ').slice(0, 16);
-          const historyEntry = {
-            timestamp: acceptedTimestamp,
-            action: 'Accepted via Customer Online Portal',
-            actor: job.siteContact,
-            notes: 'Customer accepted Terms snapshot v2.4 (Simulated)',
-          };
-
           return {
             ...j,
             quote: {
@@ -704,6 +1280,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               acceptedByName: job.siteContact,
               acceptanceHistory: [...j.quote.acceptanceHistory, historyEntry],
             },
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp: acceptedTimestamp, action: `Quote ${j.quote.externalMyobRef} accepted by customer`, actor: job.siteContact },
+            ],
           };
         }
         return j;
@@ -714,7 +1294,35 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { success: true, message: 'Quotation successfully accepted!' };
   };
 
-  // Reviews Deduplication
+  // Invoices (G00-018)
+  const prepareInvoiceForJob = (jobId: string, amount: number) => {
+    seqCounters.invoice++;
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId
+          ? {
+              ...j,
+              invoice: {
+                id: `INV-2026-${seqCounters.invoice}`,
+                externalMyobRef: `MYOB-INV-${77100 + seqCounters.invoice}`,
+                amount,
+                status: 'SENT_TO_MYOB',
+                issuedDate: demoClock.slice(0, 10),
+                dueDate: demoClock.slice(0, 10),
+                reconciliationRequired: false,
+              },
+              activityHistory: [
+                ...j.activityHistory,
+                { timestamp: demoClock.slice(0, 16), action: `MYOB Invoice MYOB-INV-${77100 + seqCounters.invoice} prepared for $${amount}`, actor: persona },
+              ],
+            }
+          : j
+      )
+    );
+    showDemoNotification(`Invoice prepared and synced to MYOB Business for Job ${jobId}.`, 'success');
+  };
+
+  // Reviews Deduplication & Full Workflow (G00-021)
   const triggerReviewRequest = (jobId: string, simulateFail = false) => {
     const job = jobs.find(j => j.id === jobId);
     if (!job) {
@@ -746,12 +1354,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   history: [
                     ...j.reviewRequest.history,
                     {
-                      timestamp: demoClock.replace('T', ' ').slice(0, 16),
-                      event: 'Simulated dispatch failed / timed out',
+                      timestamp: demoClock.slice(0, 16),
+                      event: 'Simulated email dispatch timeout (Error 504)',
                       status: 'UNCERTAIN',
                     },
                   ],
                 },
+                activityHistory: [
+                  ...j.activityHistory,
+                  { timestamp: demoClock.slice(0, 16), action: 'Review request dispatch resulted in uncertain status', actor: 'Automated Service' },
+                ],
               }
             : j
         )
@@ -769,17 +1381,21 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               reviewRequest: {
                 ...j.reviewRequest,
                 status: 'SENT',
-                sentTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+                sentTimestamp: demoClock.slice(0, 16),
                 reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
                 history: [
                   ...j.reviewRequest.history,
                   {
-                    timestamp: demoClock.replace('T', ' ').slice(0, 16),
-                    event: `Automated SMS/Email sent to customer for ${brands[job.brandId]?.name}`,
+                    timestamp: demoClock.slice(0, 16),
+                    event: `Email invitation sent to customer for ${brands[job.brandId]?.name}`,
                     status: 'SENT',
                   },
                 ],
               },
+              activityHistory: [
+                ...j.activityHistory,
+                { timestamp: demoClock.slice(0, 16), action: `Review invitation sent to customer (${brands[job.brandId]?.name})`, actor: 'Automated Service' },
+              ],
             }
           : j
       )
@@ -799,11 +1415,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 ...j.reviewRequest,
                 status: 'SENT',
                 uncertainReconciliationNeeded: false,
-                sentTimestamp: demoClock.replace('T', ' ').slice(0, 16),
+                sentTimestamp: demoClock.slice(0, 16),
                 history: [
                   ...j.reviewRequest.history,
                   {
-                    timestamp: demoClock.replace('T', ' ').slice(0, 16),
+                    timestamp: demoClock.slice(0, 16),
                     event: 'Reconciled manual check: delivery confirmed in mock log.',
                     status: 'RECONCILED',
                   },
@@ -816,52 +1432,76 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification(`Review status for Job ${jobId} reconciled to SENT.`, 'info');
   };
 
-  // Templates
+  // Templates & Versioning (G00-007: DRAFT -> REVIEW -> PUBLISHED)
   const publishTemplateVersion = (templateId: string) => {
-    // Check permission
     const access = verifyPersonaAccess(persona, 'template_publishing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
     }
 
+    seqCounters.revision++;
     setTemplates(prev =>
-      prev.map(t =>
-        t.id === templateId
-          ? {
-              ...t,
-              status: 'PUBLISHED',
-              updatedAt: demoClock.replace('T', ' ').slice(0, 16),
-              updatedBy: persona.toUpperCase(),
-            }
-          : t
-      )
+      prev.map(t => {
+        if (t.id === templateId) {
+          const newVer = `v${(parseFloat(t.currentVersion.replace('v', '')) + 0.1).toFixed(1)}`;
+          const publishedRev = {
+            version: newVer,
+            status: 'PUBLISHED' as const,
+            content: t.content,
+            updatedAt: demoClock.slice(0, 16),
+            updatedBy: persona.toUpperCase(),
+          };
+          return {
+            ...t,
+            currentVersion: newVer,
+            activeStatus: 'PUBLISHED',
+            revisions: [publishedRev, ...t.revisions],
+          };
+        }
+        return t;
+      })
     );
-    showDemoNotification(`Template ${templateId} published. Existing signed documents retain historical snapshots.`, 'success');
+    showDemoNotification(`Template version published. Previously finalized records retain historical snapshots.`, 'success');
   };
 
-  const createTemplateDraft = (templateId: string, newContent: string) => {
+  const createTemplateDraftRevision = (templateId: string, newContent: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+
     setTemplates(prev =>
-      prev.map(t =>
-        t.id === templateId
-          ? {
-              ...t,
-              status: 'DRAFT',
-              content: newContent,
-              updatedAt: demoClock.replace('T', ' ').slice(0, 16),
-            }
-          : t
-      )
+      prev.map(t => {
+        if (t.id === templateId) {
+          const draftRev = {
+            version: `${t.currentVersion}-draft`,
+            status: 'DRAFT' as const,
+            content: newContent,
+            updatedAt: demoClock.slice(0, 16),
+            updatedBy: persona.toUpperCase(),
+          };
+          return {
+            ...t,
+            content: newContent,
+            activeStatus: 'DRAFT',
+            revisions: [draftRev, ...t.revisions],
+          };
+        }
+        return t;
+      })
     );
-    showDemoNotification('Template draft saved. Pending review before publication.', 'info');
+    showDemoNotification('Draft template revision saved. Ready for owner review before publishing.', 'info');
   };
 
-  // Website Enquiry Simulation (Section J)
+  // Website Enquiry Simulation (G00-011)
   const simulateWebsiteSubmission = (brandId: BrandId) => {
+    seqCounters.enquiry++;
     const brandName = brands[brandId]?.name || 'CABMS Brand';
     const newEnquiry: WebsiteEnquiry = {
-      id: `ENQ-2026-${300 + websiteEnquiries.length + 1}`,
-      submissionDate: demoClock.replace('T', ' ').slice(0, 16),
+      id: `ENQ-2026-${seqCounters.enquiry}`,
+      submissionDate: demoClock.slice(0, 16),
       sourceWebsite: `${brandName} Public Online Form`,
       brandId,
       customerName: 'Marcus Vance',
@@ -869,23 +1509,34 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       phone: '0400 000 003',
       address: '[Fictional] 88 Distribution Court, Yatala QLD 4207',
       serviceRequested: 'Urgent Security Camera Cabling Remediation Quotation',
-      notes: 'Customer submitted follow-up request via website contact form following onsite defect notice.',
+      notes: 'Customer submitted follow-up request via website contact form.',
       status: 'PENDING_REVIEW',
       matchedExistingCustomerId: 'CUSTOMER-DEMO-003',
     };
 
     setWebsiteEnquiries(prev => [newEnquiry, ...prev]);
-    showDemoNotification(`Simulated website submission received for ${brandName}. Queued in pending inbox.`, 'info');
+    showDemoNotification(`Simulated website enquiry received for ${brandName}. Queued in pending inbox.`, 'info');
   };
 
-  const convertEnquiryToJob = (enquiryId: string) => {
+  const convertEnquiryToJob = (
+    enquiryId: string,
+    matchedCustomerId?: string,
+    jobTypeId?: string
+  ) => {
     const enq = websiteEnquiries.find(e => e.id === enquiryId);
     if (!enq) return { customerId: '', jobId: '' };
 
-    // Check if matched customer or create draft
-    let customerId = enq.matchedExistingCustomerId;
+    if (enq.status === 'CONVERTED_TO_JOB') {
+      showDemoNotification('This enquiry has already been converted to a work order.', 'warning');
+      return { customerId: enq.matchedExistingCustomerId || '', jobId: enq.convertedJobId || '' };
+    }
+
+    // Customer match resolution
+    let customerId = matchedCustomerId || enq.matchedExistingCustomerId;
+    let unresolvedWarning: string | undefined;
+
     if (!customerId) {
-      const newCust = simulateCustomerWriteThrough({
+      const res = simulateCustomerWriteThrough({
         name: enq.customerName,
         contactPerson: enq.customerName,
         email: enq.email,
@@ -894,30 +1545,43 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         brandAffiliations: [enq.brandId],
         notes: `Converted from website enquiry ${enquiryId}`,
       });
-      customerId = newCust.customer?.id || 'CUSTOMER-DEMO-001';
+
+      if (!res.success) {
+        unresolvedWarning = 'Customer saved as unresolved local draft (MYOB offline). Work order created with pending sync flag.';
+      }
+      customerId = res.customer?.id || 'CUSTOMER-DEMO-001';
     }
+
+    const matchedJt = jobTypes.find(jt => jt.id === jobTypeId) || jobTypes[0];
 
     const newJob = createJob({
       brandId: enq.brandId,
       customerId,
       title: `${enq.serviceRequested}`,
+      jobType: matchedJt.name,
+      formsRequired: matchedJt.formsRequired,
+      isDirectToInvoice: matchedJt.isDirectToInvoice,
       siteAddress: enq.address,
       siteContact: enq.customerName,
       sitePhone: enq.phone,
-      description: `Originating from website enquiry ${enquiryId}: ${enq.notes}`,
-      formsRequired: ['JSA', 'TCA1'],
+      description: `Originating from enquiry ${enquiryId}: ${enq.notes}`,
     });
 
     setWebsiteEnquiries(prev =>
       prev.map(e =>
         e.id === enquiryId
-          ? { ...e, status: 'CONVERTED_TO_JOB', convertedJobId: newJob.id }
+          ? {
+              ...e,
+              status: 'CONVERTED_TO_JOB',
+              convertedJobId: newJob.id,
+              unresolvedCustomerWarning: unresolvedWarning,
+            }
           : e
       )
     );
 
-    showDemoNotification(`Enquiry ${enquiryId} converted to Job ${newJob.id}.`, 'success');
-    return { customerId, jobId: newJob.id };
+    showDemoNotification(`Enquiry ${enquiryId} converted to Work Order ${newJob.id}.`, 'success');
+    return { customerId, jobId: newJob.id, unresolvedWarning };
   };
 
   const dismissEnquiry = (enquiryId: string) => {
@@ -928,19 +1592,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateBrandConfig = (updated: BrandConfig) => {
-    setBrands(prev => ({
-      ...prev,
-      [updated.id]: updated,
-    }));
+    setBrands(prev => ({ ...prev, [updated.id]: updated }));
     showDemoNotification(`Brand profile "${updated.name}" updated.`, 'success');
   };
 
   const addNewBrandProfile = (newBrand: BrandConfig) => {
-    setBrands(prev => ({
-      ...prev,
-      [newBrand.id]: newBrand,
-    }));
+    setBrands(prev => ({ ...prev, [newBrand.id]: newBrand }));
     showDemoNotification(`New configurable profile "${newBrand.name}" added for demonstration.`, 'success');
+  };
+
+  const simulateSignIn = (role: Persona) => {
+    setPersona(role);
+    setIsSimulatedSignedIn(true);
+    showDemoNotification(`Signed in as ${role.toUpperCase()} (Simulated Demo Session).`, 'info');
+  };
+
+  const simulateSignOut = () => {
+    setIsSimulatedSignedIn(false);
+    showDemoNotification('Signed out of demo session.', 'info');
   };
 
   return (
@@ -952,8 +1621,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setActiveBrandId,
         activeBrand: brands[activeBrandId] || INITIAL_BRANDS.solarcell,
         brands,
+        technicians: INITIAL_TECHNICIANS,
         updateBrandConfig,
         addNewBrandProfile,
+        isSimulatedSignedIn,
+        simulateSignIn,
+        simulateSignOut,
         demoClock,
         advanceClock,
         resetDemo,
@@ -964,7 +1637,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         selectedJobId,
         setSelectedJobId,
         myobConnection,
-        setMyobStatus: (status) =>
+        setMyobStatus: status =>
           setMyobConnection(prev => ({
             ...prev,
             status,
@@ -973,18 +1646,26 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customers,
         simulateCustomerWriteThrough,
         reconcileUncertainCustomer,
+        retryFailedCustomerSync,
+        jobTypes,
         jobs,
         createJob,
         updateJobStatus,
         attemptCompleteJob,
         rescheduleJobAppointment,
         cancelJobAppointment,
-        jsaForms,
-        electricalCerts,
-        smokeAlarmCerts,
-        tca1Certs,
-        tca2Certs,
+        cancelWholeJob,
+        reopenCancelledJob,
+        getOrCreateJsa,
+        getOrCreateElectrical,
+        getOrCreateSmokeAlarm,
+        getOrCreateTca1,
+        getOrCreateTca2,
         updateJsaForm,
+        updateElectricalForm,
+        updateSmokeAlarmForm,
+        updateTca1Form,
+        updateTca2Form,
         signOffJsa,
         signOffSmokeAlarm,
         signOffElectrical,
@@ -993,13 +1674,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         customerAckTca2,
         officeReviewTca2,
         sampleAttachments,
-        quotes: {},
+        attachSampleToJobForm,
+        removeSampleFromJobForm,
+        prepareQuoteForJob,
         simulateQuoteAcceptance,
+        prepareInvoiceForJob,
         triggerReviewRequest,
         reconcileReviewRequest,
         templates,
         publishTemplateVersion,
-        createTemplateDraft,
+        createTemplateDraftRevision,
         websiteEnquiries,
         simulateWebsiteSubmission,
         convertEnquiryToJob,

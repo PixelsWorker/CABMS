@@ -70,6 +70,7 @@ export const ComplianceFormsView: React.FC = () => {
     sampleAttachments,
     attachSampleToJobForm,
     removeSampleFromJobForm,
+    getTca2AuditRecord,
   } = useCabms();
 
   const [activeFormTab, setActiveFormTab] = useState<ActiveFormType>('JSA');
@@ -85,6 +86,22 @@ export const ComplianceFormsView: React.FC = () => {
   const currentSmoke = getOrCreateSmokeAlarm(currentJob.id);
   const currentTca1 = getOrCreateTca1(currentJob.id);
   const currentTca2 = getOrCreateTca2(currentJob.id);
+  const currentTca2Audit = getTca2AuditRecord(currentJob.id) || {
+    jobId: currentJob.id,
+    customerAcknowledged: currentTca2.customerAcknowledged,
+    officeReviewCompleted: currentTca2.officeReviewCompleted,
+    rectificationFollowupJobId: currentTca2.rectificationFollowupJobId,
+  };
+
+  const isCurrentFormSigned = (() => {
+    switch (activeFormTab) {
+      case 'JSA': return currentJsa.signedOff;
+      case 'ELECTRICAL': return currentElec.signedOff;
+      case 'SMOKE_ALARM': return currentSmoke.signedOff;
+      case 'TCA1': return currentTca1.signedOff;
+      case 'TCA2': return currentTca2.signedOff;
+    }
+  })();
 
   // Brand config for legal issuer (G00-003)
   const jobBrand = brands[currentJob.brandId] || brands.solarcell;
@@ -1051,19 +1068,27 @@ export const ComplianceFormsView: React.FC = () => {
               />
             </div>
 
-            {/* Workflow 3-Way Status: Technician Issued, Customer Ack, Office Review */}
+            {/* Workflow 3-Way Status: Technician Issued, Customer Ack, Office Review (Separated Audit Trail) */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
                 <span className="font-bold text-slate-400 uppercase text-[10px] block">1. Field Notice</span>
                 <div className="font-semibold text-white">
-                  {currentTca2.signedOff ? '✓ Issued by Cabler' : 'Pending Field Issue'}
+                  {currentTca2.signedOff ? '✓ Issued & Frozen by Cabler' : 'Pending Field Issue'}
                 </div>
+                {currentTca2.signedOff && (
+                  <div className="text-[10px] text-slate-400 font-mono">
+                    {currentTca2.signedByTechName} ({currentTca2.signedTimestamp})
+                  </div>
+                )}
               </div>
 
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
                 <span className="font-bold text-slate-400 uppercase text-[10px] block">2. Customer Acknowledgment</span>
-                {currentTca2.customerAcknowledged ? (
-                  <div className="font-semibold text-emerald-400">✓ Customer Signed</div>
+                {currentTca2Audit.customerAcknowledged ? (
+                  <div>
+                    <div className="font-semibold text-emerald-400">✓ Customer Signed</div>
+                    <div className="text-[10px] text-slate-400 font-mono">{currentTca2Audit.customerAckTimestamp}</div>
+                  </div>
                 ) : (
                   <button
                     onClick={() => customerAckTca2(currentJob.id)}
@@ -1076,8 +1101,13 @@ export const ComplianceFormsView: React.FC = () => {
 
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
                 <span className="font-bold text-slate-400 uppercase text-[10px] block">3. Office Safety Review</span>
-                {currentTca2.officeReviewCompleted ? (
-                  <div className="font-semibold text-emerald-400">✓ Office Logged</div>
+                {currentTca2Audit.officeReviewCompleted ? (
+                  <div>
+                    <div className="font-semibold text-emerald-400">✓ Office Reviewed</div>
+                    <div className="text-[10px] text-slate-400 font-mono">
+                      {currentTca2Audit.rectificationFollowupJobId ? `Follow-up: #${currentTca2Audit.rectificationFollowupJobId}` : 'Logged'}
+                    </div>
+                  </div>
                 ) : (
                   <button
                     onClick={() => officeReviewTca2(currentJob.id)}
@@ -1102,7 +1132,13 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
             <button
               onClick={() => setShowPhotoPicker(prev => !prev)}
-              className="flex items-center space-x-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold rounded cursor-pointer"
+              disabled={isCurrentFormSigned}
+              className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-semibold rounded ${
+                isCurrentFormSigned
+                  ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer'
+              }`}
+              title={isCurrentFormSigned ? 'Attachments cannot be added to signed and finalized compliance documents.' : undefined}
             >
               <Plus className="w-3.5 h-3.5 text-sky-400" />
               <span>{showPhotoPicker ? 'Close Attachment Library' : 'Attach Field Photo'}</span>
@@ -1110,7 +1146,7 @@ export const ComplianceFormsView: React.FC = () => {
           </div>
 
           {/* Photo Picker Drawer */}
-          {showPhotoPicker && (
+          {showPhotoPicker && !isCurrentFormSigned && (
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
               <span className="text-[11px] text-slate-400 block">
                 Select high-resolution synthetic site evidence to link to this {activeFormTab} record:
@@ -1182,13 +1218,15 @@ export const ComplianceFormsView: React.FC = () => {
                     </div>
                     <div className="p-2 flex items-center justify-between text-[11px]">
                       <span className="text-slate-300 font-medium truncate">{item.title}</span>
-                      <button
-                        onClick={() => removeSampleFromJobForm(currentJob.id, activeFormTab, item.id)}
-                        className="text-slate-500 hover:text-red-400 ml-1 cursor-pointer"
-                        title="Remove attachment"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                      {!isCurrentFormSigned && (
+                        <button
+                          onClick={() => removeSampleFromJobForm(currentJob.id, activeFormTab, item.id)}
+                          className="text-slate-500 hover:text-red-400 ml-1 cursor-pointer"
+                          title="Remove attachment"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}

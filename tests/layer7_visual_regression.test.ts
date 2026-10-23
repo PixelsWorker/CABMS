@@ -32,7 +32,13 @@ const MobileViewport: React.FC<{ children: React.ReactNode }> = ({ children }) =
   React.createElement('div', { 'data-viewport': '390x844', className: 'w-[390px] min-h-[844px] overflow-hidden' }, children)
 );
 
-test('LAYER 7: Visual Regression — Deterministic Desktop (1440x900) shell and dashboard structure', () => {
+test('LAYER 7: Pixel Screenshot Rasterization — Engine status check', (t) => {
+  t.skip(
+    'NOT RUN: Pixel-by-pixel rasterization and perceptual visual diffs require a GPU-accelerated headless browser and canvas renderer, which are unprovisioned in this container environment. Structural DOM viewport contract verification executed instead.'
+  );
+});
+
+test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Desktop (1440x900) shell and dashboard structure', () => {
   const html = renderToString(
     React.createElement(
       DesktopViewport,
@@ -58,7 +64,7 @@ test('LAYER 7: Visual Regression — Deterministic Desktop (1440x900) shell and 
   assert.ok(hash.length === 16, `Desktop snapshot hash computed: ${hash}`);
 });
 
-test('LAYER 7: Visual Regression — Deterministic Tablet (768x1024) navigation and jobs view', () => {
+test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Tablet (768x1024) navigation and jobs view', () => {
   const html = renderToString(
     React.createElement(
       TabletViewport,
@@ -82,7 +88,7 @@ test('LAYER 7: Visual Regression — Deterministic Tablet (768x1024) navigation 
   assert.ok(hash.length === 16, `Tablet snapshot hash computed: ${hash}`);
 });
 
-test('LAYER 7: Visual Regression — Deterministic Mobile (390x844) technician compliance forms layout', () => {
+test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Mobile (390x844) technician compliance forms layout', () => {
   const html = renderToString(
     React.createElement(
       MobileViewport,
@@ -106,7 +112,7 @@ test('LAYER 7: Visual Regression — Deterministic Mobile (390x844) technician c
   assert.ok(hash.length === 16, `Mobile snapshot hash computed: ${hash}`);
 });
 
-test('LAYER 7: Visual Regression — Four Persona shell layout validation', () => {
+test('LAYER 7: Structural Layout & DOM Viewport — Four Persona shell layout validation', () => {
   const personas: Persona[] = ['super_admin', 'owner_admin', 'office_staff', 'technician'];
   personas.forEach(p => {
     const html = renderToString(
@@ -120,7 +126,7 @@ test('LAYER 7: Visual Regression — Four Persona shell layout validation', () =
   });
 });
 
-test('LAYER 7: Visual Regression — Three Brand visual identity validation', () => {
+test('LAYER 7: Structural Layout & DOM Viewport — Three Brand visual identity validation', () => {
   const brands: BrandId[] = ['solarcell', 'smart_home', 'cctv'];
   brands.forEach(brandId => {
     const html = renderToString(
@@ -134,7 +140,7 @@ test('LAYER 7: Visual Regression — Three Brand visual identity validation', ()
   });
 });
 
-test('LAYER 7: Visual Regression — Access Denied & Integration Failure states', () => {
+test('LAYER 7: Structural Layout & DOM Viewport — Access Denied & Integration Failure states', () => {
   const htmlDenied = renderToString(
     React.createElement(
       CabmsProvider,

@@ -137,6 +137,7 @@ export const JobsView: React.FC = () => {
     const matchedCust = customers.find(c => c.id === newCustId) || customers[0];
     const tech = technicians.find(t => t.id === newAssignedTechId);
     const selectedJt = jobTypes.find(t => t.id === selectedJobTypeId) || jobTypes[0];
+    const hasTech = Boolean(newAssignedTechId);
 
     const created = createJob({
       brandId: activeBrandId,
@@ -145,10 +146,10 @@ export const JobsView: React.FC = () => {
       jobType: selectedJt.name,
       jobTypeVersion: selectedJt.version,
       description: newDescription || `${newTitle} for ${matchedCust.name}`,
-      status: newAssignedTechId ? 'SCHEDULED' : 'NEW',
-      appointmentStatus: 'SCHEDULED',
-      scheduledDate: '2026-11-04',
-      scheduledTime: '10:00',
+      status: hasTech ? 'SCHEDULED' : 'NEW',
+      appointmentStatus: hasTech ? 'SCHEDULED' : 'UNSCHEDULED',
+      scheduledDate: hasTech ? '2026-11-04' : null,
+      scheduledTime: hasTech ? '10:00' : null,
       assignedTechId: newAssignedTechId,
       assignedTechName: tech ? tech.name : null,
       siteAddress: newSiteAddress,
@@ -271,11 +272,18 @@ export const JobsView: React.FC = () => {
                     <div>Site: {job.siteAddress}</div>
                     <div className="flex items-center justify-between text-slate-300">
                       <span>Tech: {job.assignedTechName || 'Unassigned (Pool)'}</span>
-                      <span className="font-mono">{job.scheduledDate} {job.scheduledTime}</span>
+                      <span className="font-mono text-slate-400">
+                        {job.scheduledDate ? `${job.scheduledDate} ${job.scheduledTime || ''}` : 'Unscheduled'}
+                      </span>
                     </div>
                   </div>
 
                   <div className="mt-2 pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
+                    {job.appointmentStatus && job.appointmentStatus !== 'SCHEDULED' && (
+                      <span className="text-[10px] bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
+                        {job.appointmentStatus}
+                      </span>
+                    )}
                     {job.isDirectToInvoice ? (
                       <span className="text-[10px] bg-slate-950 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700">
                         Direct-to-Invoice (No Forms)
@@ -303,6 +311,19 @@ export const JobsView: React.FC = () => {
                 <div className="flex items-center space-x-2">
                   <span className="font-mono text-sm font-bold text-amber-400">{selectedJob.id}</span>
                   {getStatusBadge(selectedJob.status)}
+                  {selectedJob.appointmentStatus && (
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                      selectedJob.appointmentStatus === 'SCHEDULED'
+                        ? 'bg-sky-950 text-sky-400 border-sky-800'
+                        : selectedJob.appointmentStatus === 'RESCHEDULED'
+                        ? 'bg-amber-950 text-amber-400 border-amber-800'
+                        : selectedJob.appointmentStatus === 'UNSCHEDULED'
+                        ? 'bg-slate-800 text-slate-400 border-slate-700'
+                        : 'bg-red-950 text-red-400 border-red-800'
+                    }`}>
+                      {selectedJob.appointmentStatus}
+                    </span>
+                  )}
                 </div>
                 <h2 className="text-lg font-bold text-white mt-1">{selectedJob.title}</h2>
               </div>

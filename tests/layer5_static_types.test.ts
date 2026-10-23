@@ -31,7 +31,7 @@ type Expect<T extends true> = T;
 
 // Type-level contract checks
 type _PersonaContract = Expect<Equal<Persona, 'super_admin' | 'owner_admin' | 'office_staff' | 'technician'>>;
-type _BrandIdContract = Expect<Equal<BrandId, 'solarcell' | 'smart_home' | 'cctv' | 'demo_energy'>>;
+type _BrandIdContract = Expect<Equal<BrandId, 'solarcell' | 'smart_home' | 'cctv' | (string & {})>>;
 type _JobStatusContract = Expect<Equal<JobStatus, 'NEW' | 'SCHEDULED' | 'IN_PROGRESS' | 'NEEDS_REVISIT' | 'COMPLETED' | 'CANCELLED'>>;
 type _SyncStatusContract = Expect<Equal<SyncStatus, 'SYNCED' | 'PENDING_WRITE' | 'FAILED' | 'UNCERTAIN'>>;
 

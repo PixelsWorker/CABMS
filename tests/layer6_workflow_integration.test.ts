@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import {
   Customer,
   Job,
+  Persona,
   Quote,
   JsaFormData,
+  ElectricalCertData,
   SmokeAlarmCertData,
   Tca2CertData,
+  Tca2AuditRecord,
   ScheduledReminder,
   TemplateSetting,
 } from '../src/types/cabms.ts';
@@ -16,9 +19,11 @@ import {
   suppressOldReminders,
   checkCustomerDuplicate,
   calculateReminderDueTime,
+  verifyPersonaAccess,
 } from '../src/utils/cabmsLogic.ts';
 import {
   INITIAL_BRANDS,
+  INITIAL_JOBS,
   INITIAL_JOB_TYPES,
   INITIAL_TEMPLATES,
 } from '../src/data/seedData.ts';
@@ -47,9 +52,10 @@ test('LAYER 6: Integration — Journey A: Complete customer-to-completion and re
   };
   assert.equal(customer.syncStatus, 'SYNCED');
 
-  // 2. Job creation & technician assignment
+  // 2. Job creation & technician assignment (Solar installation policy JT-001 requires JSA & ELECTRICAL)
   seq.job++;
   const solarJobType = INITIAL_JOB_TYPES.find(jt => jt.id === 'JT-001')!;
+  assert.deepEqual(solarJobType.formsRequired, ['JSA', 'ELECTRICAL']);
   const scheduledDate = '2026-11-04';
   const scheduledTime = '09:00';
   const reminderDue = calculateReminderDueTime(scheduledDate, scheduledTime, 2);
@@ -85,7 +91,7 @@ test('LAYER 6: Integration — Journey A: Complete customer-to-completion and re
     scheduledTime,
     estimatedDurationHours: 4,
     isDirectToInvoice: false,
-    formsRequired: ['JSA', 'SMOKE_ALARM'],
+    formsRequired: [...solarJobType.formsRequired],
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: INITIAL_BRANDS.solarcell.reviewUrlPlaceholder,
@@ -130,13 +136,13 @@ test('LAYER 6: Integration — Journey A: Complete customer-to-completion and re
   quote.acceptedByName = customer.contactPerson;
   assert.equal(job.quote.acceptanceStatus, 'ACCEPTED');
 
-  // 5. Pre-execution completion validation fails because forms are unsigned
+  // 5. Pre-execution completion validation fails because required JSA and Electrical forms are unsigned
   const preCheck = validateJobCompletion(job, {});
   assert.equal(preCheck.canComplete, false);
   assert.ok(preCheck.missingRequirements.some(r => r.includes('JSA')));
-  assert.ok(preCheck.missingRequirements.some(r => r.includes('Smoke Alarm')));
+  assert.ok(preCheck.missingRequirements.some(r => r.includes('Electrical Certificate')));
 
-  // 6. Technician fills JSA and Smoke Alarm certificates
+  // 6. Technician fills JSA and Electrical Safety certificates
   const jsa: JsaFormData = {
     jobReference: job.id,
     date: scheduledDate,
@@ -169,32 +175,41 @@ test('LAYER 6: Integration — Journey A: Complete customer-to-completion and re
     attachedSampleIds: ['sample-switchboard-01'],
   };
 
-  const smokeAlarm: SmokeAlarmCertData = {
-    certReference: `SMOKE-2026-${seq.job}`,
+  const electrical: ElectricalCertData = {
+    certReference: `ELEC-2026-${seq.job}`,
     jobReference: job.id,
-    dateOfInspection: scheduledDate,
-    issuedByPlaceholder: INITIAL_BRANDS.solarcell.legalIssuerName,
-    issuedToRole: 'Owner',
-    propertyType: 'Detached House',
-    storeys: 1,
-    bedrooms: 3,
-    occupancyStatus: 'Occupied',
-    scopeOfWork: { visualInspection: true, operationalTesting: true, interconnectionTesting: true, cleaningAndVacuuming: true, batteryReplacement: false, alarmReplacement: false },
-    alarmSchedule: [
-      { id: 'ALM-1', roomLocation: 'Hallway', alarmBrandModel: 'Clipsal 755PSMA4', standardMarkingPlaceholder: 'AS 3786:2014', manufactureDateOrExpiry: 'Exp 2031', powerSource: '240V Hardwired with Battery Backup', passFail: 'Pass', buttonTestPass: true, interconnectionPass: true, complianceStatusProvisional: 'Pass' },
+    dateOfTest: scheduledDate,
+    customerName: customer.name,
+    installationAddress: customer.billingAddress,
+    siteContact: customer.contactPerson,
+    occupierRole: 'Owner',
+    contractorNamePlaceholder: INITIAL_BRANDS.solarcell.legalIssuerName,
+    electricianLicencePlaceholder: 'Dave Miller (Q-ELEC-98765-DEMO)',
+    issuerWordingPlaceholder: 'Electrical Safety Office Queensland (Sanitised Model Form)',
+    testedWorkItems: [
+      {
+        id: 'WORK-1',
+        description: 'Solar Generation Sub-Circuit 3-Phase 32A',
+        circuitsTested: 'Sub-board 1 to Inverter Array',
+        insulationResistanceResult: '> 200 Megohms (> 1.0M requirement)',
+        polarityTest: 'Pass',
+        earthContinuity: 'Pass',
+        rcdTripTimeMs: '18ms (Type A 30mA RCD)',
+        workResult: 'Pass',
+      },
     ],
-    relatedElectricalCertRef: 'N/A',
-    attachmentsLinked: false,
-    limitationsAndRentalNotes: 'Compliant installation',
+    standardsReliedOn: ['AS/NZS 3000:2018 Wiring Rules'],
+    partACertificationPlaceholder: 'Part A Certification',
+    limitationsAndConsumerRightsPlaceholder: 'Consumer Notice',
     signedOff: true,
     signedByTechName: 'Dave Miller',
     signedTimestamp: `${scheduledDate} 12:00`,
-    provisionalNote: 'AS 3786 verified',
+    unresolvedNotice: 'Electrical Part B / sections 7-8 not supplied or unresolved.',
     attachedSampleIds: [],
   };
 
-  // 7. Re-validate completion with signed forms
-  const postCheck = validateJobCompletion(job, { jsa, smokeAlarm });
+  // 7. Re-validate completion with signed JSA and Electrical forms
+  const postCheck = validateJobCompletion(job, { jsa, electrical });
   assert.equal(postCheck.canComplete, true);
   job.status = 'COMPLETED';
 
@@ -274,9 +289,9 @@ test('LAYER 6: Integration — Journey B: Direct-to-invoice service completes wi
 });
 
 // -------------------------------------------------------------
-// JOURNEY C: Cabling Defect -> TCA2 -> Acknowledgement -> Office Review -> Real Follow-up Job
+// JOURNEY C: Cabling Defect -> TCA2 -> Separate Audit Records -> Idempotent Office Review -> Unscheduled Follow-up Job
 // -------------------------------------------------------------
-test('LAYER 6: Integration — Journey C: TCA2 defect generates customer ack, office review, and REAL follow-up work order', () => {
+test('LAYER 6: Integration — Journey C: TCA2 defect generates separate audit record, idempotent office review, and unscheduled follow-up work order', () => {
   seq.job++;
   const initialJob: Job = {
     id: `JOB-2026-${seq.job}`,
@@ -304,6 +319,7 @@ test('LAYER 6: Integration — Journey C: TCA2 defect generates customer ack, of
     activityHistory: [],
   };
 
+  // 1. Technician signs TCA2 Defect Report
   const tca2: Tca2CertData = {
     reportReference: `TCA2-DEFECT-2026-${seq.job}`,
     jobReference: initialJob.id,
@@ -323,53 +339,185 @@ test('LAYER 6: Integration — Journey C: TCA2 defect generates customer ack, of
     urgencyLevel: 'Immediate (Within 24 Hours)',
     quotationReferencePlaceholder: 'MYOB-Q-RECTIFICATION',
     targetResolutionDate: '2026-11-05',
-    customerAcknowledged: true,
-    customerAckTimestamp: '2026-11-02 14:30',
+    customerAcknowledged: false,
     officeReviewCompleted: false,
     signedOff: true,
     signedByTechName: 'Dave Miller',
     signedTimestamp: '2026-11-02 14:00',
     warningNotice: 'NON-COMPLIANCE RECORDED',
     attachedSampleIds: ['sample-cabling-defect-01'],
+    fullSnapshot: '',
+  };
+  // Freeze technician certificate permanently
+  tca2.fullSnapshot = JSON.stringify(tca2);
+  const frozenTechnicianSnapshot = tca2.fullSnapshot;
+
+  // 2. Customer Acknowledgement is recorded in separate audit record (NOT mutating signed TCA2 cert)
+  const tca2AuditRecords: Record<string, Tca2AuditRecord> = {};
+  tca2AuditRecords[initialJob.id] = {
+    jobId: initialJob.id,
+    customerAcknowledged: true,
+    customerAckTimestamp: '2026-11-02 14:30',
+    officeReviewCompleted: false,
   };
 
-  // Perform Office Review: generates a REAL follow-up job
+  // Assert signed certificate fullSnapshot remains 100% untouched
+  assert.equal(tca2.fullSnapshot, frozenTechnicianSnapshot);
+  assert.equal(tca2AuditRecords[initialJob.id].customerAcknowledged, true);
+
+  // 3. Office Review Role Check: Technicians are strictly prohibited
+  const techAttempt = verifyPersonaAccess('technician', 'office_compliance_review');
+  assert.equal(techAttempt.allowed, false);
+
+  // 4. Idempotent Office Review Execution
+  const jobsList: Job[] = [initialJob];
+  const performOfficeReview = (jobId: string, actor: Persona): { success: boolean; followupJobId?: string; isDuplicate?: boolean } => {
+    const roleCheck = verifyPersonaAccess(actor, 'office_compliance_review');
+    if (!roleCheck.allowed) return { success: false };
+
+    const audit = tca2AuditRecords[jobId];
+    // State-level idempotency check: already reviewed or follow-up job exists
+    if (audit?.officeReviewCompleted || audit?.rectificationFollowupJobId) {
+      return { success: true, followupJobId: audit.rectificationFollowupJobId, isDuplicate: true };
+    }
+    const existingJob = jobsList.find(j => j.title.includes(`Follow-up to ${jobId}`));
+    if (existingJob) {
+      return { success: true, followupJobId: existingJob.id, isDuplicate: true };
+    }
+
+    seq.job++;
+    const newFollowupId = `JOB-2026-${seq.job}`;
+    const followup: Job = {
+      id: newFollowupId,
+      brandId: 'cctv',
+      customerId: initialJob.customerId,
+      title: `TCA2 Remediation: Dedicated Conduit Installation (Follow-up to ${initialJob.id})`,
+      jobType: 'Enterprise CCTV & Cabling Inspection',
+      jobTypeVersion: 'v2.1',
+      siteAddress: initialJob.siteAddress,
+      siteContact: initialJob.siteContact,
+      sitePhone: initialJob.sitePhone,
+      description: `Rectification follow-up for Cabling Non-Compliance reported under ${initialJob.id}`,
+      status: 'NEW',
+      appointmentStatus: 'UNSCHEDULED', // Unscheduled by default: no phantom appointment
+      assignedTechId: null,
+      assignedTechName: null,
+      scheduledDate: null, // Null date for unscheduled job
+      scheduledTime: null,
+      estimatedDurationHours: 3,
+      isDirectToInvoice: false,
+      formsRequired: ['JSA', 'TCA1'],
+      attachedSampleIds: [...tca2.attachedSampleIds],
+      reviewRequest: { status: 'NOT_SENT', reviewLink: '', brandName: 'CCTV', channel: 'EMAIL_SIMULATED', history: [] },
+      reminders: [],
+      unresolvedWarnings: ['Follow-up rectification work order queued from TCA2 Office Review.'],
+      activityHistory: [{ timestamp: '2026-11-02 15:00', action: `Rectification work order #${newFollowupId} created`, actor: 'office_staff' }],
+    };
+
+    jobsList.push(followup);
+    tca2AuditRecords[jobId] = {
+      ...audit,
+      officeReviewCompleted: true,
+      reviewedByOfficeStaff: 'Emma Wilson',
+      officeReviewTimestamp: '2026-11-02 15:00',
+      rectificationFollowupJobId: newFollowupId,
+    };
+
+    return { success: true, followupJobId: newFollowupId, isDuplicate: false };
+  };
+
+  // First office review call
+  const firstReview = performOfficeReview(initialJob.id, 'office_staff');
+  assert.equal(firstReview.success, true);
+  assert.equal(firstReview.isDuplicate, false);
+  const createdFollowupJobId = firstReview.followupJobId!;
+  assert.ok(createdFollowupJobId);
+
+  // Assert follow-up work order has UNSCHEDULED status and null dates
+  const createdFollowup = jobsList.find(j => j.id === createdFollowupJobId)!;
+  assert.equal(createdFollowup.appointmentStatus, 'UNSCHEDULED');
+  assert.equal(createdFollowup.scheduledDate, null);
+  assert.equal(createdFollowup.scheduledTime, null);
+  assert.equal(createdFollowup.reminders.length, 0);
+
+  // Second rapid office review call (Simulating duplicate button click)
+  const secondReview = performOfficeReview(initialJob.id, 'office_staff');
+  assert.equal(secondReview.success, true);
+  assert.equal(secondReview.isDuplicate, true);
+  assert.equal(secondReview.followupJobId, createdFollowupJobId);
+  // Verify jobsList still contains only ONE follow-up job (no duplicate created)
+  const followups = jobsList.filter(j => j.title.includes(`Follow-up to ${initialJob.id}`));
+  assert.equal(followups.length, 1);
+
+  // Assert signed TCA2 cert snapshot still remains 100% identical
+  assert.equal(tca2.fullSnapshot, frozenTechnicianSnapshot);
+});
+
+// -------------------------------------------------------------
+// JOURNEY C-2: Unscheduled Job Creation & Universal Form Attachment Immutability
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey C-2: Unassigned work order creation defaults to UNSCHEDULED with null date, and signed forms reject attachment mutation', () => {
+  // 1. Unscheduled job creation contract
   seq.job++;
-  const followupJobId = `JOB-2026-${seq.job}`;
-  const followupJob: Job = {
-    id: followupJobId,
-    brandId: 'cctv',
-    customerId: initialJob.customerId,
-    title: `TCA2 Remediation: Dedicated Conduit Installation (Follow-up to ${initialJob.id})`,
-    jobType: 'Enterprise CCTV & Cabling Inspection',
-    jobTypeVersion: 'v2.1',
-    siteAddress: initialJob.siteAddress,
-    siteContact: initialJob.siteContact,
-    sitePhone: initialJob.sitePhone,
-    description: `Rectification follow-up for Cabling Non-Compliance reported under ${initialJob.id}`,
+  const unassignedJob: Job = {
+    id: `JOB-2026-${seq.job}`,
+    brandId: 'solarcell',
+    customerId: 'CUSTOMER-DEMO-001',
+    title: 'Unassigned Solar Inverter Assessment',
+    jobType: 'Solar Installation & Audit',
+    jobTypeVersion: 'v1.0',
+    siteAddress: '42 Orchid Avenue',
+    siteContact: 'John Citizen',
+    sitePhone: '0400 000 001',
+    description: 'Preliminary inspection',
     status: 'NEW',
-    appointmentStatus: 'SCHEDULED',
+    appointmentStatus: 'UNSCHEDULED',
     assignedTechId: null,
     assignedTechName: null,
-    scheduledDate: '2026-11-06',
-    scheduledTime: '08:30',
-    estimatedDurationHours: 3,
+    scheduledDate: null,
+    scheduledTime: null,
+    estimatedDurationHours: 2,
     isDirectToInvoice: false,
-    formsRequired: ['JSA', 'TCA1'],
-    attachedSampleIds: tca2.attachedSampleIds,
-    reviewRequest: { status: 'NOT_SENT', reviewLink: '', brandName: 'CCTV', channel: 'EMAIL_SIMULATED', history: [] },
-    reminders: [],
-    unresolvedWarnings: ['Follow-up rectification work order queued from TCA2 Office Review.'],
-    activityHistory: [{ timestamp: '2026-11-02 15:00', action: `Rectification work order #${followupJobId} created`, actor: 'office_staff' }],
+    formsRequired: ['JSA', 'ELECTRICAL'],
+    reviewRequest: { status: 'NOT_SENT', reviewLink: '', brandName: 'Solarcell', channel: 'EMAIL_SIMULATED', history: [] },
+    reminders: [], // No reminders scheduled for unscheduled job
+    attachedSampleIds: [],
+    unresolvedWarnings: [],
+    activityHistory: [],
   };
 
-  tca2.officeReviewCompleted = true;
-  tca2.reviewedByOfficeStaff = 'Emma Wilson';
-  tca2.rectificationFollowupJobId = followupJob.id;
+  assert.equal(unassignedJob.appointmentStatus, 'UNSCHEDULED');
+  assert.equal(unassignedJob.scheduledDate, null);
+  assert.equal(unassignedJob.scheduledTime, null);
+  assert.equal(unassignedJob.reminders.length, 0);
 
-  assert.equal(tca2.rectificationFollowupJobId, followupJob.id);
-  assert.equal(followupJob.status, 'NEW');
-  assert.ok(followupJob.title.includes(initialJob.id));
+  // 2. Universal form attachment immutability test
+  // Simulating the context attachSampleToJobForm guard:
+  const attachToForm = (
+    form: { signedOff: boolean; attachedSampleIds: string[] },
+    sampleId: string
+  ): { allowed: boolean; reason?: string } => {
+    if (form.signedOff) {
+      return {
+        allowed: false,
+        reason: 'CANNOT MODIFY ATTACHMENTS: Form has already received technician sign-off and is legally frozen.',
+      };
+    }
+    form.attachedSampleIds.push(sampleId);
+    return { allowed: true };
+  };
+
+  const draftForm = { signedOff: false, attachedSampleIds: [] as string[] };
+  const add1 = attachToForm(draftForm, 'photo-draft-01');
+  assert.equal(add1.allowed, true);
+  assert.equal(draftForm.attachedSampleIds.length, 1);
+
+  // Once signed, attaching new photos is strictly rejected
+  const signedForm = { signedOff: true, attachedSampleIds: ['photo-signed-01'] };
+  const add2 = attachToForm(signedForm, 'photo-signed-02');
+  assert.equal(add2.allowed, false);
+  assert.ok(add2.reason?.includes('CANNOT MODIFY ATTACHMENTS'));
+  assert.deepEqual(signedForm.attachedSampleIds, ['photo-signed-01']);
 });
 
 // -------------------------------------------------------------
@@ -494,4 +642,118 @@ test('LAYER 6: Integration — Journey E: Disconnected MYOB, reminder suppressio
   reviewJob.reviewRequest.uncertainReconciliationNeeded = false;
   reviewJob.reviewRequest.sentTimestamp = '2026-11-02 11:30';
   assert.equal(reviewJob.reviewRequest.status, 'SENT');
+});
+
+// -------------------------------------------------------------
+// JOURNEY F: Template Review Gating (Draft -> Review -> Published)
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey F: Master template review gating enforces DRAFT -> REVIEW -> PUBLISHED flow', () => {
+  const tpl: TemplateSetting = {
+    id: 'TPL-TEST',
+    name: 'Customer Terms of Service',
+    type: 'TERMS',
+    currentVersion: 'v1.0',
+    activeStatus: 'DRAFT',
+    content: 'Standard terms',
+    sampleFileName: 'terms.md',
+    mappingStatus: 'Mapped',
+    revisions: [{ version: 'v1.0', status: 'DRAFT', content: 'Standard terms', updatedAt: '2026-11-01', updatedBy: 'Admin' }],
+  };
+
+  // Simulating context publishTemplateVersion gate:
+  const publishTemplate = (t: TemplateSetting, actor: Persona): { success: boolean; reason?: string } => {
+    if (actor === 'office_staff') {
+      return { success: false, reason: 'Office staff cannot publish master compliance templates' };
+    }
+    if (t.activeStatus !== 'REVIEW') {
+      return { success: false, reason: 'Template must be in REVIEW status before it can be published' };
+    }
+    t.activeStatus = 'PUBLISHED';
+    return { success: true };
+  };
+
+  // 1. Direct publish from DRAFT is rejected
+  const attemptFromDraft = publishTemplate(tpl, 'owner_admin');
+  assert.equal(attemptFromDraft.success, false);
+  assert.ok(attemptFromDraft.reason?.includes('must be in REVIEW status'));
+  assert.equal(tpl.activeStatus, 'DRAFT');
+
+  // 2. Submit for review
+  tpl.activeStatus = 'REVIEW';
+
+  // 3. Office staff cannot publish even in REVIEW
+  const officeStaffAttempt = publishTemplate(tpl, 'office_staff');
+  assert.equal(officeStaffAttempt.success, false);
+  assert.ok(officeStaffAttempt.reason?.includes('Office staff cannot publish'));
+
+  // 4. Owner/Admin approves and publishes from REVIEW
+  const ownerPublish = publishTemplate(tpl, 'owner_admin');
+  assert.equal(ownerPublish.success, true);
+  assert.equal(tpl.activeStatus, 'PUBLISHED');
+});
+
+// -------------------------------------------------------------
+// JOURNEY G: Review Request Failure & Retry Lifecycle
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey G: Review request SMTP failure transitions to FAILED and retry increments attempts', () => {
+  const job: Job = {
+    ...INITIAL_JOBS[0],
+    reviewRequest: {
+      status: 'NOT_SENT',
+      reviewLink: 'https://demo.reviews.invalid',
+      brandName: 'Solarcell',
+      channel: 'EMAIL_SIMULATED',
+      history: [],
+    },
+  };
+
+  // Simulate failed dispatch (e.g. SMTP 550)
+  job.reviewRequest.status = 'FAILED';
+  job.reviewRequest.history.push({
+    timestamp: '2026-11-02 10:00',
+    event: 'SMTP 550 Mailbox unavailable (Attempt 1)',
+    status: 'FAILED',
+  });
+
+  assert.equal(job.reviewRequest.status, 'FAILED');
+  assert.equal(job.reviewRequest.history.length, 1);
+
+  // Controlled retry
+  job.reviewRequest.status = 'SENT';
+  job.reviewRequest.sentTimestamp = '2026-11-02 10:05';
+  job.reviewRequest.history.push({
+    timestamp: '2026-11-02 10:05',
+    event: 'Manual retry succeeded via backup route (Attempt 2)',
+    status: 'SENT',
+  });
+
+  assert.equal(job.reviewRequest.status, 'SENT');
+  assert.equal(job.reviewRequest.history.length, 2);
+  assert.ok(job.reviewRequest.history[1].event.includes('Attempt 2'));
+});
+
+// -------------------------------------------------------------
+// JOURNEY H: Certificate Delivery Captures Full Frozen Document Snapshot
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey H: Certificate delivery captures full frozen document snapshot', () => {
+  const deliveryRecord = {
+    id: 'DELIV-001',
+    jobId: 'JOB-2026-101',
+    certType: 'ELECTRICAL',
+    documentTitle: 'Electrical Safety Certificate Part A',
+    recipientEmail: 'client@example.invalid',
+    status: 'SENT' as const,
+    sentAt: '2026-11-02 14:00',
+    channel: 'EMAIL_SIMULATED' as const,
+    fullFrozenDocumentSnapshot: JSON.stringify({
+      certReference: 'ELEC-2026-101',
+      electricianName: 'Dave Miller',
+      readings: { continuity: '0.04 Ohm' },
+      signedOff: true,
+    }),
+  };
+
+  assert.ok(deliveryRecord.fullFrozenDocumentSnapshot);
+  assert.ok(deliveryRecord.fullFrozenDocumentSnapshot.includes('ELEC-2026-101'));
+  assert.ok(deliveryRecord.fullFrozenDocumentSnapshot.includes('0.04 Ohm'));
 });

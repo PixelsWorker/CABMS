@@ -49,7 +49,14 @@ export const ScheduleView: React.FC = () => {
     if (persona === 'technician' && j.assignedTechId !== 'TECH-001') {
       return false;
     }
-    return j.scheduledDate === selectedDay;
+    return j.scheduledDate === selectedDay && j.appointmentStatus !== 'UNSCHEDULED';
+  });
+
+  const unscheduledJobs = jobs.filter(j => {
+    if (persona === 'technician' && j.assignedTechId !== 'TECH-001') {
+      return false;
+    }
+    return j.appointmentStatus === 'UNSCHEDULED' || !j.scheduledDate;
   });
 
   const handleRescheduleSubmit = (e: React.FormEvent) => {
@@ -221,8 +228,8 @@ export const ScheduleView: React.FC = () => {
                     <button
                       onClick={() => {
                         setRescheduleTarget(job);
-                        setNewDate(job.scheduledDate);
-                        setNewTime(job.scheduledTime);
+                        setNewDate(job.scheduledDate || '2026-11-03');
+                        setNewTime(job.scheduledTime || '09:00');
                       }}
                       className="px-2.5 py-1 bg-red-900 hover:bg-red-800 text-white font-bold text-[11px] rounded transition cursor-pointer"
                     >
@@ -285,8 +292,8 @@ export const ScheduleView: React.FC = () => {
                     <button
                       onClick={() => {
                         setRescheduleTarget(job);
-                        setNewDate(job.scheduledDate);
-                        setNewTime(job.scheduledTime);
+                        setNewDate(job.scheduledDate || '2026-11-03');
+                        setNewTime(job.scheduledTime || '09:00');
                       }}
                       className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
                     >

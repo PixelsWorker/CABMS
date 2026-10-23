@@ -4,11 +4,13 @@
  * Strict isolation: Deterministic synthetic data, no live external integrations
  */
 
-export type BrandId = 'solarcell' | 'smart_home' | 'cctv' | 'demo_energy';
+export type BrandId = 'solarcell' | 'smart_home' | 'cctv' | (string & {});
 
 export type Persona = 'super_admin' | 'owner_admin' | 'office_staff' | 'technician';
 
 export type JobStatus = 'NEW' | 'SCHEDULED' | 'IN_PROGRESS' | 'NEEDS_REVISIT' | 'COMPLETED' | 'CANCELLED';
+
+export type AppointmentStatus = 'UNSCHEDULED' | 'SCHEDULED' | 'RESCHEDULED' | 'CANCELLED';
 
 export type InvoiceStatus = 'DRAFT' | 'SENT_TO_MYOB' | 'UNPAID' | 'PAID' | 'RECONCILIATION_REQUIRED';
 
@@ -64,6 +66,13 @@ export interface JobTypeConfig {
   formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
   isDirectToInvoice: boolean;
   version: string;
+  revisionHistory?: {
+    version: string;
+    formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+    isDirectToInvoice: boolean;
+    updatedAt: string;
+    updatedBy: string;
+  }[];
 }
 
 export interface Job {
@@ -80,12 +89,12 @@ export interface Job {
   status: JobStatus;
   assignedTechId: string | null;
   assignedTechName: string | null;
-  scheduledDate: string;
-  scheduledTime: string;
+  scheduledDate: string | null;
+  scheduledTime: string | null;
   estimatedDurationHours: number;
   isDirectToInvoice: boolean;
   formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
-  appointmentStatus?: 'SCHEDULED' | 'RESCHEDULED' | 'CANCELLED';
+  appointmentStatus?: AppointmentStatus;
   calendarMapping?: string;
   calendarSyncStatus?: 'SYNCED' | 'PENDING' | 'FAILED';
   quote?: Quote;
@@ -361,6 +370,17 @@ export interface Tca2CertData {
   attachedSampleIds: string[];
 }
 
+export interface Tca2AuditRecord {
+  jobId: string;
+  customerAcknowledged: boolean;
+  customerAckTimestamp?: string;
+  officeReviewCompleted: boolean;
+  reviewedByOfficeStaff?: string;
+  officeReviewTimestamp?: string;
+  rectificationFollowupJobId?: string;
+  history?: ActivityLogEntry[];
+}
+
 export interface CertificateDeliveryRecord {
   id: string;
   jobId: string;
@@ -370,6 +390,7 @@ export interface CertificateDeliveryRecord {
   sentAt: string;
   documentTitle: string;
   snapshotSummary: string;
+  fullFrozenDocumentSnapshot?: string;
 }
 
 export interface WebsiteEnquiry {

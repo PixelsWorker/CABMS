@@ -24,6 +24,8 @@ import {
   Invoice,
   ScheduledReminder,
   CertificateDeliveryRecord,
+  Tca2AuditRecord,
+  AppointmentStatus,
 } from '../types/cabms.ts';
 import {
   INITIAL_BRANDS,
@@ -37,6 +39,7 @@ import {
   INITIAL_SMOKE_ALARM_CERT,
   INITIAL_TCA1_CERT,
   INITIAL_TCA2_CERT,
+  INITIAL_TCA2_AUDIT,
   INITIAL_TECHNICIANS,
   INITIAL_TEMPLATES,
   INITIAL_WEBSITE_ENQUIRIES,
@@ -146,6 +149,8 @@ interface CabmsContextType {
   signOffTca2: (jobId: string) => void;
   customerAckTca2: (jobId: string) => void;
   officeReviewTca2: (jobId: string) => void;
+  tca2AuditRecords: Record<string, Tca2AuditRecord>;
+  getTca2AuditRecord: (jobId: string) => Tca2AuditRecord | undefined;
 
   // Sample Attachments & Linkage (G00-027)
   sampleAttachments: SampleAttachment[];
@@ -168,8 +173,9 @@ interface CabmsContextType {
   reconcileInvoiceSync: (jobId: string, outcome: 'SUCCESS' | 'FAIL') => void;
 
   // Reviews & Deduplication (G00-021)
-  triggerReviewRequest: (jobId: string, simulateFail?: boolean) => { success: boolean; message: string };
-  reconcileReviewRequest: (jobId: string) => void;
+  triggerReviewRequest: (jobId: string, simulateOutcome?: 'FAIL' | 'UNCERTAIN') => { success: boolean; message: string };
+  reconcileReviewRequest: (jobId: string, resolution?: 'SENT' | 'FAILED') => void;
+  retryReviewRequest: (jobId: string) => { success: boolean; message: string };
 
   // Certificate Delivery Flow (G00-022)
   certificateDeliveries: CertificateDeliveryRecord[];
@@ -273,6 +279,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [tca2Certs, setTca2Certs] = useState<Record<string, Tca2CertData>>({
     'JOB-2026-104': { ...INITIAL_TCA2_CERT },
   });
+
+  const [tca2AuditRecords, setTca2AuditRecords] = useState<Record<string, Tca2AuditRecord>>(INITIAL_TCA2_AUDIT);
+  const getTca2AuditRecord = (jobId: string): Tca2AuditRecord | undefined => tca2AuditRecords[jobId];
 
   // Certificate Delivery Simulation Records (G00-022)
   const [certificateDeliveries, setCertificateDeliveries] = useState<CertificateDeliveryRecord[]>([]);
@@ -556,13 +565,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       : (jobData.formsRequired ?? []);
     const isDirect = forms.length === 0 ? Boolean(jobData.isDirectToInvoice) : false;
 
-    const scheduledDate = jobData.scheduledDate || demoClock.slice(0, 10);
-    const scheduledTime = jobData.scheduledTime || '09:00';
-    const hasActiveAppointment = Boolean(jobData.assignedTechId && scheduledDate);
+    const hasActiveAppointment = Boolean(jobData.assignedTechId && (jobData.scheduledDate || jobData.scheduledTime));
+    const scheduledDate = hasActiveAppointment
+      ? (jobData.scheduledDate || demoClock.slice(0, 10))
+      : (jobData.scheduledDate ?? null);
+    const scheduledTime = hasActiveAppointment
+      ? (jobData.scheduledTime || '09:00')
+      : (jobData.scheduledTime ?? null);
 
     // Calculate reminder due time only for active appointments (E/I Reminders)
     const reminders: ScheduledReminder[] = [];
-    if (hasActiveAppointment) {
+    if (hasActiveAppointment && scheduledDate && scheduledTime) {
       seqCounters.reminder++;
       const reminderDue = calculateReminderDueTime(scheduledDate, scheduledTime, 2);
       reminders.push({
@@ -588,8 +601,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       siteContact: jobData.siteContact || 'Contact Person',
       sitePhone: jobData.sitePhone || '0400 000 000',
       description: jobData.description || 'Service call details',
-      status: jobData.status || (jobData.assignedTechId ? 'SCHEDULED' : 'NEW'),
-      appointmentStatus: jobData.appointmentStatus || (hasActiveAppointment ? 'SCHEDULED' : 'SCHEDULED'),
+      status: jobData.status || (hasActiveAppointment ? 'SCHEDULED' : 'NEW'),
+      appointmentStatus: jobData.appointmentStatus || (hasActiveAppointment ? 'SCHEDULED' : 'UNSCHEDULED'),
       calendarMapping: brands[jobData.brandId || activeBrandId]?.calendarMappingName || 'Primary Dispatch Calendar',
       calendarSyncStatus: hasActiveAppointment ? 'SYNCED' : 'PENDING',
       assignedTechId: jobData.assignedTechId ?? null,
@@ -1189,23 +1202,74 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     finalized.fullSnapshot = JSON.stringify(finalized);
 
     setTca2Certs(prev => ({ ...prev, [jobId]: finalized }));
-    showDemoNotification(`TCA2 Cabling Defect signed off for Job ${jobId}. Non-compliance recorded.`, 'warning');
+    setTca2AuditRecords(prev => ({
+      ...prev,
+      [jobId]: prev[jobId] || {
+        jobId,
+        customerAcknowledged: false,
+        officeReviewCompleted: false,
+      },
+    }));
+    showDemoNotification(`TCA2 Cabling Defect signed off for Job ${jobId}. Non-compliance recorded and document permanently frozen.`, 'warning');
   };
 
   const customerAckTca2 = (jobId: string) => {
-    setTca2Certs(prev => ({
+    // Audit separation: Never mutate the signed TCA2 document
+    const timestamp = demoClock.slice(0, 16);
+    setTca2AuditRecords(prev => ({
       ...prev,
       [jobId]: {
-        ...(prev[jobId] || buildDefaultTca2(jobId)),
+        ...(prev[jobId] || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
         customerAcknowledged: true,
-        customerAckTimestamp: demoClock.slice(0, 16),
+        customerAckTimestamp: timestamp,
       },
     }));
-    showDemoNotification(`Customer acknowledgement captured for TCA2 Defect on Job ${jobId}.`, 'info');
+    showDemoNotification(`Customer acknowledgement captured for TCA2 Defect on Job ${jobId}. Signed report remains immutable.`, 'info');
   };
 
   const officeReviewTca2 = (jobId: string) => {
-    // G00-028 & P0 Fix: Office review actually creates the follow-up work order in jobs
+    const access = verifyPersonaAccess(persona, 'office_compliance_review');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+
+    const cert = tca2Certs[jobId];
+    if (!cert?.signedOff) {
+      showDemoNotification('CANNOT REVIEW: TCA2 Defect Report must be signed off by a technician before office review.', 'error');
+      return;
+    }
+
+    // State-level idempotency guard: Prevent rapid consecutive clicks and duplicate follow-up generation
+    const existingAudit = tca2AuditRecords[jobId];
+    if (existingAudit?.officeReviewCompleted || existingAudit?.rectificationFollowupJobId) {
+      showDemoNotification(
+        `TCA2 Office Review already completed for Job ${jobId}. Rectification follow-up work order #${existingAudit.rectificationFollowupJobId} already queued.`,
+        'warning'
+      );
+      return;
+    }
+
+    // Guard against existing follow-up jobs matching this defect
+    const existingJob = jobs.find(j =>
+      j.title?.includes(`Follow-up to ${jobId}`) ||
+      (j.description?.includes(`reported under ${jobId}`) && j.description?.includes('TCA2'))
+    );
+    if (existingJob) {
+      setTca2AuditRecords(prev => ({
+        ...prev,
+        [jobId]: {
+          ...(prev[jobId] || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
+          officeReviewCompleted: true,
+          reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
+          officeReviewTimestamp: demoClock.slice(0, 16),
+          rectificationFollowupJobId: existingJob.id,
+        },
+      }));
+      showDemoNotification(`Rectification work order #${existingJob.id} already exists in operational pool. Linked to audit trail.`, 'warning');
+      return;
+    }
+
     seqCounters.job++;
     const followupId = `JOB-2026-${seqCounters.job}`;
     const sourceJob = jobs.find(j => j.id === jobId);
@@ -1222,11 +1286,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       sitePhone: sourceJob?.sitePhone || '0400 000 000',
       description: `Rectification follow-up for Cabling Non-Compliance reported under ${jobId}. Dedicated 25mm PVC conduit separation required.`,
       status: 'NEW',
-      appointmentStatus: 'SCHEDULED',
+      appointmentStatus: 'UNSCHEDULED',
       assignedTechId: null,
       assignedTechName: null,
-      scheduledDate: '2026-11-06',
-      scheduledTime: '08:30',
+      scheduledDate: null,
+      scheduledTime: null,
       estimatedDurationHours: 3,
       isDirectToInvoice: false,
       formsRequired: ['JSA', 'TCA1'],
@@ -1251,10 +1315,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     setJobs(prev => [newFollowupJob, ...prev]);
 
-    setTca2Certs(prev => ({
+    setTca2AuditRecords(prev => ({
       ...prev,
       [jobId]: {
-        ...(prev[jobId] || buildDefaultTca2(jobId)),
+        ...(prev[jobId] || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
         officeReviewCompleted: true,
         reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
         officeReviewTimestamp: demoClock.slice(0, 16),
@@ -1265,16 +1329,22 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification(`TCA2 Office Review completed. Rectification follow-up work order #${followupId} created in operational pool.`, 'success');
   };
 
-  // Sample Attachment Linkage (G00-027)
+  // Helper: Verify whether target form is signed off before modifying attachments
+  const isFormSigned = (jobId: string, formType: string): boolean => {
+    if (formType === 'JSA') return Boolean(jsaForms[jobId]?.signedOff);
+    if (formType === 'ELECTRICAL') return Boolean(electricalCerts[jobId]?.signedOff);
+    if (formType === 'SMOKE_ALARM') return Boolean(smokeAlarmCerts[jobId]?.signedOff);
+    if (formType === 'TCA1') return Boolean(tca1Certs[jobId]?.signedOff);
+    if (formType === 'TCA2') return Boolean(tca2Certs[jobId]?.signedOff);
+    return false;
+  };
+
+  // Sample Attachment Linkage (G00-027) with universal immutability guards
   const attachSampleToJobForm = (jobId: string, formType: string, sampleId: string) => {
-    // Add to job
-    setJobs(prev =>
-      prev.map(j =>
-        j.id === jobId && !j.attachedSampleIds.includes(sampleId)
-          ? { ...j, attachedSampleIds: [...j.attachedSampleIds, sampleId] }
-          : j
-      )
-    );
+    if (isFormSigned(jobId, formType)) {
+      showDemoNotification(`CANNOT ATTACH: ${formType} form is signed and locked. Attachments cannot be altered on finalized documents.`, 'error');
+      return;
+    }
 
     // Add to specific form
     if (formType === 'JSA') {
@@ -1300,20 +1370,39 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
     }
 
+    // Add to job ONLY after form check passed
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId && !j.attachedSampleIds.includes(sampleId)
+          ? { ...j, attachedSampleIds: [...j.attachedSampleIds, sampleId] }
+          : j
+      )
+    );
+
     showDemoNotification(`Sample attachment linked to Job ${jobId}.`, 'info');
   };
 
   const removeSampleFromJobForm = (jobId: string, formType: string, sampleId: string) => {
-    setJobs(prev =>
-      prev.map(j =>
-        j.id === jobId
-          ? { ...j, attachedSampleIds: j.attachedSampleIds.filter(id => id !== sampleId) }
-          : j
-      )
-    );
+    if (isFormSigned(jobId, formType)) {
+      showDemoNotification(`CANNOT REMOVE: ${formType} form is signed and locked. Attachments cannot be removed from finalized documents.`, 'error');
+      return;
+    }
+
     if (formType === 'JSA') {
       updateJsaForm(jobId, {
         attachedSampleIds: (jsaForms[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+      });
+    } else if (formType === 'SMOKE_ALARM') {
+      updateSmokeAlarmForm(jobId, {
+        attachedSampleIds: (smokeAlarmCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+      });
+    } else if (formType === 'ELECTRICAL') {
+      updateElectricalForm(jobId, {
+        attachedSampleIds: (electricalCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+      });
+    } else if (formType === 'TCA1') {
+      updateTca1Form(jobId, {
+        attachedSampleIds: (tca1Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
       });
     } else if (formType === 'TCA2') {
       const remaining = (tca2Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId);
@@ -1322,6 +1411,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         samplePhotoLinked: remaining.length > 0,
       });
     }
+
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId
+          ? { ...j, attachedSampleIds: j.attachedSampleIds.filter(id => id !== sampleId) }
+          : j
+      )
+    );
     showDemoNotification(`Sample attachment unlinked from Job ${jobId}.`, 'info');
   };
 
@@ -1539,15 +1636,15 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification(`Invoice reconciliation processed for Job ${jobId}.`, 'info');
   };
 
-  // Reviews Deduplication & Full Workflow (G00-021)
-  const triggerReviewRequest = (jobId: string, simulateFail = false) => {
+  // Reviews Deduplication & Full Workflow (G00-021: PENDING -> SENT / FAILED / UNCERTAIN)
+  const triggerReviewRequest = (jobId: string, simulateOutcome?: 'FAIL' | 'UNCERTAIN') => {
     const job = jobs.find(j => j.id === jobId);
     if (!job) {
       return { success: false, message: 'Job not found' };
     }
 
     const dedup = deduplicateReviewRequest(job, () => {
-      if (simulateFail) {
+      if (simulateOutcome === 'FAIL') {
         return { success: false, reviewUrl: '' };
       }
       return { success: true, reviewUrl: brands[job.brandId]?.reviewUrlPlaceholder || 'https://demo.reviews.invalid' };
@@ -1558,7 +1655,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message: dedup.reason || 'Not allowed' };
     }
 
-    if (simulateFail) {
+    if (simulateOutcome === 'UNCERTAIN') {
       setJobs(prev =>
         prev.map(j =>
           j.id === jobId
@@ -1572,24 +1669,56 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                     ...j.reviewRequest.history,
                     {
                       timestamp: demoClock.slice(0, 16),
-                      event: 'Simulated email dispatch timeout (Error 504)',
+                      event: 'Simulated dispatch gateway timeout (504 Gateway Timeout) - delivery outcome uncertain',
                       status: 'UNCERTAIN',
                     },
                   ],
                 },
                 activityHistory: [
                   ...j.activityHistory,
-                  { timestamp: demoClock.slice(0, 16), action: 'Review request dispatch resulted in uncertain status', actor: 'Automated Service' },
+                  { timestamp: demoClock.slice(0, 16), action: 'Review request dispatch resulted in UNCERTAIN status (504)', actor: 'Automated Service' },
                 ],
               }
             : j
         )
       );
-      showDemoNotification('Review request dispatch failed (uncertain remote outcome). Reconciliation required.', 'error');
+      showDemoNotification('Review request dispatch uncertain (504 gateway timeout). Manual reconciliation required.', 'warning');
       return { success: false, message: 'Dispatch uncertain. Reconcile before retrying.' };
     }
 
-    // Success
+    if (simulateOutcome === 'FAIL') {
+      setJobs(prev =>
+        prev.map(j =>
+          j.id === jobId
+            ? {
+                ...j,
+                reviewRequest: {
+                  ...j.reviewRequest,
+                  status: 'FAILED',
+                  uncertainReconciliationNeeded: false,
+                  lastErrorMessage: 'Remote SMTP server returned 550 Mailbox Unavailable',
+                  history: [
+                    ...j.reviewRequest.history,
+                    {
+                      timestamp: demoClock.slice(0, 16),
+                      event: 'Simulated dispatch failure: SMTP 550 delivery rejection',
+                      status: 'FAILED',
+                    },
+                  ],
+                },
+                activityHistory: [
+                  ...j.activityHistory,
+                  { timestamp: demoClock.slice(0, 16), action: 'Review request dispatch failed (SMTP 550)', actor: 'Automated Service' },
+                ],
+              }
+            : j
+        )
+      );
+      showDemoNotification('Review request failed to dispatch (SMTP 550). Controlled retry available.', 'error');
+      return { success: false, message: 'Dispatch failed. Controlled retry available.' };
+    }
+
+    // Success: SENT
     setJobs(prev =>
       prev.map(j =>
         j.id === jobId
@@ -1600,6 +1729,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 status: 'SENT',
                 sentTimestamp: demoClock.slice(0, 16),
                 reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
+                uncertainReconciliationNeeded: false,
                 history: [
                   ...j.reviewRequest.history,
                   {
@@ -1622,7 +1752,42 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return { success: true, message: 'Review request sent!' };
   };
 
-  const reconcileReviewRequest = (jobId: string) => {
+  const reconcileReviewRequest = (jobId: string, resolution: 'SENT' | 'FAILED' = 'SENT') => {
+    setJobs(prev =>
+      prev.map(j =>
+        j.id === jobId
+          ? {
+              ...j,
+              reviewRequest: {
+                ...j.reviewRequest,
+                status: resolution,
+                uncertainReconciliationNeeded: false,
+                sentTimestamp: resolution === 'SENT' ? demoClock.slice(0, 16) : undefined,
+                history: [
+                  ...j.reviewRequest.history,
+                  {
+                    timestamp: demoClock.slice(0, 16),
+                    event: resolution === 'SENT'
+                      ? 'Reconciled manual check: delivery confirmed in gateway dispatch log.'
+                      : 'Reconciled manual check: delivery confirmed failed. Marked FAILED for retry.',
+                    status: resolution === 'SENT' ? 'RECONCILED_SENT' : 'RECONCILED_FAILED',
+                  },
+                ],
+              },
+            }
+          : j
+      )
+    );
+    showDemoNotification(`Review status for Job ${jobId} reconciled to ${resolution}.`, 'info');
+  };
+
+  const retryReviewRequest = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return { success: false, message: 'Job not found' };
+    if (job.reviewRequest.status !== 'FAILED') {
+      showDemoNotification(`Only FAILED review requests can be retried. Current status: ${job.reviewRequest.status}`, 'warning');
+      return { success: false, message: 'Not in FAILED state' };
+    }
     setJobs(prev =>
       prev.map(j =>
         j.id === jobId
@@ -1631,14 +1796,15 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               reviewRequest: {
                 ...j.reviewRequest,
                 status: 'SENT',
-                uncertainReconciliationNeeded: false,
                 sentTimestamp: demoClock.slice(0, 16),
+                reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
+                uncertainReconciliationNeeded: false,
                 history: [
                   ...j.reviewRequest.history,
                   {
                     timestamp: demoClock.slice(0, 16),
-                    event: 'Reconciled manual check: delivery confirmed in mock log.',
-                    status: 'RECONCILED',
+                    event: 'Controlled retry successful: email dispatched and confirmed.',
+                    status: 'SENT',
                   },
                 ],
               },
@@ -1646,7 +1812,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           : j
       )
     );
-    showDemoNotification(`Review status for Job ${jobId} reconciled to SENT.`, 'info');
+    showDemoNotification(`Review request for Job ${jobId} retried successfully and sent.`, 'success');
+    return { success: true, message: 'Review request retried and sent.' };
   };
 
   // Templates & Versioning (G00-007: DRAFT -> REVIEW -> PUBLISHED)
@@ -1654,6 +1821,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const access = verifyPersonaAccess(persona, 'template_publishing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+
+    const tpl = templates.find(t => t.id === templateId);
+    if (!tpl) return;
+
+    if (tpl.activeStatus !== 'REVIEW') {
+      showDemoNotification(
+        `CANNOT PUBLISH: Template revision must be submitted and in 'REVIEW' status before publishing. Current status: ${tpl.activeStatus}.`,
+        'error'
+      );
       return;
     }
 
@@ -1673,7 +1851,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ...t,
             currentVersion: newVer,
             activeStatus: 'PUBLISHED',
-            revisions: [publishedRev, ...t.revisions],
+            revisions: [publishedRev, ...t.revisions.filter(r => r.status !== 'REVIEW')],
           };
         }
         return t;
@@ -1747,17 +1925,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     setJobTypes(prev =>
-      prev.map(jt =>
-        jt.id === typeId
-          ? {
-              ...jt,
-              formsRequired: isDirectToInvoice ? [] : formsRequired,
-              isDirectToInvoice,
-            }
-          : jt
-      )
+      prev.map(jt => {
+        if (jt.id === typeId) {
+          const currentVerNum = parseFloat(jt.version.replace('v', '')) || 1.0;
+          const nextVer = `v${(currentVerNum + 0.1).toFixed(1)}`;
+          const historyEntry = {
+            version: jt.version,
+            formsRequired: jt.formsRequired,
+            isDirectToInvoice: jt.isDirectToInvoice,
+            updatedAt: demoClock.slice(0, 16),
+            updatedBy: persona.toUpperCase(),
+          };
+          return {
+            ...jt,
+            version: nextVer,
+            formsRequired: isDirectToInvoice ? [] : formsRequired,
+            isDirectToInvoice,
+            revisionHistory: [historyEntry, ...(jt.revisionHistory || [])],
+          };
+        }
+        return jt;
+      })
     );
-    showDemoNotification('Job type compliance matrix policy updated.', 'success');
+    showDemoNotification('Job type compliance matrix policy updated to new version. Existing in-flight jobs retain historical requirement snapshots.', 'success');
   };
 
   // Certificate Delivery Workflow (G00-022)
@@ -1768,31 +1958,37 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let docTitle = '';
     let formSnapshot = '';
     let isSigned = false;
+    let fullDocSnapshot = '';
 
     if (formType === 'JSA') {
       const form = getOrCreateJsa(jobId);
       docTitle = `Job Safety Analysis (JSA) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
+      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
     } else if (formType === 'ELECTRICAL') {
       const form = getOrCreateElectrical(jobId);
       docTitle = `Certificate of Electrical Safety (Part A) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
+      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
     } else if (formType === 'SMOKE_ALARM') {
       const form = getOrCreateSmokeAlarm(jobId);
       docTitle = `Smoke Alarm Compliance Certificate — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
+      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
     } else if (formType === 'TCA1') {
       const form = getOrCreateTca1(jobId);
       docTitle = `Telecommunications Cabling Advice (TCA1) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
+      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
     } else if (formType === 'TCA2') {
       const form = getOrCreateTca2(jobId);
       docTitle = `Cabling Non-Compliance Notice (TCA2) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
+      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
     }
 
@@ -1812,6 +2008,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       sentAt: demoClock.slice(0, 16),
       documentTitle: docTitle,
       snapshotSummary: formSnapshot,
+      fullFrozenDocumentSnapshot: fullDocSnapshot,
     };
 
     setCertificateDeliveries(prev => [newRecord, ...prev]);
@@ -1821,7 +2018,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message: 'Simulated dispatch failure' };
     }
 
-    showDemoNotification(`Signed certificate emailed to ${newRecord.recipientEmail}. Snapshot preserved.`, 'success');
+    showDemoNotification(`Signed certificate emailed to ${newRecord.recipientEmail}. Complete snapshot preserved.`, 'success');
     return { success: true, message: 'Certificate delivered successfully' };
   };
 
@@ -2014,6 +2211,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         signOffTca2,
         customerAckTca2,
         officeReviewTca2,
+        tca2AuditRecords,
+        getTca2AuditRecord,
         sampleAttachments,
         attachSampleToJobForm,
         removeSampleFromJobForm,
@@ -2023,6 +2222,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         reconcileInvoiceSync,
         triggerReviewRequest,
         reconcileReviewRequest,
+        retryReviewRequest,
         certificateDeliveries,
         sendCertificateEmail,
         retryCertificateDelivery,

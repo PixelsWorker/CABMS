@@ -34,6 +34,7 @@ export const CommunicationsView: React.FC = () => {
     persona,
     triggerReviewRequest,
     reconcileReviewRequest,
+    retryReviewRequest,
     certificateDeliveries,
     sendCertificateEmail,
     retryCertificateDelivery,
@@ -64,8 +65,8 @@ export const CommunicationsView: React.FC = () => {
   // Selected job
   const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
 
-  const handleSendReview = (simulateFail: boolean) => {
-    const outcome = triggerReviewRequest(currentJob.id, simulateFail);
+  const handleSendReview = (outcomeType?: 'FAIL' | 'UNCERTAIN') => {
+    const outcome = triggerReviewRequest(currentJob.id, outcomeType);
     setReviewFeedback(outcome);
   };
 
@@ -209,7 +210,11 @@ export const CommunicationsView: React.FC = () => {
                     currentJob.reviewRequest.status === 'SENT'
                       ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                       : currentJob.reviewRequest.status === 'UNCERTAIN'
+                      ? 'bg-amber-950 text-amber-400 border border-amber-800'
+                      : currentJob.reviewRequest.status === 'FAILED'
                       ? 'bg-red-950 text-red-400 border border-red-800'
+                      : currentJob.reviewRequest.status === 'PENDING'
+                      ? 'bg-sky-950 text-sky-400 border border-sky-800'
                       : 'bg-slate-900 text-slate-400 border border-slate-800'
                   }`}
                 >
@@ -234,7 +239,7 @@ export const CommunicationsView: React.FC = () => {
               <span className="text-xs font-bold text-slate-300 block">Simulate Dispatch Action:</span>
               <div className="flex flex-wrap gap-2">
                 <button
-                  onClick={() => handleSendReview(false)}
+                  onClick={() => handleSendReview()}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold rounded-lg transition shadow-md cursor-pointer flex items-center space-x-1.5"
                 >
                   <Send className="w-3.5 h-3.5" />
@@ -242,24 +247,56 @@ export const CommunicationsView: React.FC = () => {
                 </button>
 
                 <button
-                  onClick={() => handleSendReview(true)}
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition cursor-pointer"
-                  title="Simulate network failure resulting in an uncertain status requiring reconciliation"
+                  onClick={() => handleSendReview('UNCERTAIN')}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold rounded-lg transition cursor-pointer"
+                  title="Simulate 504 Gateway Timeout resulting in an UNCERTAIN state"
                 >
-                  Simulate Failed/Uncertain Dispatch
+                  Simulate 504 Timeout (Uncertain)
                 </button>
 
-                {currentJob.reviewRequest.uncertainReconciliationNeeded && (
+                <button
+                  onClick={() => handleSendReview('FAIL')}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-red-300 text-xs font-semibold rounded-lg transition cursor-pointer"
+                  title="Simulate SMTP 550 Mailbox Unavailable resulting in FAILED state"
+                >
+                  Simulate SMTP 550 (Failed)
+                </button>
+
+                {currentJob.reviewRequest.status === 'FAILED' && (
                   <button
                     onClick={() => {
-                      reconcileReviewRequest(currentJob.id);
-                      setReviewFeedback({ success: true, message: 'Uncertain review request manually reconciled and confirmed.' });
+                      const res = retryReviewRequest(currentJob.id);
+                      setReviewFeedback(res);
                     }}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded-lg transition cursor-pointer flex items-center space-x-1.5"
+                    className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded-lg transition cursor-pointer flex items-center space-x-1.5"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Reconcile Uncertain Send</span>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Dispatch</span>
                   </button>
+                )}
+
+                {currentJob.reviewRequest.uncertainReconciliationNeeded && (
+                  <>
+                    <button
+                      onClick={() => {
+                        reconcileReviewRequest(currentJob.id, 'SENT');
+                        setReviewFeedback({ success: true, message: 'Uncertain review request manually verified as SENT.' });
+                      }}
+                      className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition cursor-pointer flex items-center space-x-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Confirm Sent</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        reconcileReviewRequest(currentJob.id, 'FAILED');
+                        setReviewFeedback({ success: false, message: 'Uncertain review request marked as FAILED.' });
+                      }}
+                      className="px-3.5 py-2 bg-red-800 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition cursor-pointer flex items-center space-x-1.5"
+                    >
+                      <span>Mark Failed</span>
+                    </button>
+                  </>
                 )}
               </div>
 

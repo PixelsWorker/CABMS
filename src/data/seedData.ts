@@ -14,6 +14,7 @@ import {
   SmokeAlarmCertData,
   Tca1CertData,
   Tca2CertData,
+  Tca2AuditRecord,
   SampleAttachment,
   TemplateSetting,
   WebsiteEnquiry,
@@ -474,6 +475,14 @@ export const INITIAL_TCA2_CERT: Tca2CertData = {
   attachedSampleIds: ['ATT-003'],
 };
 
+export const INITIAL_TCA2_AUDIT: Record<string, Tca2AuditRecord> = {
+  'JOB-2026-104': {
+    jobId: 'JOB-2026-104',
+    customerAcknowledged: false,
+    officeReviewCompleted: false,
+  },
+};
+
 export const INITIAL_JOBS: Job[] = [
   {
     id: 'JOB-2026-101',
@@ -487,6 +496,7 @@ export const INITIAL_JOBS: Job[] = [
     sitePhone: '0400 000 001',
     description: 'Documentation-required visit with JSA and smoke-alarm inspection. Initially missing JSA sign-off to demonstrate completion failure and subsequent success.',
     status: 'IN_PROGRESS',
+    appointmentStatus: 'SCHEDULED',
     assignedTechId: 'TECH-001',
     assignedTechName: 'Dave Miller',
     scheduledDate: '2026-11-02',
@@ -583,6 +593,7 @@ export const INITIAL_JOBS: Job[] = [
     sitePhone: '0400 000 001',
     description: 'Direct-to-invoice emergency service call. Requires no quote and no compliance forms. Demonstrates the clean no-required-forms completion pathway.',
     status: 'IN_PROGRESS',
+    appointmentStatus: 'SCHEDULED',
     assignedTechId: 'TECH-001',
     assignedTechName: 'Dave Miller',
     scheduledDate: '2026-11-02',
@@ -638,6 +649,7 @@ export const INITIAL_JOBS: Job[] = [
     sitePhone: '0400 000 004',
     description: 'Electrical certificate example with missing Part B warning persistently displayed. Illustrates adherence to the source-extract boundary.',
     status: 'SCHEDULED',
+    appointmentStatus: 'SCHEDULED',
     assignedTechId: 'TECH-001',
     assignedTechName: 'Dave Miller',
     scheduledDate: '2026-11-03',
@@ -720,6 +732,7 @@ export const INITIAL_JOBS: Job[] = [
     sitePhone: '0400 000 003',
     description: 'Cabling inspection with TCA1 installation certificate and TCA2 non-compliance report. Placed in NEEDS_REVISIT state due to high-risk electrical/cabling defect.',
     status: 'NEEDS_REVISIT',
+    appointmentStatus: 'SCHEDULED',
     assignedTechId: 'TECH-002', // Assigned to Alex Taylor (TECH-002)!
     assignedTechName: 'Alex Taylor',
     scheduledDate: '2026-11-02',
@@ -766,10 +779,11 @@ export const INITIAL_JOBS: Job[] = [
     sitePhone: '0400 000 002',
     description: 'Unassigned job used specifically to demonstrate Technician denied-access and permission boundaries.',
     status: 'NEW',
+    appointmentStatus: 'UNSCHEDULED',
     assignedTechId: null, // UNASSIGNED!
     assignedTechName: null,
-    scheduledDate: '2026-11-04',
-    scheduledTime: '09:00',
+    scheduledDate: null,
+    scheduledTime: null,
     estimatedDurationHours: 4,
     isDirectToInvoice: false,
     formsRequired: ['JSA'],

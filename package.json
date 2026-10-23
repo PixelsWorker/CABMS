@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/utils/cabmsLogic.test.ts tests/*.test.ts",
+    "test": "npm run build && tsx --test src/utils/cabmsLogic.test.ts tests/*.test.ts",
     "test:layer1": "tsx --test tests/layer1_toolchain.test.ts",
     "test:layer2": "tsx --test tests/layer2_domain.test.ts",
     "test:layer3": "tsx --test tests/layer3_navigation_access.test.ts",

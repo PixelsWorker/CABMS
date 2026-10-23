@@ -231,7 +231,7 @@ export function checkCustomerDuplicate(
 
 export function verifyPersonaAccess(
   persona: Persona,
-  resource: 'all_customers' | 'technical_integrations' | 'template_publishing' | 'template_editing' | 'financial_writes' | 'assigned_job' | 'unassigned_job',
+  resource: 'all_customers' | 'technical_integrations' | 'template_publishing' | 'template_editing' | 'financial_writes' | 'assigned_job' | 'unassigned_job' | 'office_compliance_review',
   jobAssignment?: { assignedTechId: string | null; currentTechId: string }
 ): { allowed: boolean; reason?: string } {
   switch (persona) {
@@ -264,9 +264,10 @@ export function verifyPersonaAccess(
         resource === 'technical_integrations' ||
         resource === 'template_publishing' ||
         resource === 'template_editing' ||
-        resource === 'financial_writes'
+        resource === 'financial_writes' ||
+        resource === 'office_compliance_review'
       ) {
-        return { allowed: false, reason: 'Technician role cannot access technical settings, master templates, or financial accounting writes.' };
+        return { allowed: false, reason: 'Technician role cannot access technical settings, master templates, financial writes, or office compliance reviews.' };
       }
       if (resource === 'unassigned_job') {
         return { allowed: false, reason: 'Technician can only access jobs assigned to them. Direct route to unassigned work is denied.' };

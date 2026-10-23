@@ -295,16 +295,28 @@ export const TemplatesSettingsView: React.FC = () => {
             <div>
               <button
                 onClick={() => publishTemplateVersion(currentTemplate.id)}
-                disabled={persona === 'office_staff'}
-                className={`px-4 py-2 rounded-lg font-bold text-xs transition cursor-pointer flex items-center space-x-1.5 ${
-                  persona === 'office_staff'
-                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 shadow'
+                disabled={persona === 'office_staff' || currentTemplate.activeStatus !== 'REVIEW'}
+                className={`px-4 py-2 rounded-lg font-bold text-xs transition flex items-center space-x-1.5 ${
+                  persona === 'office_staff' || currentTemplate.activeStatus !== 'REVIEW'
+                    ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 shadow cursor-pointer'
                 }`}
-                title={persona === 'office_staff' ? 'Office staff cannot publish master templates' : 'Publish this template version'}
+                title={
+                  persona === 'office_staff'
+                    ? 'Office staff cannot publish master templates'
+                    : currentTemplate.activeStatus !== 'REVIEW'
+                    ? 'Template must be submitted for review before it can be published'
+                    : 'Approve and publish this template version'
+                }
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>{currentTemplate.activeStatus === 'REVIEW' ? 'Approve & Publish' : 'Publish Active Version'}</span>
+                <span>
+                  {currentTemplate.activeStatus === 'REVIEW'
+                    ? 'Approve & Publish'
+                    : currentTemplate.activeStatus === 'PUBLISHED'
+                    ? 'Currently Published'
+                    : 'Submit for Review to Publish'}
+                </span>
               </button>
             </div>
           </div>
@@ -442,6 +454,22 @@ export const TemplatesSettingsView: React.FC = () => {
                           </label>
                         );
                       })}
+                    </div>
+                  </div>
+                )}
+
+                {targetJt.revisionHistory && targetJt.revisionHistory.length > 0 && (
+                  <div className="pt-2 border-t border-slate-800 space-y-1.5">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                      Policy Version {targetJt.version} — Audit History
+                    </span>
+                    <div className="max-h-24 overflow-y-auto space-y-1">
+                      {targetJt.revisionHistory.map((rev, idx) => (
+                        <div key={idx} className="bg-slate-950 p-2 rounded text-[11px] text-slate-400 flex items-center justify-between border border-slate-800">
+                          <span className="font-mono text-sky-400 font-bold">{rev.version}</span>
+                          <span className="text-slate-500">by {rev.updatedBy} ({rev.updatedAt.slice(0, 10)})</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

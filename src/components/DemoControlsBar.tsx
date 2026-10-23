@@ -14,6 +14,7 @@ import {
   Workflow,
   FastForward,
   HelpCircle,
+  Send,
 } from 'lucide-react';
 
 export const DemoControlsBar: React.FC = () => {
@@ -28,6 +29,8 @@ export const DemoControlsBar: React.FC = () => {
     resetDemo,
     activeScenario,
     setActiveScenario,
+    pendingReviewCount,
+    resolveAllPendingReviews,
   } = useCabms();
 
   const formattedDate = new Date(demoClock).toLocaleString('en-AU', {
@@ -125,6 +128,18 @@ export const DemoControlsBar: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Dispatch Pending Reviews Action */}
+          {persona !== 'technician' && pendingReviewCount > 0 && (
+            <button
+              onClick={() => resolveAllPendingReviews()}
+              className="flex items-center space-x-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 px-2.5 py-1 rounded text-xs font-bold transition shadow-sm cursor-pointer animate-pulse"
+              title="Dispatch and resolve all pending customer review requests"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Dispatch Review ({pendingReviewCount} Pending)</span>
+            </button>
+          )}
 
           {/* Reset Demo */}
           <button

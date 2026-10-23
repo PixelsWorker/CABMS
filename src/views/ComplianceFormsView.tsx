@@ -1368,283 +1368,333 @@ export const ComplianceFormsView: React.FC = () => {
             )}
 
             {/* ================= COMPLETED FORM CONTENT REPRODUCTION ================= */}
-            <div className="space-y-4 text-xs text-slate-800">
-              {/* JSA Body */}
-              {activeFormTab === 'JSA' && (
-                <div className="space-y-3">
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Lead Personnel</span>
-                      <span className="font-bold">{currentJsa.personnelName} ({currentJsa.personnelRole})</span>
+            {(() => {
+              const activeFormObj = (() => {
+                switch (activeFormTab) {
+                  case 'JSA': return currentJsa;
+                  case 'ELECTRICAL': return currentElec;
+                  case 'SMOKE_ALARM': return currentSmoke;
+                  case 'TCA1': return currentTca1;
+                  case 'TCA2': return currentTca2;
+                }
+              })();
+
+              let parsedSnapshot: any = null;
+              let isSnapshotCorrupted = false;
+
+              if (activeStatus.signedOff) {
+                if (!activeFormObj?.fullSnapshot) {
+                  isSnapshotCorrupted = true;
+                } else {
+                  try {
+                    parsedSnapshot = JSON.parse(activeFormObj.fullSnapshot);
+                  } catch {
+                    isSnapshotCorrupted = true;
+                  }
+                }
+              }
+
+              if (isSnapshotCorrupted) {
+                return (
+                  <div className="p-4 rounded-xl bg-red-100 border-2 border-red-500 text-red-950 space-y-2">
+                    <div className="flex items-center space-x-2 font-bold text-red-900">
+                      <AlertTriangle className="w-5 h-5 text-red-600" />
+                      <span>DOCUMENT SNAPSHOT CORRUPTION DETECTED</span>
                     </div>
-                    <div>
-                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Licence & Expiry</span>
-                      <span className="font-mono">{currentJsa.licencePlaceholder} (Exp: {currentJsa.licenceExpiryPlaceholder})</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Site Induction</span>
-                      <span className={currentJsa.inductionCompleted ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
-                        {currentJsa.inductionCompleted ? '✓ Completed Onsite' : '✗ Not Completed'}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="font-semibold text-slate-500 text-[10px] uppercase block">Competencies Verified</span>
-                      <span className={currentJsa.competencyVerified ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
-                        {currentJsa.competencyVerified ? '✓ Verified by Lead' : '✗ Not Verified'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">
-                      Identified Hazards & Control Measures Matrix (Revision {currentJsa.formRevision})
-                    </h4>
-                    <table className="w-full border border-slate-300 text-left text-[11px]">
-                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
-                        <tr>
-                          <th className="p-1.5">Task Step</th>
-                          <th className="p-1.5">Hazards</th>
-                          <th className="p-1.5 text-center">Initial Risk</th>
-                          <th className="p-1.5">Controls Applied</th>
-                          <th className="p-1.5 text-center">Residual</th>
-                          <th className="p-1.5">Responsible</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {currentJsa.steps.map(s => (
-                          <tr key={s.id}>
-                            <td className="p-1.5 font-semibold text-slate-900">{s.taskStep}</td>
-                            <td className="p-1.5 text-red-800">{s.hazards}</td>
-                            <td className="p-1.5 text-center font-bold">{s.initialRisk}</td>
-                            <td className="p-1.5 text-slate-800">{s.controls}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-700">{s.residualRisk}</td>
-                            <td className="p-1.5 text-slate-600">{s.responsibleRole}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 text-[11px]">
-                    <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
-                      <span className="font-bold text-slate-700 block mb-1">PPE Equipment Checklist</span>
-                      {currentJsa.ppeChecklist.map((p, i) => (
-                        <div key={i} className="flex justify-between py-0.5 border-b border-slate-200 last:border-0">
-                          <span className="text-slate-700">{p.item}</span>
-                          <span className="font-bold text-slate-900">{p.status}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1">
-                      <span className="font-bold text-slate-700 block mb-1">Emergency Protocols</span>
-                      <div>Assembly Area: <strong>{currentJsa.emergencyAssemblyArea}</strong></div>
-                      <div>Emergency Warden: <strong>{currentJsa.emergencyWardenPlaceholder}</strong></div>
-                      <div>First Aid Officer: <strong>{currentJsa.firstAidOfficerPlaceholder}</strong></div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Electrical Body */}
-              {activeFormTab === 'ELECTRICAL' && (
-                <div className="space-y-3">
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
-                    <div>Date of Test: <strong>{currentElec.dateOfTest}</strong></div>
-                    <div>Certificate Ref: <strong className="font-mono">{currentElec.certReference}</strong></div>
-                    <div>Contractor: <strong>{currentElec.contractorNamePlaceholder}</strong></div>
-                    <div>Licence: <strong className="font-mono">{currentElec.electricianLicencePlaceholder}</strong></div>
-                  </div>
-
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">Tested Work Items & Verification Results</h4>
-                    <table className="w-full border border-slate-300 text-left text-[11px]">
-                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
-                        <tr>
-                          <th className="p-1.5">Description</th>
-                          <th className="p-1.5">Circuits</th>
-                          <th className="p-1.5">Insulation Res.</th>
-                          <th className="p-1.5 text-center">Polarity</th>
-                          <th className="p-1.5 text-center">Earth Cont.</th>
-                          <th className="p-1.5">RCD Trip</th>
-                          <th className="p-1.5 text-center">Result</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {currentElec.testedWorkItems.map(w => (
-                          <tr key={w.id}>
-                            <td className="p-1.5 font-semibold text-slate-900">{w.description}</td>
-                            <td className="p-1.5">{w.circuitsTested}</td>
-                            <td className="p-1.5 font-mono">{w.insulationResistanceResult}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-700">{w.polarityTest}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-700">{w.earthContinuity}</td>
-                            <td className="p-1.5 font-mono">{w.rcdTripTimeMs}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-800">{w.workResult}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">
-                    <strong>Standards Relied Upon:</strong> {currentElec.standardsReliedOn.join(', ')}
-                  </div>
-                </div>
-              )}
-
-              {/* Smoke Alarm Body */}
-              {activeFormTab === 'SMOKE_ALARM' && (
-                <div className="space-y-3">
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-3 gap-2 text-[11px]">
-                    <div>Property Type: <strong>{currentSmoke.propertyType}</strong></div>
-                    <div>Storeys: <strong>{currentSmoke.storeys}</strong></div>
-                    <div>Bedrooms: <strong>{currentSmoke.bedrooms}</strong></div>
-                    <div>Occupancy: <strong>{currentSmoke.occupancyStatus}</strong></div>
-                    <div>Inspection Date: <strong>{currentSmoke.dateOfInspection}</strong></div>
-                    <div>Issued To: <strong>{currentSmoke.issuedToRole}</strong></div>
-                  </div>
-
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">Smoke Alarm Schedule (AS 3786:2014)</h4>
-                    <table className="w-full border border-slate-300 text-left text-[11px]">
-                      <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
-                        <tr>
-                          <th className="p-1.5">Room Location</th>
-                          <th className="p-1.5">Make & Model</th>
-                          <th className="p-1.5">Standard</th>
-                          <th className="p-1.5">Power Source</th>
-                          <th className="p-1.5 text-center">Button</th>
-                          <th className="p-1.5 text-center">Interconn.</th>
-                          <th className="p-1.5 text-center">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-200">
-                        {currentSmoke.alarmSchedule.map(a => (
-                          <tr key={a.id}>
-                            <td className="p-1.5 font-semibold text-slate-900">{a.roomLocation}</td>
-                            <td className="p-1.5">{a.alarmBrandModel}</td>
-                            <td className="p-1.5 font-mono">{a.standardMarkingPlaceholder}</td>
-                            <td className="p-1.5 text-[10px]">{a.powerSource}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-700">{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-700">{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
-                            <td className="p-1.5 text-center font-bold text-emerald-800">{a.passFail}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* TCA1 Cabling Body */}
-              {activeFormTab === 'TCA1' && (
-                <div className="space-y-3">
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
-                    <div>Registered Cabler: <strong>{currentTca1.registeredCablerPlaceholder}</strong></div>
-                    <div>Registration No: <strong className="font-mono">{currentTca1.cablerRegistrationNumberPlaceholder}</strong></div>
-                    <div>Employer: <strong>{currentTca1.employerDetailsPlaceholder}</strong></div>
-                    <div>Date of Work: <strong>{currentTca1.dateOfWork}</strong></div>
-                  </div>
-
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5 text-[11px]">
-                    <div>Location of Work: <strong>{currentTca1.locationOfWork}</strong></div>
-                    <div>Scope & Work Description: <strong>{currentTca1.workDescription}</strong></div>
-                    <div>Supervision Provided: <strong>{currentTca1.supervisionProvided ? 'Yes' : 'No'}</strong></div>
-                    <p className="italic text-slate-600 pt-1 border-t border-slate-200">
-                      &quot;{currentTca1.certificationPlaceholderText}&quot;
+                    <p className="text-xs">
+                      This compliance document is marked as signed off, but its immutable serialized snapshot is missing or corrupted.
+                      To preserve evidentiary integrity under Australian Standards and the Electrical Safety Act, live working draft data cannot be substituted for the signed document.
                     </p>
                   </div>
-                </div>
-              )}
-
-              {/* TCA2 Defect Body (Frozen at sign-off) */}
-              {activeFormTab === 'TCA2' && (
-                <div className="space-y-3">
-                  <div className="bg-red-50 p-3 rounded-lg border border-red-200 grid grid-cols-2 gap-2 text-[11px]">
-                    <div>Report Reference: <strong className="font-mono">{currentTca2.reportReference}</strong></div>
-                    <div>Inspection Date: <strong>{currentTca2.inspectionDate}</strong></div>
-                    <div>Risk Category: <strong className="text-red-800">{currentTca2.riskCategory}</strong></div>
-                    <div>Urgency: <strong className="text-red-800">{currentTca2.urgencyLevel}</strong></div>
-                  </div>
-
-                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2 text-[11px]">
-                    <div>Inspected Locations: <strong>{currentTca2.locationsInspected}</strong></div>
-                    <div>Defect Description: <strong className="text-red-900">{currentTca2.nonComplianceDescription}</strong></div>
-                    <div>Relevant Standard: <strong className="font-mono">{currentTca2.requirementReferencePlaceholder}</strong></div>
-                    <div>Rectification Recommendation: <strong>{currentTca2.rectificationRecommendation}</strong></div>
-                    <div>Responsible Party: <strong>{currentTca2.responsibleParty}</strong></div>
-                  </div>
-
-                  {/* Separate Post-Inspection Audit Appendix (Unfrozen Independent Audit Record) */}
-                  <div className="bg-amber-50/70 p-3 rounded-lg border border-amber-300 space-y-1.5 text-[11px]">
-                    <div className="flex items-center justify-between border-b border-amber-200 pb-1">
-                      <h5 className="font-bold text-amber-950 uppercase tracking-wider text-[10px]">
-                        Post-Inspection Audit Appendix (Independent Demonstration Audit Record)
-                      </h5>
-                      <span className="text-[10px] text-amber-800 font-mono">Job #{currentJob.id}</span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 pt-1 text-slate-800">
-                      <div>
-                        Customer Acknowledged:{' '}
-                        <strong>
-                          {currentTca2Audit.customerAcknowledged
-                            ? `Yes (${currentTca2Audit.customerAckTimestamp || 'Recorded'})`
-                            : 'Pending Customer Acknowledgment'}
-                        </strong>
-                      </div>
-                      <div>
-                        Office Review:{' '}
-                        <strong>
-                          {currentTca2Audit.officeReviewCompleted
-                            ? `Completed (${currentTca2Audit.reviewedByOfficeStaff || 'Office Reviewer'})`
-                            : 'Pending Office Review'}
-                        </strong>
-                      </div>
-                      {currentTca2Audit.rectificationFollowupJobId && (
-                        <div className="col-span-2 text-slate-900">
-                          Follow-up Rectification Work Order:{' '}
-                          <strong className="font-mono text-purple-800">
-                            #{currentTca2Audit.rectificationFollowupJobId}
-                          </strong>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Attached Evidence Preview in PDF */}
-              {(() => {
-                const activeAttachedIds = (() => {
-                  switch (activeFormTab) {
-                    case 'JSA': return currentJsa.attachedSampleIds || [];
-                    case 'ELECTRICAL': return currentElec.attachedSampleIds || [];
-                    case 'SMOKE_ALARM': return currentSmoke.attachedSampleIds || [];
-                    case 'TCA1': return currentTca1.attachedSampleIds || [];
-                    case 'TCA2': return currentTca2.attachedSampleIds || [];
-                  }
-                })();
-                const linkedSamples = sampleAttachments.filter(s => activeAttachedIds.includes(s.id));
-
-                if (linkedSamples.length === 0) return null;
-
-                return (
-                  <div className="pt-2 border-t border-slate-200">
-                    <h4 className="font-bold text-slate-900 text-xs uppercase mb-2">
-                      Linked Photographic Evidence ({linkedSamples.length} verified item{linkedSamples.length > 1 ? 's' : ''})
-                    </h4>
-                    <div className="grid grid-cols-3 gap-2">
-                      {linkedSamples.map(sample => (
-                        <div key={sample.id} className="border border-slate-200 rounded p-1.5 text-center bg-slate-50">
-                          <img src={sample.thumbnailUrl} alt={sample.title} className="h-20 w-full object-cover rounded mb-1" />
-                          <div className="font-bold text-[10px] text-slate-900 truncate">{sample.title}</div>
-                          <div className="text-[9px] text-slate-500 font-mono">{sample.filename}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 );
-              })()}
-            </div>
+              }
+
+              const displayJsa = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentJsa;
+              const displayElec = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentElec;
+              const displaySmoke = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentSmoke;
+              const displayTca1 = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentTca1;
+              const displayTca2 = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentTca2;
+
+              return (
+                <div className="space-y-4 text-xs text-slate-800">
+                  {/* JSA Body */}
+                  {activeFormTab === 'JSA' && (
+                    <div className="space-y-3">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2">
+                        <div>
+                          <span className="font-semibold text-slate-500 text-[10px] uppercase block">Lead Personnel</span>
+                          <span className="font-bold">{displayJsa.personnelName} ({displayJsa.personnelRole})</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-500 text-[10px] uppercase block">Licence & Expiry</span>
+                          <span className="font-mono">{displayJsa.licencePlaceholder} (Exp: {displayJsa.licenceExpiryPlaceholder})</span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-500 text-[10px] uppercase block">Site Induction</span>
+                          <span className={displayJsa.inductionCompleted ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
+                            {displayJsa.inductionCompleted ? '✓ Completed Onsite' : '✗ Not Completed'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-semibold text-slate-500 text-[10px] uppercase block">Competencies Verified</span>
+                          <span className={displayJsa.competencyVerified ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
+                            {displayJsa.competencyVerified ? '✓ Verified by Lead' : '✗ Not Verified'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">
+                          Identified Hazards & Control Measures Matrix (Revision {displayJsa.formRevision})
+                        </h4>
+                        <table className="w-full border border-slate-300 text-left text-[11px]">
+                          <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
+                            <tr>
+                              <th className="p-1.5">Task Step</th>
+                              <th className="p-1.5">Hazards</th>
+                              <th className="p-1.5 text-center">Initial Risk</th>
+                              <th className="p-1.5">Controls Applied</th>
+                              <th className="p-1.5 text-center">Residual</th>
+                              <th className="p-1.5">Responsible</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {displayJsa.steps.map((s: any) => (
+                              <tr key={s.id}>
+                                <td className="p-1.5 font-semibold text-slate-900">{s.taskStep}</td>
+                                <td className="p-1.5 text-red-800">{s.hazards}</td>
+                                <td className="p-1.5 text-center font-bold">{s.initialRisk}</td>
+                                <td className="p-1.5 text-slate-800">{s.controls}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-700">{s.residualRisk}</td>
+                                <td className="p-1.5 text-slate-600">{s.responsibleRole}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 text-[11px]">
+                        <div className="bg-slate-50 p-2.5 rounded border border-slate-200">
+                          <span className="font-bold text-slate-700 block mb-1">PPE Equipment Checklist</span>
+                          {displayJsa.ppeChecklist.map((p: any, i: number) => (
+                            <div key={i} className="flex justify-between py-0.5 border-b border-slate-200 last:border-0">
+                              <span className="text-slate-700">{p.item}</span>
+                              <span className="font-bold text-slate-900">{p.status}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="bg-slate-50 p-2.5 rounded border border-slate-200 space-y-1">
+                          <span className="font-bold text-slate-700 block mb-1">Emergency Protocols</span>
+                          <div>Assembly Area: <strong>{displayJsa.emergencyAssemblyArea}</strong></div>
+                          <div>Emergency Warden: <strong>{displayJsa.emergencyWardenPlaceholder}</strong></div>
+                          <div>First Aid Officer: <strong>{displayJsa.firstAidOfficerPlaceholder}</strong></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Electrical Body */}
+                  {activeFormTab === 'ELECTRICAL' && (
+                    <div className="space-y-3">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
+                        <div>Date of Test: <strong>{displayElec.dateOfTest}</strong></div>
+                        <div>Certificate Ref: <strong className="font-mono">{displayElec.certReference}</strong></div>
+                        <div>Contractor: <strong>{displayElec.contractorNamePlaceholder}</strong></div>
+                        <div>Licence: <strong className="font-mono">{displayElec.electricianLicencePlaceholder}</strong></div>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">Tested Work Items & Verification Results</h4>
+                        <table className="w-full border border-slate-300 text-left text-[11px]">
+                          <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
+                            <tr>
+                              <th className="p-1.5">Description</th>
+                              <th className="p-1.5">Circuits</th>
+                              <th className="p-1.5">Insulation Res.</th>
+                              <th className="p-1.5 text-center">Polarity</th>
+                              <th className="p-1.5 text-center">Earth Cont.</th>
+                              <th className="p-1.5">RCD Trip</th>
+                              <th className="p-1.5 text-center">Result</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {displayElec.testedWorkItems.map((w: any) => (
+                              <tr key={w.id}>
+                                <td className="p-1.5 font-semibold text-slate-900">{w.description}</td>
+                                <td className="p-1.5">{w.circuitsTested}</td>
+                                <td className="p-1.5 font-mono">{w.insulationResistanceResult}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-700">{w.polarityTest}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-700">{w.earthContinuity}</td>
+                                <td className="p-1.5 font-mono">{w.rcdTripTimeMs}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-800">{w.workResult}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">
+                        <strong>Standards Relied Upon:</strong> {displayElec.standardsReliedOn.join(', ')}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Smoke Alarm Body */}
+                  {activeFormTab === 'SMOKE_ALARM' && (
+                    <div className="space-y-3">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-3 gap-2 text-[11px]">
+                        <div>Property Type: <strong>{displaySmoke.propertyType}</strong></div>
+                        <div>Storeys: <strong>{displaySmoke.storeys}</strong></div>
+                        <div>Bedrooms: <strong>{displaySmoke.bedrooms}</strong></div>
+                        <div>Occupancy: <strong>{displaySmoke.occupancyStatus}</strong></div>
+                        <div>Inspection Date: <strong>{displaySmoke.dateOfInspection}</strong></div>
+                        <div>Issued To: <strong>{displaySmoke.issuedToRole}</strong></div>
+                      </div>
+
+                      <div>
+                        <h4 className="font-bold text-slate-900 text-xs uppercase mb-1">Smoke Alarm Schedule (AS 3786:2014)</h4>
+                        <table className="w-full border border-slate-300 text-left text-[11px]">
+                          <thead className="bg-slate-100 text-slate-700 border-b border-slate-300">
+                            <tr>
+                              <th className="p-1.5">Room Location</th>
+                              <th className="p-1.5">Make & Model</th>
+                              <th className="p-1.5">Standard</th>
+                              <th className="p-1.5">Power Source</th>
+                              <th className="p-1.5 text-center">Button</th>
+                              <th className="p-1.5 text-center">Interconn.</th>
+                              <th className="p-1.5 text-center">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200">
+                            {displaySmoke.alarmSchedule.map((a: any) => (
+                              <tr key={a.id}>
+                                <td className="p-1.5 font-semibold text-slate-900">{a.roomLocation}</td>
+                                <td className="p-1.5">{a.alarmBrandModel}</td>
+                                <td className="p-1.5 font-mono">{a.standardMarkingPlaceholder}</td>
+                                <td className="p-1.5 text-[10px]">{a.powerSource}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-700">{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-700">{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
+                                <td className="p-1.5 text-center font-bold text-emerald-800">{a.passFail}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TCA1 Cabling Body */}
+                  {activeFormTab === 'TCA1' && (
+                    <div className="space-y-3">
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 grid grid-cols-2 gap-2 text-[11px]">
+                        <div>Registered Cabler: <strong>{displayTca1.registeredCablerPlaceholder}</strong></div>
+                        <div>Registration No: <strong className="font-mono">{displayTca1.cablerRegistrationNumberPlaceholder}</strong></div>
+                        <div>Employer: <strong>{displayTca1.employerDetailsPlaceholder}</strong></div>
+                        <div>Date of Work: <strong>{displayTca1.dateOfWork}</strong></div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-1.5 text-[11px]">
+                        <div>Location of Work: <strong>{displayTca1.locationOfWork}</strong></div>
+                        <div>Scope & Work Description: <strong>{displayTca1.workDescription}</strong></div>
+                        <div>Supervision Provided: <strong>{displayTca1.supervisionProvided ? 'Yes' : 'No'}</strong></div>
+                        <p className="italic text-slate-600 pt-1 border-t border-slate-200">
+                          &quot;{displayTca1.certificationPlaceholderText}&quot;
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* TCA2 Defect Body (Rendered from frozen snapshot at sign-off) */}
+                  {activeFormTab === 'TCA2' && (
+                    <div className="space-y-3">
+                      <div className="bg-red-50 p-3 rounded-lg border border-red-200 grid grid-cols-2 gap-2 text-[11px]">
+                        <div>Report Reference: <strong className="font-mono">{displayTca2.reportReference}</strong></div>
+                        <div>Inspection Date: <strong>{displayTca2.inspectionDate}</strong></div>
+                        <div>Risk Category: <strong className="text-red-800">{displayTca2.riskCategory}</strong></div>
+                        <div>Urgency: <strong className="text-red-800">{displayTca2.urgencyLevel}</strong></div>
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2 text-[11px]">
+                        <div>Inspected Locations: <strong>{displayTca2.locationsInspected}</strong></div>
+                        <div>Defect Description: <strong className="text-red-900">{displayTca2.nonComplianceDescription}</strong></div>
+                        <div>Relevant Standard: <strong className="font-mono">{displayTca2.requirementReferencePlaceholder}</strong></div>
+                        <div>Rectification Recommendation: <strong>{displayTca2.rectificationRecommendation}</strong></div>
+                        <div>Responsible Party: <strong>{displayTca2.responsibleParty}</strong></div>
+                      </div>
+
+                      {/* Separate Post-Inspection Audit Appendix (Unfrozen Independent Audit Record from currentTca2Audit) */}
+                      <div className="bg-amber-50/70 p-3 rounded-lg border border-amber-300 space-y-1.5 text-[11px]">
+                        <div className="flex items-center justify-between border-b border-amber-200 pb-1">
+                          <h5 className="font-bold text-amber-950 uppercase tracking-wider text-[10px]">
+                            Post-Inspection Audit Appendix (Independent Demonstration Audit Record)
+                          </h5>
+                          <span className="text-[10px] text-amber-800 font-mono">Job #{currentJob.id}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 pt-1 text-slate-800">
+                          <div>
+                            Customer Acknowledged:{' '}
+                            <strong>
+                              {currentTca2Audit.customerAcknowledged
+                                ? `Yes (${currentTca2Audit.customerAckTimestamp || 'Recorded'})`
+                                : 'Pending Customer Acknowledgment'}
+                            </strong>
+                          </div>
+                          <div>
+                            Office Review:{' '}
+                            <strong>
+                              {currentTca2Audit.officeReviewCompleted
+                                ? `Completed (${currentTca2Audit.reviewedByOfficeStaff || 'Office Reviewer'})`
+                                : 'Pending Office Review'}
+                            </strong>
+                          </div>
+                          {currentTca2Audit.rectificationFollowupJobId && (
+                            <div className="col-span-2 text-slate-900">
+                              Follow-up Rectification Work Order:{' '}
+                              <strong className="font-mono text-purple-800">
+                                #{currentTca2Audit.rectificationFollowupJobId}
+                              </strong>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Attached Evidence Preview in PDF */}
+                  {(() => {
+                    const activeAttachedIds = (() => {
+                      switch (activeFormTab) {
+                        case 'JSA': return displayJsa.attachedSampleIds || [];
+                        case 'ELECTRICAL': return displayElec.attachedSampleIds || [];
+                        case 'SMOKE_ALARM': return displaySmoke.attachedSampleIds || [];
+                        case 'TCA1': return displayTca1.attachedSampleIds || [];
+                        case 'TCA2': return displayTca2.attachedSampleIds || [];
+                      }
+                    })();
+                    const linkedSamples = sampleAttachments.filter(s => activeAttachedIds.includes(s.id));
+
+                    if (linkedSamples.length === 0) return null;
+
+                    return (
+                      <div className="pt-2 border-t border-slate-200">
+                        <h4 className="font-bold text-slate-900 text-xs uppercase mb-2">
+                          Linked Photographic Evidence ({linkedSamples.length} verified item{linkedSamples.length > 1 ? 's' : ''})
+                        </h4>
+                        <div className="grid grid-cols-3 gap-2">
+                          {linkedSamples.map(sample => (
+                            <div key={sample.id} className="border border-slate-200 rounded p-1.5 text-center bg-slate-50">
+                              <img src={sample.thumbnailUrl} alt={sample.title} className="h-20 w-full object-cover rounded mb-1" />
+                              <div className="font-bold text-[10px] text-slate-900 truncate">{sample.title}</div>
+                              <div className="text-[9px] text-slate-500 font-mono">{sample.filename}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
 
             {/* Modal Actions */}
             <div className="flex items-center justify-end space-x-2 pt-4 border-t border-slate-200">

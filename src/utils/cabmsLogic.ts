@@ -124,14 +124,16 @@ export function validateJobCompletion(
           if (!tca2.signedOff) {
             missingRequirements.push('TCA2 Report requires technician DEMO sign-off');
           }
-          // Authoritative audit separation: Check tca2Audit store
-          const isAcked = tca2Audit ? tca2Audit.customerAcknowledged : tca2.customerAcknowledged;
-          const isReviewed = tca2Audit ? tca2Audit.officeReviewCompleted : tca2.officeReviewCompleted;
-          if (!isAcked) {
-            missingRequirements.push('TCA2 Defect Notice requires customer acknowledgement (must be acknowledged by customer before closing work order)');
-          }
-          if (!isReviewed) {
-            warnings.push('Advisory: TCA2 office review pending rectification quotation.');
+          // Authoritative audit separation: Check tca2Audit store strictly without legacy fallback
+          if (!tca2Audit) {
+            missingRequirements.push('TCA2 Defect Notice requires registered audit record in compliance store');
+          } else {
+            if (!tca2Audit.customerAcknowledged) {
+              missingRequirements.push('TCA2 Defect Notice requires customer acknowledgement (must be acknowledged by customer before closing work order)');
+            }
+            if (!tca2Audit.officeReviewCompleted) {
+              warnings.push('Advisory: TCA2 office review pending rectification quotation.');
+            }
           }
         }
         warnings.push('Compliance Notice: Completing TCA2 records non-compliance; it does NOT certify the cabling as compliant.');

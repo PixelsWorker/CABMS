@@ -122,7 +122,8 @@ export const SuperAdminSetupView: React.FC = () => {
     e.preventDefault();
     if (!newBrandName) return;
 
-    createDraftBusiness({
+    const res = createDraftBusiness({
+      slug: newBrandId.trim() || undefined,
       name: newBrandName,
       tagline: newBrandTagline || 'Quality Electrical & Automation Services',
       primaryColor: newBrandColor,
@@ -130,12 +131,18 @@ export const SuperAdminSetupView: React.FC = () => {
       logoGlyph: newBrandName.charAt(0).toUpperCase() || 'B',
       legalIssuerName: newLegalIssuer || `${newBrandName} Pty Ltd`,
       abnPlaceholder: newAbn,
+      electricalLicencePlaceholder: newElecLic,
+      acmaCablerPlaceholder: newAcma,
+      qbccLicencePlaceholder: newQbcc,
     });
 
-    setNewBrandName('');
-    setNewBrandTagline('');
-    setNewLegalIssuer('');
-    setIsAddProfileModalOpen(false);
+    if (res.success) {
+      setNewBrandId('');
+      setNewBrandName('');
+      setNewBrandTagline('');
+      setNewLegalIssuer('');
+      setIsAddProfileModalOpen(false);
+    }
   };
 
   return (
@@ -434,9 +441,20 @@ export const SuperAdminSetupView: React.FC = () => {
                     <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
                       {draft.id}
                     </span>
+                    {draft.slug && (
+                      <span className="text-[10px] bg-purple-950/80 border border-purple-800 text-purple-300 px-1.5 py-0.5 rounded font-mono">
+                        slug: {draft.slug}
+                      </span>
+                    )}
                   </div>
                   <div className="text-slate-400 text-[11px] mt-0.5">
-                    {draft.legalIssuerName} • {draft.abnPlaceholder} • Created {draft.createdAt}
+                    {draft.legalIssuerName} • ABN: {draft.abnPlaceholder}
+                  </div>
+                  <div className="text-slate-500 text-[10px] mt-0.5 flex flex-wrap gap-x-3">
+                    <span>Elec Lic: <strong className="text-slate-300 font-mono">{draft.electricalLicencePlaceholder || 'N/A'}</strong></span>
+                    <span>ACMA: <strong className="text-slate-300 font-mono">{draft.acmaCablerPlaceholder || 'N/A'}</strong></span>
+                    <span>QBCC: <strong className="text-slate-300 font-mono">{draft.qbccLicencePlaceholder || 'N/A'}</strong></span>
+                    <span>Created: {draft.createdAt}</span>
                   </div>
                 </div>
                 <div className="text-[10px] text-amber-400 bg-amber-950/60 border border-amber-900/80 px-2 py-1 rounded font-semibold self-start sm:self-auto">
@@ -579,6 +597,27 @@ export const SuperAdminSetupView: React.FC = () => {
                     type="text"
                     value={newElecLic}
                     onChange={e => setNewElecLic(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 block font-semibold mb-1">ACMA Cabler Licence</label>
+                  <input
+                    type="text"
+                    value={newAcma}
+                    onChange={e => setNewAcma(e.target.value)}
+                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 block font-semibold mb-1">QBCC Licence</label>
+                  <input
+                    type="text"
+                    value={newQbcc}
+                    onChange={e => setNewQbcc(e.target.value)}
                     className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
                   />
                 </div>

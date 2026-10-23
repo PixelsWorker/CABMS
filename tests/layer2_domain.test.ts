@@ -18,6 +18,7 @@ import {
   SmokeAlarmCertData,
   Tca1CertData,
   Tca2CertData,
+  Tca2AuditRecord,
   TemplateSetting,
 } from '../src/types/cabms.ts';
 import {
@@ -272,16 +273,29 @@ test('LAYER 2: Domain — TCA2 Cabling Non-Compliance requires customer acknowle
     attachedSampleIds: [],
   };
 
-  const res1 = validateJobCompletion(job, { tca2: tca2Unacknowledged });
+  // Missing audit record -> rejected due to missing audit record
+  const resMissingAudit = validateJobCompletion(job, { tca2: tca2Unacknowledged });
+  assert.equal(resMissingAudit.canComplete, false);
+  assert.ok(resMissingAudit.missingRequirements.some(r => r.includes('registered audit record')));
+
+  // Unacknowledged audit record -> rejected due to customer acknowledgement
+  const auditUnack: Tca2AuditRecord = {
+    jobId: job.id,
+    customerAcknowledged: false,
+    officeReviewCompleted: false,
+  };
+  const res1 = validateJobCompletion(job, { tca2: tca2Unacknowledged }, auditUnack);
   assert.equal(res1.canComplete, false);
   assert.ok(res1.missingRequirements.some(r => r.includes('customer acknowledgement')));
 
-  const tca2Acknowledged: Tca2CertData = {
-    ...tca2Unacknowledged,
+  // Acknowledged audit record -> completes cleanly
+  const auditAck: Tca2AuditRecord = {
+    jobId: job.id,
     customerAcknowledged: true,
     customerAckTimestamp: '2026-11-02 14:00',
+    officeReviewCompleted: true,
   };
-  const res2 = validateJobCompletion(job, { tca2: tca2Acknowledged });
+  const res2 = validateJobCompletion(job, { tca2: tca2Unacknowledged }, auditAck);
   assert.equal(res2.canComplete, true);
   assert.ok(res2.warnings.some(w => w.includes('Compliance Notice: Completing TCA2 records non-compliance')));
 });

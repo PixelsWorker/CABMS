@@ -15,6 +15,7 @@ import {
   Tca2AuditRecord,
   ScheduledReminder,
   TemplateSetting,
+  DraftBusinessProfile,
 } from '../src/types/cabms.ts';
 import {
   validateJobCompletion,
@@ -431,6 +432,17 @@ test('LAYER 6: Integration — Journey C: TCA2 defect generates separate audit r
   realCtx.officeReviewTca2('JOB-2026-104');
   realCtx.officeReviewTca2('JOB-2026-104');
 
+  const authState = realCtx.getAuthoritativeState();
+  const followups = authState.jobs.filter((j: Job) => j.description?.includes('JOB-2026-104') || j.title?.includes('JOB-2026-104'));
+  assert.equal(followups.length, 1, 'Exactly one follow-up rectification job must be created despite double review call in same tick');
+  const followupJob = followups[0];
+  assert.equal(followupJob.status, 'NEW');
+  assert.equal(followupJob.appointmentStatus, 'UNSCHEDULED');
+  assert.equal(followupJob.scheduledDate, null);
+  assert.equal(followupJob.scheduledTime, null);
+  assert.equal(authState.tca2AuditRecords['JOB-2026-104'].officeReviewCompleted, true);
+  assert.equal(authState.tca2AuditRecords['JOB-2026-104'].rectificationFollowupJobId, followupJob.id);
+
   // 6. Customer Acknowledgement Invariants & Guards
   // Attempt customer ack on unsigned notice -> rejected
   const unsignedNotice = { ...tca2, signedOff: false };
@@ -815,4 +827,91 @@ test('LAYER 6: Integration — Journey H: Certificate delivery captures full fro
   assert.ok(deliveryRecord.fullFrozenDocumentSnapshot);
   assert.ok(deliveryRecord.fullFrozenDocumentSnapshot.includes('ELEC-2026-101'));
   assert.ok(deliveryRecord.fullFrozenDocumentSnapshot.includes('0.04 Ohm'));
+});
+
+// -------------------------------------------------------------
+// JOURNEY I: Draft Business Profile Isolation & Full Licence Field Persistence
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey I: Draft business incubator isolates non-operational profiles, enforces slug uniqueness, and preserves licences', () => {
+  const realCtx = getMountedCabmsContext();
+
+  // 1. Create a draft business profile with complete licence fields and custom slug
+  const result = realCtx.createDraftBusiness({
+    name: 'Gold Coast Security & Access',
+    slug: 'gc_security',
+    tagline: 'Enterprise Access Control & Alarms',
+    primaryColor: '#6366f1',
+    accentColor: '#818cf8',
+    logoGlyph: 'S',
+    legalIssuerName: 'Gold Coast Security Pty Ltd',
+    abnPlaceholder: '99 888 777 666',
+    electricalLicencePlaceholder: 'QLD-ELEC-44332',
+    acmaCablerPlaceholder: 'ACMA-T-88771',
+    qbccLicencePlaceholder: 'QBCC-1234567',
+  });
+
+  assert.equal(result.success, true);
+  assert.ok(result.profile);
+  assert.equal(result.profile?.slug, 'gc_security');
+  assert.equal(result.profile?.electricalLicencePlaceholder, 'QLD-ELEC-44332');
+  assert.equal(result.profile?.acmaCablerPlaceholder, 'ACMA-T-88771');
+  assert.equal(result.profile?.qbccLicencePlaceholder, 'QBCC-1234567');
+  assert.equal(result.profile?.isDraft, true);
+
+  // Assert draft is stored in incubator and NOT added to operational brands
+  const authState = realCtx.getAuthoritativeState();
+  assert.ok(authState.draftBusinesses.some((d: DraftBusinessProfile) => d.slug === 'gc_security'));
+  assert.equal(realCtx.brands['gc_security'], undefined);
+
+  // 2. Reject duplicate slug collision with operational brands
+  const reservedCollision = realCtx.createDraftBusiness({
+    name: 'Solarcell Duplicate Attempt',
+    slug: 'solarcell',
+    legalIssuerName: 'Solarcell Clone Pty Ltd',
+    abnPlaceholder: '00 000 000 000',
+  });
+  assert.equal(reservedCollision.success, false);
+  assert.ok(reservedCollision.error?.includes('reserved'));
+
+  // 3. Reject duplicate slug collision with existing draft
+  const duplicateDraftCollision = realCtx.createDraftBusiness({
+    name: 'Another Security Business',
+    slug: 'gc_security',
+    legalIssuerName: 'Another Security Pty Ltd',
+    abnPlaceholder: '11 111 111 111',
+  });
+  assert.equal(duplicateDraftCollision.success, false);
+  assert.ok(duplicateDraftCollision.error?.includes('already in use'));
+});
+
+// -------------------------------------------------------------
+// JOURNEY J: Observable PENDING Review Request Dispatch & Non-Technician Resolution
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey J: Customer review request enters observable PENDING state and transitions cleanly on manual dispatch or clock advance', () => {
+  const realCtx = getMountedCabmsContext();
+
+  // Seed job JOB-2026-101 has reviewRequest in NOT_SENT
+  const targetJobId = 'JOB-2026-101';
+  realCtx.triggerReviewRequest(targetJobId);
+
+  // Verify observable PENDING state in authoritative store
+  const stateAfterTrigger = realCtx.getAuthoritativeState();
+  const pendingJob = stateAfterTrigger.jobs.find((j: Job) => j.id === targetJobId);
+  assert.equal(pendingJob?.reviewRequest.status, 'PENDING');
+  assert.ok(pendingJob?.reviewRequest.history.some((h: any) => h.status === 'PENDING'));
+
+  // Technicians are barred from dispatching review resolutions
+  realCtx.setPersona('technician');
+  const techResolveAttempt = realCtx.resolvePendingReview(targetJobId, 'SENT');
+  assert.equal(techResolveAttempt.success, false);
+
+  // Non-technicians (Owner/Admin or Office Staff) can resolve pending reviews
+  realCtx.setPersona('owner_admin');
+  const ownerResolveResult = realCtx.resolvePendingReview(targetJobId, 'SENT');
+  assert.equal(ownerResolveResult.success, true);
+
+  const stateAfterResolve = realCtx.getAuthoritativeState();
+  const resolvedJob = stateAfterResolve.jobs.find((j: Job) => j.id === targetJobId);
+  assert.equal(resolvedJob?.reviewRequest.status, 'SENT');
+  assert.ok(resolvedJob?.reviewRequest.sentTimestamp);
 });

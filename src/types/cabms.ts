@@ -8,6 +8,7 @@ export type BrandId = 'solarcell' | 'smart_home' | 'cctv';
 
 export interface DraftBusinessProfile {
   id: string; // e.g. DRAFT-BIZ-001
+  slug?: string;
   name: string;
   tagline: string;
   primaryColor: string;
@@ -15,6 +16,11 @@ export interface DraftBusinessProfile {
   logoGlyph: string;
   legalIssuerName: string;
   abnPlaceholder: string;
+  electricalLicencePlaceholder?: string;
+  acmaCablerPlaceholder?: string;
+  qbccLicencePlaceholder?: string;
+  contactEmail?: string;
+  contactPhone?: string;
   isDraft: true;
   createdAt: string;
 }

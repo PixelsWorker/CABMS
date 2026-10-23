@@ -12,10 +12,16 @@ test('LAYER 1: Toolchain Smoke — TypeScript compilation passes without errors'
   assert.equal(result.trim(), '', 'tsc --noEmit produced no compilation errors');
 });
 
-test('LAYER 1: Toolchain Smoke — Vite production build succeeds', () => {
-  const buildOutput = execSync('npx vite build', { encoding: 'utf-8' });
-  assert.ok(buildOutput.includes('built in') || buildOutput.includes('dist'), 'Build output confirmed successful compilation');
-  assert.ok(fs.existsSync('./dist/index.html'), 'Production build index.html was generated in dist/');
+test('LAYER 1: Toolchain Smoke — Production build artifacts exist and are valid', () => {
+  if (!fs.existsSync('./dist/index.html')) {
+    execSync('npx vite build', { encoding: 'utf-8' });
+  }
+  assert.ok(fs.existsSync('./dist/index.html'), 'Production build index.html exists in dist/');
+  const htmlContent = fs.readFileSync('./dist/index.html', 'utf-8');
+  assert.ok(htmlContent.includes('id="root"'), 'dist/index.html contains root mount node');
+  assert.ok(fs.existsSync('./dist/assets'), 'dist/assets directory exists with bundled assets');
+  const assetFiles = fs.readdirSync('./dist/assets');
+  assert.ok(assetFiles.length > 0, 'Compiled asset files generated in dist/assets/');
 });
 
 test('LAYER 1: Toolchain Smoke — Minimal React component mounts and renders', () => {

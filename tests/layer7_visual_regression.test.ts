@@ -19,6 +19,13 @@ function hashSnapshot(html: string): string {
   return crypto.createHash('sha256').update(html).digest('hex').slice(0, 16);
 }
 
+// Approved structural DOM baseline hashes
+const APPROVED_VIEWPORT_BASELINES = {
+  desktop_1440x900: '3bba58ef8603cfd7',
+  tablet_768x1024: '685f9bc2b6d332fd',
+  mobile_390x844: 'e7a67006298b0f7f',
+};
+
 // Fixed Viewport Representation Wrappers
 const DesktopViewport: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   React.createElement('div', { 'data-viewport': '1440x900', className: 'w-[1440px] min-h-[900px] overflow-hidden' }, children)
@@ -61,7 +68,7 @@ test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Desktop (1440x
   assert.ok(html.includes('data-viewport="1440x900"'));
   assert.ok(html.includes('DEMO — NO LIVE INTEGRATIONS'));
   const hash = hashSnapshot(html);
-  assert.ok(hash.length === 16, `Desktop snapshot hash computed: ${hash}`);
+  assert.equal(hash, APPROVED_VIEWPORT_BASELINES.desktop_1440x900, `Desktop snapshot hash matched approved baseline: ${hash}`);
 });
 
 test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Tablet (768x1024) navigation and jobs view', () => {
@@ -85,7 +92,7 @@ test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Tablet (768x10
   assert.ok(html.includes('data-viewport="768x1024"'));
   assert.ok(html.includes('Operational Work Orders'));
   const hash = hashSnapshot(html);
-  assert.ok(hash.length === 16, `Tablet snapshot hash computed: ${hash}`);
+  assert.equal(hash, APPROVED_VIEWPORT_BASELINES.tablet_768x1024, `Tablet snapshot hash matched approved baseline: ${hash}`);
 });
 
 test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Mobile (390x844) technician compliance forms layout', () => {
@@ -109,7 +116,7 @@ test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Mobile (390x84
   assert.ok(html.includes('data-viewport="390x844"'));
   assert.ok(html.includes('Job Safety Analysis (JSA)'));
   const hash = hashSnapshot(html);
-  assert.ok(hash.length === 16, `Mobile snapshot hash computed: ${hash}`);
+  assert.equal(hash, APPROVED_VIEWPORT_BASELINES.mobile_390x844, `Mobile snapshot hash matched approved baseline: ${hash}`);
 });
 
 test('LAYER 7: Structural Layout & DOM Viewport — Four Persona shell layout validation', () => {

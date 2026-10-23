@@ -71,11 +71,14 @@ export const DemoControlsBar: React.FC = () => {
               className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
               aria-label="Active Brand Workspace Selector"
             >
-              {Object.values(brands).map(b => (
-                <option key={b.id} value={b.id} className="bg-slate-900 text-white">
-                  {b.name}
-                </option>
-              ))}
+              {(['solarcell', 'smart_home', 'cctv'] as BrandId[]).map(id => {
+                const b = brands[id];
+                return (
+                  <option key={id} value={id} className="bg-slate-900 text-white">
+                    {b?.name || id}
+                  </option>
+                );
+              })}
             </select>
           </div>
 

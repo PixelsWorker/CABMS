@@ -1089,6 +1089,10 @@ export const ComplianceFormsView: React.FC = () => {
                     <div className="font-semibold text-emerald-400">✓ Customer Signed</div>
                     <div className="text-[10px] text-slate-400 font-mono">{currentTca2Audit.customerAckTimestamp}</div>
                   </div>
+                ) : !currentTca2.signedOff ? (
+                  <div className="text-[11px] text-slate-500 italic">
+                    Requires Cabler Sign-off First
+                  </div>
                 ) : (
                   <button
                     onClick={() => customerAckTca2(currentJob.id)}
@@ -1552,7 +1556,7 @@ export const ComplianceFormsView: React.FC = () => {
                 </div>
               )}
 
-              {/* TCA2 Defect Body */}
+              {/* TCA2 Defect Body (Frozen at sign-off) */}
               {activeFormTab === 'TCA2' && (
                 <div className="space-y-3">
                   <div className="bg-red-50 p-3 rounded-lg border border-red-200 grid grid-cols-2 gap-2 text-[11px]">
@@ -1568,9 +1572,41 @@ export const ComplianceFormsView: React.FC = () => {
                     <div>Relevant Standard: <strong className="font-mono">{currentTca2.requirementReferencePlaceholder}</strong></div>
                     <div>Rectification Recommendation: <strong>{currentTca2.rectificationRecommendation}</strong></div>
                     <div>Responsible Party: <strong>{currentTca2.responsibleParty}</strong></div>
-                    <div className="flex justify-between pt-1 border-t border-slate-200">
-                      <span>Customer Acknowledged: <strong>{currentTca2.customerAcknowledged ? `Yes (${currentTca2.customerAckTimestamp})` : 'Pending'}</strong></span>
-                      <span>Office Review: <strong>{currentTca2.officeReviewCompleted ? `Completed (${currentTca2.reviewedByOfficeStaff})` : 'Pending'}</strong></span>
+                  </div>
+
+                  {/* Separate Post-Inspection Audit Appendix (Unfrozen Independent Audit Record) */}
+                  <div className="bg-amber-50/70 p-3 rounded-lg border border-amber-300 space-y-1.5 text-[11px]">
+                    <div className="flex items-center justify-between border-b border-amber-200 pb-1">
+                      <h5 className="font-bold text-amber-950 uppercase tracking-wider text-[10px]">
+                        Post-Inspection Audit Appendix (Independent Demonstration Audit Record)
+                      </h5>
+                      <span className="text-[10px] text-amber-800 font-mono">Job #{currentJob.id}</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1 text-slate-800">
+                      <div>
+                        Customer Acknowledged:{' '}
+                        <strong>
+                          {currentTca2Audit.customerAcknowledged
+                            ? `Yes (${currentTca2Audit.customerAckTimestamp || 'Recorded'})`
+                            : 'Pending Customer Acknowledgment'}
+                        </strong>
+                      </div>
+                      <div>
+                        Office Review:{' '}
+                        <strong>
+                          {currentTca2Audit.officeReviewCompleted
+                            ? `Completed (${currentTca2Audit.reviewedByOfficeStaff || 'Office Reviewer'})`
+                            : 'Pending Office Review'}
+                        </strong>
+                      </div>
+                      {currentTca2Audit.rectificationFollowupJobId && (
+                        <div className="col-span-2 text-slate-900">
+                          Follow-up Rectification Work Order:{' '}
+                          <strong className="font-mono text-purple-800">
+                            #{currentTca2Audit.rectificationFollowupJobId}
+                          </strong>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

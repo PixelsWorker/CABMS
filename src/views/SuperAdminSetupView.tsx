@@ -35,6 +35,8 @@ export const SuperAdminSetupView: React.FC = () => {
     brands,
     updateBrandConfig,
     addNewBrandProfile,
+    draftBusinesses,
+    createDraftBusiness,
     myobConnection,
     setMyobStatus,
   } = useCabms();
@@ -120,11 +122,7 @@ export const SuperAdminSetupView: React.FC = () => {
     e.preventDefault();
     if (!newBrandName) return;
 
-    const fallbackBrandId = `brand_tenant_${++brandSeqCounter}`;
-    const generatedId = newBrandId.trim().toLowerCase().replace(/\s+/g, '_') || fallbackBrandId;
-
-    const newProfile: BrandConfig = {
-      id: generatedId as any,
+    createDraftBusiness({
       name: newBrandName,
       tagline: newBrandTagline || 'Quality Electrical & Automation Services',
       primaryColor: newBrandColor,
@@ -132,20 +130,12 @@ export const SuperAdminSetupView: React.FC = () => {
       logoGlyph: newBrandName.charAt(0).toUpperCase() || 'B',
       legalIssuerName: newLegalIssuer || `${newBrandName} Pty Ltd`,
       abnPlaceholder: newAbn,
-      electricalLicencePlaceholder: newElecLic,
-      acmaCablerPlaceholder: newAcma,
-      qbccLicencePlaceholder: newQbcc,
-      contactEmail: 'admin@example.invalid',
-      contactPhone: '07 5500 0000',
-      reviewUrlPlaceholder: `https://g.page/r/${generatedId}/review`,
-      quoteTemplateName: `${newBrandName} Quotation Master`,
-      invoiceTemplateName: `${newBrandName} Tax Invoice`,
-      calendarMappingName: `${newBrandName} Fleet Calendar`,
-    };
+    });
 
-    addNewBrandProfile(newProfile);
+    setNewBrandName('');
+    setNewBrandTagline('');
+    setNewLegalIssuer('');
     setIsAddProfileModalOpen(false);
-    handleSwitchEditingBrand(generatedId);
   };
 
   return (
@@ -275,20 +265,24 @@ export const SuperAdminSetupView: React.FC = () => {
 
           {/* Profile Switcher Tabs */}
           <div className="flex space-x-2">
-            {Object.values(brands).map(b => (
-              <button
-                key={b.id}
-                onClick={() => handleSwitchEditingBrand(b.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5 ${
-                  editingBrandId === b.id
-                    ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                    : 'bg-slate-950 text-slate-400 hover:text-white'
-                }`}
-              >
-                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: b.primaryColor }} />
-                <span>{b.name}</span>
-              </button>
-            ))}
+            {(['solarcell', 'smart_home', 'cctv'] as BrandId[]).map(id => {
+              const b = brands[id];
+              if (!b) return null;
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => handleSwitchEditingBrand(b.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5 ${
+                    editingBrandId === b.id
+                      ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
+                      : 'bg-slate-950 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: b.primaryColor }} />
+                  <span>{b.name}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -399,6 +393,59 @@ export const SuperAdminSetupView: React.FC = () => {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* SECTION 2B: DRAFT BUSINESS PROFILES INCUBATOR (NON-OPERATIONAL) */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+          <div>
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                Incubator / Future Expansion
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/80 border border-amber-800 text-amber-300">
+                NON-OPERATIONAL DRAFTS
+              </span>
+            </div>
+            <h2 className="text-base font-bold text-white mt-0.5">
+              Draft Business Profiles
+            </h2>
+            <p className="text-xs text-slate-400">
+              Future business configurations in draft preview. Strictly excluded from the active operational brand switcher, job scheduling, and compliance certificate generation.
+            </p>
+          </div>
+        </div>
+
+        {draftBusinesses.length === 0 ? (
+          <div className="p-4 rounded-lg bg-slate-950/50 border border-dashed border-slate-800 text-slate-400 text-xs text-center">
+            No draft businesses currently registered. Use &quot;Add Business Profile&quot; to incubate a future brand entity.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {draftBusinesses.map(draft => (
+              <div
+                key={draft.id}
+                className="p-3.5 bg-slate-950 border border-slate-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+              >
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: draft.primaryColor }} />
+                    <span className="font-bold text-white">{draft.name}</span>
+                    <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                      {draft.id}
+                    </span>
+                  </div>
+                  <div className="text-slate-400 text-[11px] mt-0.5">
+                    {draft.legalIssuerName} • {draft.abnPlaceholder} • Created {draft.createdAt}
+                  </div>
+                </div>
+                <div className="text-[10px] text-amber-400 bg-amber-950/60 border border-amber-900/80 px-2 py-1 rounded font-semibold self-start sm:self-auto">
+                  Draft Mode (Non-Operational)
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* SECTION 3: SMTP & CALENDAR SIMULATION STATUS */}

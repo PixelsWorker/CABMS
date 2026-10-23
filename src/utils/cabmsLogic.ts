@@ -11,6 +11,9 @@ import {
   SmokeAlarmCertData,
   Tca1CertData,
   Tca2CertData,
+  Tca2AuditRecord,
+  TemplateSetting,
+  TemplateRevision,
   Persona,
 } from '../types/cabms.ts';
 
@@ -29,7 +32,8 @@ export function validateJobCompletion(
     smokeAlarm?: SmokeAlarmCertData;
     tca1?: Tca1CertData;
     tca2?: Tca2CertData;
-  }
+  },
+  tca2Audit?: Tca2AuditRecord
 ): CompletionValidationResult {
   const missingRequirements: string[] = [];
   const warnings: string[] = [];
@@ -120,10 +124,13 @@ export function validateJobCompletion(
           if (!tca2.signedOff) {
             missingRequirements.push('TCA2 Report requires technician DEMO sign-off');
           }
-          if (!tca2.customerAcknowledged) {
-            missingRequirements.push('TCA2 requires customer acknowledgement of recorded cabling non-compliance');
+          // Authoritative audit separation: Check tca2Audit store
+          const isAcked = tca2Audit ? tca2Audit.customerAcknowledged : tca2.customerAcknowledged;
+          const isReviewed = tca2Audit ? tca2Audit.officeReviewCompleted : tca2.officeReviewCompleted;
+          if (!isAcked) {
+            missingRequirements.push('TCA2 Defect Notice requires customer acknowledgement (must be acknowledged by customer before closing work order)');
           }
-          if (!tca2.officeReviewCompleted) {
+          if (!isReviewed) {
             warnings.push('Advisory: TCA2 office review pending rectification quotation.');
           }
         }
@@ -281,3 +288,380 @@ export function verifyPersonaAccess(
       return { allowed: false, reason: 'Access restricted for Technician persona.' };
   }
 }
+
+/**
+ * Pure domain logic for TCA2 Office Review and rectification follow-up job creation.
+ * Guaranteed idempotent and atomic: checks both existing audit record and existing jobs pool.
+ */
+export interface ProcessOfficeReviewParams {
+  jobId: string;
+  actorPersona: Persona;
+  sourceJob?: Job;
+  tca2Cert?: Tca2CertData;
+  existingAudit?: Tca2AuditRecord;
+  existingJobs: Job[];
+  nextJobSeq: number;
+  demoClock: string;
+}
+
+export interface ProcessOfficeReviewResult {
+  success: boolean;
+  error?: string;
+  isDuplicate: boolean;
+  newFollowupJob?: Job;
+  updatedAuditRecord: Tca2AuditRecord;
+  nextJobSeq: number;
+}
+
+export function processOfficeReviewTca2(params: ProcessOfficeReviewParams): ProcessOfficeReviewResult {
+  const { jobId, actorPersona, sourceJob, tca2Cert, existingAudit, existingJobs, nextJobSeq, demoClock } = params;
+
+  const access = verifyPersonaAccess(actorPersona, 'office_compliance_review');
+  if (!access.allowed) {
+    return {
+      success: false,
+      error: `DENIED: ${access.reason}`,
+      isDuplicate: false,
+      updatedAuditRecord: existingAudit || { jobId, customerAcknowledged: false, officeReviewCompleted: false },
+      nextJobSeq,
+    };
+  }
+
+  if (!tca2Cert?.signedOff) {
+    return {
+      success: false,
+      error: 'CANNOT REVIEW: TCA2 Defect Report must be signed off by a technician before office review.',
+      isDuplicate: false,
+      updatedAuditRecord: existingAudit || { jobId, customerAcknowledged: false, officeReviewCompleted: false },
+      nextJobSeq,
+    };
+  }
+
+  // Idempotency check 1: Already reviewed in audit store
+  if (existingAudit?.officeReviewCompleted && existingAudit?.rectificationFollowupJobId) {
+    return {
+      success: true,
+      isDuplicate: true,
+      updatedAuditRecord: existingAudit,
+      nextJobSeq,
+    };
+  }
+
+  // Idempotency check 2: Existing followup job in jobs pool
+  const existingFollowupJob = existingJobs.find(j =>
+    j.title?.includes(`Follow-up to ${jobId}`) ||
+    (j.description?.includes(`reported under ${jobId}`) && j.description?.includes('TCA2'))
+  );
+
+  if (existingFollowupJob) {
+    const updatedAudit: Tca2AuditRecord = {
+      ...(existingAudit || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
+      officeReviewCompleted: true,
+      reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
+      officeReviewTimestamp: demoClock.slice(0, 16),
+      rectificationFollowupJobId: existingFollowupJob.id,
+    };
+    return {
+      success: true,
+      isDuplicate: true,
+      updatedAuditRecord: updatedAudit,
+      nextJobSeq,
+    };
+  }
+
+  // Create new follow-up job atomically
+  const updatedSeq = nextJobSeq + 1;
+  const followupId = `JOB-2026-${updatedSeq}`;
+
+  const newFollowupJob: Job = {
+    id: followupId,
+    brandId: sourceJob?.brandId || 'cctv',
+    customerId: sourceJob?.customerId || 'CUSTOMER-DEMO-001',
+    title: `TCA2 Remediation: Dedicated Conduit Installation (Follow-up to ${jobId})`,
+    jobType: 'Enterprise CCTV & Cabling Inspection',
+    jobTypeVersion: 'v2.1',
+    siteAddress: sourceJob?.siteAddress || '[Fictional] Site Address',
+    siteContact: sourceJob?.siteContact || 'Site Contact',
+    sitePhone: sourceJob?.sitePhone || '0400 000 000',
+    description: `Rectification follow-up for Cabling Non-Compliance reported under ${jobId}. Dedicated 25mm PVC conduit separation required.`,
+    status: 'NEW',
+    appointmentStatus: 'UNSCHEDULED',
+    assignedTechId: null,
+    assignedTechName: null,
+    scheduledDate: null,
+    scheduledTime: null,
+    estimatedDurationHours: 3,
+    isDirectToInvoice: false,
+    formsRequired: ['JSA', 'TCA1'],
+    attachedSampleIds: sourceJob?.attachedSampleIds ? [...sourceJob.attachedSampleIds] : [],
+    reviewRequest: {
+      status: 'NOT_SENT',
+      reviewLink: '',
+      brandName: 'Gold Coast CCTV',
+      channel: 'EMAIL_SIMULATED',
+      history: [],
+    },
+    reminders: [],
+    unresolvedWarnings: ['Follow-up rectification work order queued from TCA2 Office Review.'],
+    activityHistory: [
+      {
+        timestamp: demoClock.slice(0, 16),
+        action: `Rectification work order #${followupId} queued from TCA2 office review of defect on ${jobId}`,
+        actor: actorPersona,
+      },
+    ],
+  };
+
+  const updatedAudit: Tca2AuditRecord = {
+    ...(existingAudit || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
+    officeReviewCompleted: true,
+    reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
+    officeReviewTimestamp: demoClock.slice(0, 16),
+    rectificationFollowupJobId: followupId,
+  };
+
+  return {
+    success: true,
+    isDuplicate: false,
+    newFollowupJob,
+    updatedAuditRecord: updatedAudit,
+    nextJobSeq: updatedSeq,
+  };
+}
+
+/**
+ * Pure domain logic for Customer TCA2 Acknowledgement.
+ * Enforces signedOff requirement, actor role boundaries, and single-acknowledgement idempotency.
+ */
+export function processCustomerAckTca2(params: {
+  jobId: string;
+  actorPersona: Persona;
+  tca2Cert?: Tca2CertData;
+  existingAudit?: Tca2AuditRecord;
+  demoClock: string;
+}): { success: boolean; error?: string; updatedAuditRecord?: Tca2AuditRecord } {
+  const { jobId, actorPersona, tca2Cert, existingAudit, demoClock } = params;
+
+  if (actorPersona === 'technician') {
+    return {
+      success: false,
+      error: 'DENIED: Field technician cannot self-acknowledge customer defect notice on behalf of customer.',
+    };
+  }
+
+  if (!tca2Cert?.signedOff) {
+    return {
+      success: false,
+      error: 'CANNOT ACKNOWLEDGE: TCA2 Defect Report must be signed off by a technician before customer acknowledgement.',
+    };
+  }
+
+  if (existingAudit?.customerAcknowledged) {
+    return {
+      success: false,
+      error: 'ALREADY ACKNOWLEDGED: Customer acknowledgement has already been recorded for this TCA2 Defect Notice.',
+    };
+  }
+
+  const timestamp = demoClock.slice(0, 16);
+  const updatedAuditRecord: Tca2AuditRecord = {
+    ...(existingAudit || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
+    customerAcknowledged: true,
+    customerAckTimestamp: timestamp,
+  };
+
+  return { success: true, updatedAuditRecord };
+}
+
+/**
+ * Recalculate job-level attachment references from all active forms on that job.
+ * Preserves evidence if any form still references the sample ID.
+ */
+export function recalculateJobAttachments(
+  allFormAttachmentArrays: (string[] | undefined)[]
+): string[] {
+  const unionSet = new Set<string>();
+  for (const arr of allFormAttachmentArrays) {
+    if (Array.isArray(arr)) {
+      for (const id of arr) {
+        if (id) unionSet.add(id);
+      }
+    }
+  }
+  return Array.from(unionSet);
+}
+
+/**
+ * Pure domain logic for master template publishing.
+ * Enforces REVIEW status and retains reviewed revision history.
+ */
+export function processPublishTemplate(
+  template: TemplateSetting,
+  actorPersona: Persona,
+  demoClock: string
+): { success: boolean; error?: string; updatedTemplate?: TemplateSetting } {
+  const access = verifyPersonaAccess(actorPersona, 'template_publishing');
+  if (!access.allowed) {
+    return { success: false, error: `DENIED: ${access.reason}` };
+  }
+
+  if (template.activeStatus !== 'REVIEW') {
+    return {
+      success: false,
+      error: `CANNOT PUBLISH: Template revision must be submitted and in 'REVIEW' status before publishing. Current status: ${template.activeStatus}.`,
+    };
+  }
+
+  const currentVerNum = parseFloat(template.currentVersion.replace('v', '')) || 1.0;
+  const newVer = `v${(currentVerNum + 0.1).toFixed(1)}`;
+  const timestamp = demoClock.slice(0, 16);
+
+  const publishedRev: TemplateRevision = {
+    version: newVer,
+    status: 'PUBLISHED',
+    content: template.content,
+    updatedAt: timestamp,
+    updatedBy: actorPersona.toUpperCase(),
+  };
+
+  // Retain ALL revisions including the reviewed revision for full audit history
+  const updatedTemplate: TemplateSetting = {
+    ...template,
+    currentVersion: newVer,
+    activeStatus: 'PUBLISHED',
+    revisions: [publishedRev, ...template.revisions],
+  };
+
+  return { success: true, updatedTemplate };
+}
+
+/**
+ * Pure domain logic for Review Request dispatch lifecycle.
+ * Models PENDING -> SENT / FAILED / UNCERTAIN.
+ */
+export function processReviewDispatch(params: {
+  currentJob: Job;
+  simulateOutcome?: 'FAIL' | 'UNCERTAIN';
+  demoClock: string;
+  reviewUrl: string;
+  brandName: string;
+}): {
+  allowed: boolean;
+  reason?: string;
+  pendingJob?: Job;
+  resolvedJob?: Job;
+  outcomeStatus?: 'SENT' | 'FAILED' | 'UNCERTAIN';
+} {
+  const { currentJob, simulateOutcome, demoClock, reviewUrl, brandName } = params;
+
+  const dedup = deduplicateReviewRequest(currentJob, () => ({ success: true, reviewUrl }));
+  if (!dedup.allowed) {
+    return { allowed: false, reason: dedup.reason };
+  }
+
+  const timestamp = demoClock.slice(0, 16);
+
+  // Observable PENDING state
+  const pendingJob: Job = {
+    ...currentJob,
+    reviewRequest: {
+      ...currentJob.reviewRequest,
+      status: 'PENDING',
+      brandName,
+      reviewLink: reviewUrl,
+      channel: 'EMAIL_SIMULATED',
+      history: [
+        ...currentJob.reviewRequest.history,
+        {
+          timestamp,
+          event: `Review request queued for dispatch (${brandName})`,
+          status: 'PENDING',
+        },
+      ],
+    },
+    activityHistory: [
+      ...currentJob.activityHistory,
+      { timestamp, action: `Review invitation dispatch queued (PENDING) for ${brandName}`, actor: 'Automated Service' },
+    ],
+  };
+
+  let resolvedJob: Job;
+  let outcomeStatus: 'SENT' | 'FAILED' | 'UNCERTAIN';
+
+  if (simulateOutcome === 'UNCERTAIN') {
+    outcomeStatus = 'UNCERTAIN';
+    resolvedJob = {
+      ...pendingJob,
+      reviewRequest: {
+        ...pendingJob.reviewRequest,
+        status: 'UNCERTAIN',
+        uncertainReconciliationNeeded: true,
+        history: [
+          ...pendingJob.reviewRequest.history,
+          {
+            timestamp,
+            event: 'Simulated dispatch gateway timeout (504 Gateway Timeout) - delivery outcome uncertain',
+            status: 'UNCERTAIN',
+          },
+        ],
+      },
+      activityHistory: [
+        ...pendingJob.activityHistory,
+        { timestamp, action: 'Review request dispatch resulted in UNCERTAIN status (504)', actor: 'Automated Service' },
+      ],
+    };
+  } else if (simulateOutcome === 'FAIL') {
+    outcomeStatus = 'FAILED';
+    resolvedJob = {
+      ...pendingJob,
+      reviewRequest: {
+        ...pendingJob.reviewRequest,
+        status: 'FAILED',
+        uncertainReconciliationNeeded: false,
+        history: [
+          ...pendingJob.reviewRequest.history,
+          {
+            timestamp,
+            event: 'Simulated dispatch failure: SMTP 550 delivery rejection',
+            status: 'FAILED',
+          },
+        ],
+      },
+      activityHistory: [
+        ...pendingJob.activityHistory,
+        { timestamp, action: 'Review request dispatch failed (SMTP 550)', actor: 'Automated Service' },
+      ],
+    };
+  } else {
+    outcomeStatus = 'SENT';
+    resolvedJob = {
+      ...pendingJob,
+      reviewRequest: {
+        ...pendingJob.reviewRequest,
+        status: 'SENT',
+        sentTimestamp: timestamp,
+        uncertainReconciliationNeeded: false,
+        history: [
+          ...pendingJob.reviewRequest.history,
+          {
+            timestamp,
+            event: `Email invitation sent to customer for ${brandName}`,
+            status: 'SENT',
+          },
+        ],
+      },
+      activityHistory: [
+        ...pendingJob.activityHistory,
+        { timestamp, action: `Review invitation sent to customer (${brandName})`, actor: 'Automated Service' },
+      ],
+    };
+  }
+
+  return {
+    allowed: true,
+    pendingJob,
+    resolvedJob,
+    outcomeStatus,
+  };
+}
+

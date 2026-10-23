@@ -1,6 +1,6 @@
 {
-  "summary":  "Revised implementation plan incorporating all 8 reviewer recommendations: separated audit records for signed certificates, state-level idempotent TCA2 follow-ups, full appointment modeling with nullable dates, future-business draft preview typing, job-type version governance, UNCERTAIN automation states, real context interaction tests for Layers 4 and 6, and transparent NOT RUN reporting for unavailable visual/browser layers.",
-  "updatedAt":  "2026-10-22T20:57:35.641490064Z",
+  "summary":  "Revised technical implementation plan for CABMS G00 incorporating all eight manager review adjustments: TCA2 completion validation dependency via Tca2AuditRecord, single authoritative state atomicity with ref lifecycle, dual-level tests (pure logic + real context operations), observable review PENDING lifecycle, complete UI isolation for draft business profiles across SuperAdminSetupView and DemoControlsBar, dynamic runner test count reporting, calibrated synthetic demo wording with preserved dark styling, and strict G00 release guardrails.",
+  "updatedAt":  "2026-10-23T05:07:29.967183354Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

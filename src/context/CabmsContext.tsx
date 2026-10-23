@@ -26,6 +26,7 @@ import {
   CertificateDeliveryRecord,
   Tca2AuditRecord,
   AppointmentStatus,
+  DraftBusinessProfile,
 } from '../types/cabms.ts';
 import {
   INITIAL_BRANDS,
@@ -52,6 +53,11 @@ import {
   verifyPersonaAccess,
   calculateReminderDueTime,
   CompletionValidationResult,
+  processOfficeReviewTca2,
+  processCustomerAckTca2,
+  recalculateJobAttachments,
+  processPublishTemplate,
+  processReviewDispatch,
 } from '../utils/cabmsLogic.ts';
 
 export type DemoScenario =
@@ -74,6 +80,8 @@ interface CabmsContextType {
   technicians: typeof INITIAL_TECHNICIANS;
   updateBrandConfig: (brand: BrandConfig) => void;
   addNewBrandProfile: (brand: BrandConfig) => void;
+  draftBusinesses: DraftBusinessProfile[];
+  createDraftBusiness: (profile: Omit<DraftBusinessProfile, 'id' | 'isDraft' | 'createdAt'>) => DraftBusinessProfile;
 
   // Session & Demo Sign-in Simulation (G00-036)
   isSimulatedSignedIn: boolean;
@@ -283,6 +291,27 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [tca2AuditRecords, setTca2AuditRecords] = useState<Record<string, Tca2AuditRecord>>(INITIAL_TCA2_AUDIT);
   const getTca2AuditRecord = (jobId: string): Tca2AuditRecord | undefined => tca2AuditRecords[jobId];
 
+  // Non-operational draft business incubator (G00 separate draft storage)
+  const [draftBusinesses, setDraftBusinesses] = useState<DraftBusinessProfile[]>([]);
+
+  // Synchronous execution refs to prevent duplicate calls in the same tick / before re-render
+  const inFlightTca2ReviewsRef = React.useRef<Set<string>>(new Set());
+  const createdFollowupJobIdsRef = React.useRef<Map<string, string>>(new Map());
+
+  const createDraftBusiness = (profile: Omit<DraftBusinessProfile, 'id' | 'isDraft' | 'createdAt'>): DraftBusinessProfile => {
+    seqCounters.revision++;
+    const draftId = `DRAFT-BIZ-${seqCounters.revision}`;
+    const newDraft: DraftBusinessProfile = {
+      ...profile,
+      id: draftId,
+      isDraft: true,
+      createdAt: demoClock.slice(0, 10),
+    };
+    setDraftBusinesses(prev => [...prev, newDraft]);
+    showDemoNotification(`Draft business profile "${newDraft.name}" saved to incubator. Excluded from operational brand switcher.`, 'info');
+    return newDraft;
+  };
+
   // Certificate Delivery Simulation Records (G00-022)
   const [certificateDeliveries, setCertificateDeliveries] = useState<CertificateDeliveryRecord[]>([]);
 
@@ -304,6 +333,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Reset entire demo to seed state (G00-030)
   const resetDemo = () => {
     seqCounters = { customer: 10, job: 110, quote: 50, invoice: 100, reminder: 200, enquiry: 310, revision: 10 };
+    inFlightTca2ReviewsRef.current.clear();
+    createdFollowupJobIdsRef.current.clear();
+    setDraftBusinesses([]);
     setPersona('owner_admin');
     setActiveBrandId('solarcell');
     setBrands(INITIAL_BRANDS);
@@ -330,6 +362,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSmokeAlarmCerts({ 'JOB-2026-101': { ...INITIAL_SMOKE_ALARM_CERT } });
     setTca1Certs({ 'JOB-2026-104': { ...INITIAL_TCA1_CERT } });
     setTca2Certs({ 'JOB-2026-104': { ...INITIAL_TCA2_CERT } });
+    setTca2AuditRecords({ ...INITIAL_TCA2_AUDIT });
     setSelectedJobId('JOB-2026-101');
     setActiveTab('dashboard');
     setActiveScenario('default');
@@ -565,17 +598,25 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       : (jobData.formsRequired ?? []);
     const isDirect = forms.length === 0 ? Boolean(jobData.isDirectToInvoice) : false;
 
-    const hasActiveAppointment = Boolean(jobData.assignedTechId && (jobData.scheduledDate || jobData.scheduledTime));
-    const scheduledDate = hasActiveAppointment
-      ? (jobData.scheduledDate || demoClock.slice(0, 10))
-      : (jobData.scheduledDate ?? null);
-    const scheduledTime = hasActiveAppointment
-      ? (jobData.scheduledTime || '09:00')
-      : (jobData.scheduledTime ?? null);
+    // P2: Complete appointment tuple invariant: tech, date, and time must all be present
+    const hasCompleteAppointment = Boolean(
+      jobData.assignedTechId &&
+      jobData.scheduledDate &&
+      jobData.scheduledTime
+    );
+    const scheduledDate = hasCompleteAppointment ? (jobData.scheduledDate as string) : null;
+    const scheduledTime = hasCompleteAppointment ? (jobData.scheduledTime as string) : null;
+    const assignedTechId = hasCompleteAppointment ? (jobData.assignedTechId as string) : null;
+    const assignedTechName = hasCompleteAppointment && assignedTechId
+      ? INITIAL_TECHNICIANS.find(t => t.id === assignedTechId)?.name || 'Dave Miller'
+      : null;
+    const appointmentStatus: AppointmentStatus = hasCompleteAppointment ? 'SCHEDULED' : 'UNSCHEDULED';
+    const status: JobStatus = hasCompleteAppointment ? (jobData.status || 'SCHEDULED') : 'NEW';
+    const calendarSyncStatus = hasCompleteAppointment ? 'SYNCED' : 'PENDING';
 
-    // Calculate reminder due time only for active appointments (E/I Reminders)
+    // Calculate reminder due time only for complete active appointments (E/I Reminders)
     const reminders: ScheduledReminder[] = [];
-    if (hasActiveAppointment && scheduledDate && scheduledTime) {
+    if (hasCompleteAppointment && scheduledDate && scheduledTime) {
       seqCounters.reminder++;
       const reminderDue = calculateReminderDueTime(scheduledDate, scheduledTime, 2);
       reminders.push({
@@ -601,14 +642,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       siteContact: jobData.siteContact || 'Contact Person',
       sitePhone: jobData.sitePhone || '0400 000 000',
       description: jobData.description || 'Service call details',
-      status: jobData.status || (hasActiveAppointment ? 'SCHEDULED' : 'NEW'),
-      appointmentStatus: jobData.appointmentStatus || (hasActiveAppointment ? 'SCHEDULED' : 'UNSCHEDULED'),
+      status,
+      appointmentStatus,
       calendarMapping: brands[jobData.brandId || activeBrandId]?.calendarMappingName || 'Primary Dispatch Calendar',
-      calendarSyncStatus: hasActiveAppointment ? 'SYNCED' : 'PENDING',
-      assignedTechId: jobData.assignedTechId ?? null,
-      assignedTechName: jobData.assignedTechId
-        ? INITIAL_TECHNICIANS.find(t => t.id === jobData.assignedTechId)?.name || 'Dave Miller'
-        : null,
+      calendarSyncStatus,
+      assignedTechId,
+      assignedTechName,
       scheduledDate,
       scheduledTime,
       estimatedDurationHours: jobData.estimatedDurationHours || 2,
@@ -672,7 +711,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       tca2: tca2Certs[jobId],
     };
 
-    const validation = validateJobCompletion(job, forms);
+    const validation = validateJobCompletion(job, forms, tca2AuditRecords[jobId]);
 
     if (validation.canComplete) {
       setJobs(prev =>
@@ -1214,119 +1253,90 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const customerAckTca2 = (jobId: string) => {
-    // Audit separation: Never mutate the signed TCA2 document
-    const timestamp = demoClock.slice(0, 16);
+    const cert = tca2Certs[jobId];
+    const existingAudit = tca2AuditRecords[jobId];
+    const result = processCustomerAckTca2({
+      jobId,
+      actorPersona: persona,
+      tca2Cert: cert,
+      existingAudit,
+      demoClock,
+    });
+
+    if (!result.success) {
+      showDemoNotification(result.error || 'Customer acknowledgement failed.', 'error');
+      return;
+    }
+
     setTca2AuditRecords(prev => ({
       ...prev,
-      [jobId]: {
-        ...(prev[jobId] || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
-        customerAcknowledged: true,
-        customerAckTimestamp: timestamp,
-      },
+      [jobId]: result.updatedAuditRecord!,
     }));
     showDemoNotification(`Customer acknowledgement captured for TCA2 Defect on Job ${jobId}. Signed report remains immutable.`, 'info');
   };
 
   const officeReviewTca2 = (jobId: string) => {
-    const access = verifyPersonaAccess(persona, 'office_compliance_review');
-    if (!access.allowed) {
-      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+    // Synchronous mutex guard: reject duplicate calls before state commits or within same tick
+    if (inFlightTca2ReviewsRef.current.has(jobId)) {
+      showDemoNotification(`TCA2 Office Review is already processing for Job ${jobId}. Duplicate follow-up generation prevented.`, 'warning');
       return;
     }
 
+    const sourceJob = jobs.find(j => j.id === jobId);
     const cert = tca2Certs[jobId];
-    if (!cert?.signedOff) {
-      showDemoNotification('CANNOT REVIEW: TCA2 Defect Report must be signed off by a technician before office review.', 'error');
+    const existingAudit = tca2AuditRecords[jobId];
+
+    const result = processOfficeReviewTca2({
+      jobId,
+      actorPersona: persona,
+      sourceJob,
+      tca2Cert: cert,
+      existingAudit,
+      existingJobs: jobs,
+      nextJobSeq: seqCounters.job,
+      demoClock,
+    });
+
+    if (!result.success) {
+      showDemoNotification(result.error || 'Office review failed.', 'error');
       return;
     }
 
-    // State-level idempotency guard: Prevent rapid consecutive clicks and duplicate follow-up generation
-    const existingAudit = tca2AuditRecords[jobId];
-    if (existingAudit?.officeReviewCompleted || existingAudit?.rectificationFollowupJobId) {
+    if (result.isDuplicate) {
       showDemoNotification(
-        `TCA2 Office Review already completed for Job ${jobId}. Rectification follow-up work order #${existingAudit.rectificationFollowupJobId} already queued.`,
+        `TCA2 Office Review already completed for Job ${jobId}. Rectification follow-up work order #${result.updatedAuditRecord.rectificationFollowupJobId || ''} already recorded.`,
         'warning'
       );
-      return;
-    }
-
-    // Guard against existing follow-up jobs matching this defect
-    const existingJob = jobs.find(j =>
-      j.title?.includes(`Follow-up to ${jobId}`) ||
-      (j.description?.includes(`reported under ${jobId}`) && j.description?.includes('TCA2'))
-    );
-    if (existingJob) {
       setTca2AuditRecords(prev => ({
         ...prev,
-        [jobId]: {
-          ...(prev[jobId] || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
-          officeReviewCompleted: true,
-          reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
-          officeReviewTimestamp: demoClock.slice(0, 16),
-          rectificationFollowupJobId: existingJob.id,
-        },
+        [jobId]: result.updatedAuditRecord,
       }));
-      showDemoNotification(`Rectification work order #${existingJob.id} already exists in operational pool. Linked to audit trail.`, 'warning');
       return;
     }
 
-    seqCounters.job++;
-    const followupId = `JOB-2026-${seqCounters.job}`;
-    const sourceJob = jobs.find(j => j.id === jobId);
+    // Set synchronous ref immediately to prevent subsequent calls in the same tick from duplicating
+    inFlightTca2ReviewsRef.current.add(jobId);
+    seqCounters.job = result.nextJobSeq;
 
-    const newFollowupJob: Job = {
-      id: followupId,
-      brandId: sourceJob?.brandId || 'cctv',
-      customerId: sourceJob?.customerId || customers[0].id,
-      title: `TCA2 Remediation: Dedicated Conduit Installation (Follow-up to ${jobId})`,
-      jobType: 'Enterprise CCTV & Cabling Inspection',
-      jobTypeVersion: 'v2.1',
-      siteAddress: sourceJob?.siteAddress || '[Fictional] Site Address',
-      siteContact: sourceJob?.siteContact || 'Site Contact',
-      sitePhone: sourceJob?.sitePhone || '0400 000 000',
-      description: `Rectification follow-up for Cabling Non-Compliance reported under ${jobId}. Dedicated 25mm PVC conduit separation required.`,
-      status: 'NEW',
-      appointmentStatus: 'UNSCHEDULED',
-      assignedTechId: null,
-      assignedTechName: null,
-      scheduledDate: null,
-      scheduledTime: null,
-      estimatedDurationHours: 3,
-      isDirectToInvoice: false,
-      formsRequired: ['JSA', 'TCA1'],
-      attachedSampleIds: sourceJob?.attachedSampleIds || [],
-      reviewRequest: {
-        status: 'NOT_SENT',
-        reviewLink: brands[sourceJob?.brandId || 'cctv']?.reviewUrlPlaceholder || '',
-        brandName: brands[sourceJob?.brandId || 'cctv']?.name || 'Gold Coast CCTV',
-        channel: 'EMAIL_SIMULATED',
-        history: [],
-      },
-      reminders: [],
-      unresolvedWarnings: ['Follow-up rectification work order queued from TCA2 Office Review.'],
-      activityHistory: [
-        {
-          timestamp: demoClock.slice(0, 16),
-          action: `Rectification work order #${followupId} queued from TCA2 office review of defect on ${jobId}`,
-          actor: persona,
-        },
-      ],
-    };
-
-    setJobs(prev => [newFollowupJob, ...prev]);
+    if (result.newFollowupJob) {
+      createdFollowupJobIdsRef.current.set(jobId, result.newFollowupJob.id);
+      setJobs(prev => {
+        if (prev.some(j => j.id === result.newFollowupJob!.id || j.title?.includes(`Follow-up to ${jobId}`))) {
+          return prev;
+        }
+        return [result.newFollowupJob!, ...prev];
+      });
+    }
 
     setTca2AuditRecords(prev => ({
       ...prev,
-      [jobId]: {
-        ...(prev[jobId] || { jobId, customerAcknowledged: false, officeReviewCompleted: false }),
-        officeReviewCompleted: true,
-        reviewedByOfficeStaff: 'Emma Wilson (Office Administrator)',
-        officeReviewTimestamp: demoClock.slice(0, 16),
-        rectificationFollowupJobId: followupId,
-      },
+      [jobId]: result.updatedAuditRecord,
     }));
 
-    showDemoNotification(`TCA2 Office Review completed. Rectification follow-up work order #${followupId} created in operational pool.`, 'success');
+    showDemoNotification(
+      `TCA2 Office Review completed. Rectification follow-up work order #${result.newFollowupJob?.id} created in operational pool.`,
+      'success'
+    );
   };
 
   // Helper: Verify whether target form is signed off before modifying attachments
@@ -1412,10 +1422,35 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
     }
 
+    // Recalculate job-level attachments from all forms on this job to preserve shared references
+    const jsaRemaining = formType === 'JSA'
+      ? (jsaForms[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
+      : (jsaForms[jobId]?.attachedSampleIds || []);
+    const smokeRemaining = formType === 'SMOKE_ALARM'
+      ? (smokeAlarmCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
+      : (smokeAlarmCerts[jobId]?.attachedSampleIds || []);
+    const elecRemaining = formType === 'ELECTRICAL'
+      ? (electricalCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
+      : (electricalCerts[jobId]?.attachedSampleIds || []);
+    const tca1Remaining = formType === 'TCA1'
+      ? (tca1Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
+      : (tca1Certs[jobId]?.attachedSampleIds || []);
+    const tca2Remaining = formType === 'TCA2'
+      ? (tca2Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
+      : (tca2Certs[jobId]?.attachedSampleIds || []);
+
+    const updatedJobAttachments = recalculateJobAttachments([
+      jsaRemaining,
+      smokeRemaining,
+      elecRemaining,
+      tca1Remaining,
+      tca2Remaining,
+    ]);
+
     setJobs(prev =>
       prev.map(j =>
         j.id === jobId
-          ? { ...j, attachedSampleIds: j.attachedSampleIds.filter(id => id !== sampleId) }
+          ? { ...j, attachedSampleIds: updatedJobAttachments }
           : j
       )
     );
@@ -1643,116 +1678,46 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message: 'Job not found' };
     }
 
-    const dedup = deduplicateReviewRequest(job, () => {
-      if (simulateOutcome === 'FAIL') {
-        return { success: false, reviewUrl: '' };
-      }
-      return { success: true, reviewUrl: brands[job.brandId]?.reviewUrlPlaceholder || 'https://demo.reviews.invalid' };
+    const brand = brands[job.brandId] || brands.solarcell;
+    const dispatchRes = processReviewDispatch({
+      currentJob: job,
+      simulateOutcome,
+      demoClock,
+      reviewUrl: brand.reviewUrlPlaceholder || 'https://demo.reviews.invalid',
+      brandName: brand.name,
     });
 
-    if (!dedup.allowed) {
-      showDemoNotification(`REVIEW BLOCKED: ${dedup.reason}`, 'warning');
-      return { success: false, message: dedup.reason || 'Not allowed' };
+    if (!dispatchRes.allowed) {
+      showDemoNotification(`REVIEW BLOCKED: ${dispatchRes.reason}`, 'warning');
+      return { success: false, message: dispatchRes.reason || 'Not allowed' };
     }
 
-    if (simulateOutcome === 'UNCERTAIN') {
-      setJobs(prev =>
-        prev.map(j =>
-          j.id === jobId
-            ? {
-                ...j,
-                reviewRequest: {
-                  ...j.reviewRequest,
-                  status: 'UNCERTAIN',
-                  uncertainReconciliationNeeded: true,
-                  history: [
-                    ...j.reviewRequest.history,
-                    {
-                      timestamp: demoClock.slice(0, 16),
-                      event: 'Simulated dispatch gateway timeout (504 Gateway Timeout) - delivery outcome uncertain',
-                      status: 'UNCERTAIN',
-                    },
-                  ],
-                },
-                activityHistory: [
-                  ...j.activityHistory,
-                  { timestamp: demoClock.slice(0, 16), action: 'Review request dispatch resulted in UNCERTAIN status (504)', actor: 'Automated Service' },
-                ],
-              }
-            : j
-        )
-      );
+    // Update job with observable resolved state (which preserves the PENDING audit entry)
+    setJobs(prev => prev.map(j => (j.id === jobId ? dispatchRes.resolvedJob! : j)));
+
+    if (dispatchRes.outcomeStatus === 'UNCERTAIN') {
       showDemoNotification('Review request dispatch uncertain (504 gateway timeout). Manual reconciliation required.', 'warning');
       return { success: false, message: 'Dispatch uncertain. Reconcile before retrying.' };
     }
 
-    if (simulateOutcome === 'FAIL') {
-      setJobs(prev =>
-        prev.map(j =>
-          j.id === jobId
-            ? {
-                ...j,
-                reviewRequest: {
-                  ...j.reviewRequest,
-                  status: 'FAILED',
-                  uncertainReconciliationNeeded: false,
-                  lastErrorMessage: 'Remote SMTP server returned 550 Mailbox Unavailable',
-                  history: [
-                    ...j.reviewRequest.history,
-                    {
-                      timestamp: demoClock.slice(0, 16),
-                      event: 'Simulated dispatch failure: SMTP 550 delivery rejection',
-                      status: 'FAILED',
-                    },
-                  ],
-                },
-                activityHistory: [
-                  ...j.activityHistory,
-                  { timestamp: demoClock.slice(0, 16), action: 'Review request dispatch failed (SMTP 550)', actor: 'Automated Service' },
-                ],
-              }
-            : j
-        )
-      );
+    if (dispatchRes.outcomeStatus === 'FAILED') {
       showDemoNotification('Review request failed to dispatch (SMTP 550). Controlled retry available.', 'error');
       return { success: false, message: 'Dispatch failed. Controlled retry available.' };
     }
 
-    // Success: SENT
-    setJobs(prev =>
-      prev.map(j =>
-        j.id === jobId
-          ? {
-              ...j,
-              reviewRequest: {
-                ...j.reviewRequest,
-                status: 'SENT',
-                sentTimestamp: demoClock.slice(0, 16),
-                reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
-                uncertainReconciliationNeeded: false,
-                history: [
-                  ...j.reviewRequest.history,
-                  {
-                    timestamp: demoClock.slice(0, 16),
-                    event: `Email invitation sent to customer for ${brands[job.brandId]?.name}`,
-                    status: 'SENT',
-                  },
-                ],
-              },
-              activityHistory: [
-                ...j.activityHistory,
-                { timestamp: demoClock.slice(0, 16), action: `Review invitation sent to customer (${brands[job.brandId]?.name})`, actor: 'Automated Service' },
-              ],
-            }
-          : j
-      )
-    );
-
-    showDemoNotification(`Google Review request sent to ${job.siteContact} (${brands[job.brandId]?.name}).`, 'success');
+    showDemoNotification(`Google Review request sent to ${job.siteContact} (${brand.name}).`, 'success');
     return { success: true, message: 'Review request sent!' };
   };
 
   const reconcileReviewRequest = (jobId: string, resolution: 'SENT' | 'FAILED' = 'SENT') => {
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) return;
+
+    if (job.reviewRequest.status !== 'UNCERTAIN') {
+      showDemoNotification(`RECONCILE BLOCKED: Only UNCERTAIN review requests can be reconciled. Current status: ${job.reviewRequest.status}`, 'warning');
+      return;
+    }
+
     setJobs(prev =>
       prev.map(j =>
         j.id === jobId
@@ -1818,46 +1783,20 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Templates & Versioning (G00-007: DRAFT -> REVIEW -> PUBLISHED)
   const publishTemplateVersion = (templateId: string) => {
-    const access = verifyPersonaAccess(persona, 'template_publishing');
-    if (!access.allowed) {
-      showDemoNotification(`DENIED: ${access.reason}`, 'error');
-      return;
-    }
-
     const tpl = templates.find(t => t.id === templateId);
     if (!tpl) return;
 
-    if (tpl.activeStatus !== 'REVIEW') {
-      showDemoNotification(
-        `CANNOT PUBLISH: Template revision must be submitted and in 'REVIEW' status before publishing. Current status: ${tpl.activeStatus}.`,
-        'error'
-      );
+    const res = processPublishTemplate(tpl, persona, demoClock);
+    if (!res.success) {
+      showDemoNotification(res.error || 'Cannot publish template.', 'error');
       return;
     }
 
     seqCounters.revision++;
     setTemplates(prev =>
-      prev.map(t => {
-        if (t.id === templateId) {
-          const newVer = `v${(parseFloat(t.currentVersion.replace('v', '')) + 0.1).toFixed(1)}`;
-          const publishedRev = {
-            version: newVer,
-            status: 'PUBLISHED' as const,
-            content: t.content,
-            updatedAt: demoClock.slice(0, 16),
-            updatedBy: persona.toUpperCase(),
-          };
-          return {
-            ...t,
-            currentVersion: newVer,
-            activeStatus: 'PUBLISHED',
-            revisions: [publishedRev, ...t.revisions.filter(r => r.status !== 'REVIEW')],
-          };
-        }
-        return t;
-      })
+      prev.map(t => (t.id === templateId ? res.updatedTemplate! : t))
     );
-    showDemoNotification(`Template version published. Previously finalized records retain historical snapshots.`, 'success');
+    showDemoNotification(`Template version published. Full revision and review audit history retained.`, 'success');
   };
 
   const createTemplateDraftRevision = (templateId: string, newContent: string) => {
@@ -2162,6 +2101,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         technicians: INITIAL_TECHNICIANS,
         updateBrandConfig,
         addNewBrandProfile,
+        draftBusinesses,
+        createDraftBusiness,
         isSimulatedSignedIn,
         simulateSignIn,
         simulateSignOut,

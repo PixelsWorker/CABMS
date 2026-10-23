@@ -4,7 +4,20 @@
  * Strict isolation: Deterministic synthetic data, no live external integrations
  */
 
-export type BrandId = 'solarcell' | 'smart_home' | 'cctv' | (string & {});
+export type BrandId = 'solarcell' | 'smart_home' | 'cctv';
+
+export interface DraftBusinessProfile {
+  id: string; // e.g. DRAFT-BIZ-001
+  name: string;
+  tagline: string;
+  primaryColor: string;
+  accentColor: string;
+  logoGlyph: string;
+  legalIssuerName: string;
+  abnPlaceholder: string;
+  isDraft: true;
+  createdAt: string;
+}
 
 export type Persona = 'super_admin' | 'owner_admin' | 'office_staff' | 'technician';
 

@@ -7,8 +7,13 @@ import {
   checkCustomerDuplicate,
   verifyPersonaAccess,
   calculateReminderDueTime,
+  processOfficeReviewTca2,
+  processCustomerAckTca2,
+  recalculateJobAttachments,
+  processPublishTemplate,
+  processReviewDispatch,
 } from './cabmsLogic.ts';
-import { Job, Customer } from '../types/cabms.ts';
+import { Job, Customer, TemplateSetting } from '../types/cabms.ts';
 
 test('validateJobCompletion: direct-to-invoice job completes without forms', () => {
   const directJob: Job = {
@@ -532,4 +537,196 @@ test('validateJobCompletion: blocks completion if job requires forms but forms a
   assert.equal(completionResult.canComplete, false);
   assert.ok(completionResult.missingRequirements.some(r => r.includes('TCA1')));
 });
+
+test('validateJobCompletion: TCA2 requires customer acknowledgement in Tca2AuditRecord without mutating certificate', () => {
+  const tca2Job: Job = {
+    id: 'JOB-2026-104',
+    brandId: 'cctv',
+    customerId: 'CUSTOMER-DEMO-002',
+    title: 'Cabling Defect Job',
+    jobType: 'CCTV Inspection',
+    jobTypeVersion: 'v1.0',
+    siteAddress: 'Warehouse',
+    siteContact: 'Marcus',
+    sitePhone: '0400000000',
+    description: '',
+    status: 'IN_PROGRESS',
+    assignedTechId: 'TECH-001',
+    assignedTechName: 'Dave',
+    scheduledDate: '2026-11-02',
+    scheduledTime: '10:00',
+    estimatedDurationHours: 2,
+    isDirectToInvoice: false,
+    formsRequired: ['TCA2'],
+    reviewRequest: { status: 'NOT_SENT', reviewLink: '', brandName: '', channel: 'EMAIL_SIMULATED', history: [] },
+    reminders: [],
+    attachedSampleIds: [],
+    unresolvedWarnings: [],
+    activityHistory: [],
+  };
+
+  const frozenTca2 = {
+    reportReference: 'TCA2-DEFECT-001',
+    jobReference: 'JOB-2026-104',
+    signedOff: true,
+    customerAcknowledged: false, // Remains false on frozen certificate
+    fullSnapshot: '{"reportReference":"TCA2-DEFECT-001","signedOff":true}',
+  } as any;
+
+  // Unacknowledged in audit record -> completion blocked
+  const resBlocked = validateJobCompletion(tca2Job, { tca2: frozenTca2 }, {
+    jobId: 'JOB-2026-104',
+    customerAcknowledged: false,
+    officeReviewCompleted: false,
+  });
+  assert.equal(resBlocked.canComplete, false);
+  assert.ok(resBlocked.missingRequirements.some(r => r.includes('acknowledged by customer')));
+
+  // Acknowledged in audit record -> unblocked, while certificate itself remains frozen
+  const resAllowed = validateJobCompletion(tca2Job, { tca2: frozenTca2 }, {
+    jobId: 'JOB-2026-104',
+    customerAcknowledged: true,
+    customerAckTimestamp: '2026-11-02 11:30',
+    officeReviewCompleted: true,
+    reviewedByOfficeStaff: 'Office Staff',
+  });
+  assert.equal(resAllowed.canComplete, true);
+  assert.equal(frozenTca2.customerAcknowledged, false); // Frozen cert was NOT mutated
+});
+
+test('processOfficeReviewTca2: pure domain helper ensures atomic idempotency', () => {
+  const currentJob: Job = {
+    id: 'JOB-104',
+    brandId: 'cctv',
+    customerId: 'C-1',
+    title: 'CCTV job',
+    jobType: 'CCTV Inspection',
+    jobTypeVersion: 'v1.0',
+    siteAddress: '123 Site',
+    siteContact: 'Sam',
+    sitePhone: '0400000000',
+    description: '',
+    status: 'IN_PROGRESS',
+    assignedTechId: 'TECH-001',
+    assignedTechName: 'Dave',
+    scheduledDate: '2026-11-02',
+    scheduledTime: '10:00',
+    estimatedDurationHours: 2,
+    isDirectToInvoice: false,
+    formsRequired: ['TCA2'],
+    reviewRequest: { status: 'NOT_SENT', reviewLink: '', brandName: '', channel: 'EMAIL_SIMULATED', history: [] },
+    reminders: [],
+    attachedSampleIds: [],
+    unresolvedWarnings: [],
+    activityHistory: [],
+  };
+
+  const auditRecord = {
+    jobId: 'JOB-104',
+    customerAcknowledged: true,
+    officeReviewCompleted: false,
+  };
+
+  const tca2Cert = {
+    signedOff: true,
+    reportReference: 'TCA2-DEFECT-001',
+    jobReference: 'JOB-104',
+  } as any;
+
+  const existingJobs = [currentJob];
+
+  // First call creates follow-up
+  const result1 = processOfficeReviewTca2({
+    jobId: 'JOB-104',
+    actorPersona: 'office_staff',
+    existingAudit: auditRecord,
+    existingJobs,
+    tca2Cert,
+    sourceJob: currentJob,
+    demoClock: '2026-11-02 12:00',
+    nextJobSeq: 500,
+  });
+
+  assert.equal(result1.success, true);
+  assert.equal(result1.isDuplicate, false);
+  assert.ok(result1.newFollowupJob);
+  assert.equal(result1.newFollowupJob?.id, 'JOB-2026-501');
+  assert.equal(result1.updatedAuditRecord.officeReviewCompleted, true);
+
+  // Second call with updated state returns existing follow-up without creating a new one
+  const updatedJobs = [...existingJobs, result1.newFollowupJob!];
+  const result2 = processOfficeReviewTca2({
+    jobId: 'JOB-104',
+    actorPersona: 'office_staff',
+    existingAudit: result1.updatedAuditRecord,
+    existingJobs: updatedJobs,
+    tca2Cert,
+    sourceJob: currentJob,
+    demoClock: '2026-11-02 12:05',
+    nextJobSeq: 501,
+  });
+
+  assert.equal(result2.success, true);
+  assert.equal(result2.isDuplicate, true);
+  assert.equal(result2.newFollowupJob, undefined);
+  assert.equal(result2.updatedAuditRecord.rectificationFollowupJobId, 'JOB-2026-501');
+});
+
+test('recalculateJobAttachments: preserves sample if used by another form', () => {
+  const forms = {
+    jsa: { attachedSampleIds: ['ATT-001', 'ATT-002'] },
+    electrical: { attachedSampleIds: ['ATT-002', 'ATT-003'] },
+  };
+
+  // Removing ATT-001 from JSA should leave ATT-002 and ATT-003
+  const updatedFormsAfterRemovingAtt1 = {
+    jsa: { attachedSampleIds: ['ATT-002'] },
+    electrical: { attachedSampleIds: ['ATT-002', 'ATT-003'] },
+  };
+
+  const recalculated = recalculateJobAttachments([
+    updatedFormsAfterRemovingAtt1.jsa.attachedSampleIds,
+    updatedFormsAfterRemovingAtt1.electrical.attachedSampleIds,
+  ]);
+  assert.deepEqual(recalculated.sort(), ['ATT-002', 'ATT-003']);
+  // ATT-002 is still preserved because both jsa and electrical referenced it
+  assert.ok(recalculated.includes('ATT-002'));
+});
+
+test('processPublishTemplate: preserves reviewed revision in complete audit history', () => {
+  const currentTemplate: TemplateSetting = {
+    id: 'tpl-1',
+    name: 'Customer Terms Template',
+    type: 'TERMS',
+    currentVersion: 'v1.0',
+    content: 'Original Invoice Header',
+    sampleFileName: 'invoice.html',
+    mappingStatus: 'Mapped',
+    activeStatus: 'REVIEW',
+    revisions: [
+      {
+        version: 'v1.0',
+        content: 'Original Invoice Header',
+        status: 'PUBLISHED',
+        updatedBy: 'SUPER_ADMIN',
+        updatedAt: '2026-10-01 10:00',
+      },
+    ],
+  };
+
+  const result = processPublishTemplate(
+    currentTemplate,
+    'super_admin',
+    '2026-11-02 14:00'
+  );
+
+  assert.equal(result.success, true);
+  assert.ok(result.updatedTemplate);
+  assert.equal(result.updatedTemplate?.activeStatus, 'PUBLISHED');
+  assert.equal(result.updatedTemplate?.currentVersion, 'v1.1');
+  // Both the old v1.0 and the newly published revision are preserved in revisions array
+  assert.equal(result.updatedTemplate?.revisions.length, 2);
+  assert.ok(result.updatedTemplate?.revisions.some((r: any) => r.version === 'v1.1' && r.status === 'PUBLISHED'));
+});
+
 

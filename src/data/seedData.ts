@@ -373,6 +373,8 @@ export const INITIAL_SMOKE_ALARM_CERT: SmokeAlarmCertData = {
   signedByTechName: 'Dave Miller',
   signedTimestamp: '2026-11-02 09:40',
   provisionalNote: 'PROVISIONAL NOTICE: Per-alarm Pass/Fail, room-count limits, and replacement calculation dates are marked provisional where source variants differ.',
+  frozenIssuerSnapshot: 'Gold Coast Smart Home Systems Pty Ltd (Fictional Placeholder) • ABN 23 456 789 012 (Fictional)',
+  fullSnapshot: '{"certReference":"SMOKE-2026-REF-001","jobReference":"JOB-2026-101","signedOff":true,"signedByTechName":"Dave Miller","signedTimestamp":"2026-11-02 09:40","frozenIssuerSnapshot":"Gold Coast Smart Home Systems Pty Ltd (Fictional Placeholder) • ABN 23 456 789 012 (Fictional)"}',
   attachedSampleIds: ['ATT-002'],
 };
 
@@ -420,6 +422,8 @@ export const INITIAL_ELECTRICAL_CERT: ElectricalCertData = {
   signedByTechName: 'Dave Miller',
   signedTimestamp: '2026-11-02 10:20',
   unresolvedNotice: 'CRITICAL NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved in source extracts. No completed live certificate can be inferred.',
+  frozenIssuerSnapshot: 'Solarcell Technologies Pty Ltd (Fictional Placeholder) • ABN 12 345 678 901 (Fictional)',
+  fullSnapshot: '{"certReference":"ELEC-CERT-2026-881","jobReference":"JOB-2026-103","signedOff":true,"signedByTechName":"Dave Miller","signedTimestamp":"2026-11-02 10:20","frozenIssuerSnapshot":"Solarcell Technologies Pty Ltd (Fictional Placeholder) • ABN 12 345 678 901 (Fictional)"}',
   attachedSampleIds: ['ATT-001'],
 };
 
@@ -440,6 +444,8 @@ export const INITIAL_TCA1_CERT: Tca1CertData = {
   signedByTechName: 'Alex Taylor',
   signedTimestamp: '2026-11-02 11:00',
   unresolvedRegistrationExpiryNotice: 'Unresolved Notice: Cabler registration number, expiry date verification and issuer endorsement remain unconfirmed demo placeholders.',
+  frozenIssuerSnapshot: 'Gold Coast CCTV & Security Pty Ltd (Fictional Placeholder) • ABN 34 567 890 123 (Fictional)',
+  fullSnapshot: '{"certReference":"TCA1-2026-904","jobReference":"JOB-2026-104","signedOff":true,"signedByTechName":"Alex Taylor","signedTimestamp":"2026-11-02 11:00","frozenIssuerSnapshot":"Gold Coast CCTV & Security Pty Ltd (Fictional Placeholder) • ABN 34 567 890 123 (Fictional)"}',
   attachedSampleIds: [],
 };
 
@@ -472,6 +478,8 @@ export const INITIAL_TCA2_CERT: Tca2CertData = {
   signedByTechName: 'Alex Taylor',
   signedTimestamp: '2026-11-02 10:45',
   warningNotice: 'NON-COMPLIANCE NOTICE: Completing TCA2 documents an existing cabling defect; it does NOT certify the installation as compliant or relieve the owner of rectification obligations.',
+  frozenIssuerSnapshot: 'Gold Coast CCTV & Security Pty Ltd (Fictional Placeholder) • ABN 34 567 890 123 (Fictional)',
+  fullSnapshot: '{"reportReference":"TCA2-DEFECT-2026-007","jobReference":"JOB-2026-104","signedOff":true,"signedByTechName":"Alex Taylor","signedTimestamp":"2026-11-02 10:45","frozenIssuerSnapshot":"Gold Coast CCTV & Security Pty Ltd (Fictional Placeholder) • ABN 34 567 890 123 (Fictional)","cablingScope":"Existing Only","riskCategory":"High (Immediate Shock / Fire Hazard)"}',
   attachedSampleIds: ['ATT-003'],
 };
 

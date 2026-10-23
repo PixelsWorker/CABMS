@@ -12,8 +12,65 @@ import {
   recalculateJobAttachments,
   processPublishTemplate,
   processReviewDispatch,
+  validateSignedSnapshot,
 } from './cabmsLogic.ts';
 import { Job, Customer, TemplateSetting } from '../types/cabms.ts';
+import {
+  INITIAL_ELECTRICAL_CERT,
+  INITIAL_JSA_FORM,
+  INITIAL_SMOKE_ALARM_CERT,
+  INITIAL_TCA1_CERT,
+  INITIAL_TCA2_CERT,
+} from '../data/seedData.ts';
+
+test('validateSignedSnapshot accepts all five CABMS signed form schemas', () => {
+  const signedJsa = {
+    ...INITIAL_JSA_FORM,
+    signedOff: true,
+    signedByTechName: 'Dave Miller',
+    signedTimestamp: '2026-11-02 09:30',
+    frozenIssuerSnapshot: 'Solarcell Pty Ltd • ABN 12 (Fictional)',
+  };
+  const seededTca2Snapshot = JSON.parse(INITIAL_TCA2_CERT.fullSnapshot!);
+  const normalizedTca2Snapshot = JSON.stringify({
+    ...seededTca2Snapshot,
+    customerAcknowledged: INITIAL_TCA2_CERT.customerAcknowledged,
+    officeReviewCompleted: INITIAL_TCA2_CERT.officeReviewCompleted,
+  });
+  const signedForms = [
+    ['JSA', 'JOB-2026-101', JSON.stringify(signedJsa)],
+    ['ELECTRICAL', INITIAL_ELECTRICAL_CERT.jobReference, INITIAL_ELECTRICAL_CERT.fullSnapshot],
+    ['SMOKE_ALARM', INITIAL_SMOKE_ALARM_CERT.jobReference, INITIAL_SMOKE_ALARM_CERT.fullSnapshot],
+    ['TCA1', INITIAL_TCA1_CERT.jobReference, INITIAL_TCA1_CERT.fullSnapshot],
+    ['TCA2', INITIAL_TCA2_CERT.jobReference, normalizedTca2Snapshot],
+  ] as const;
+
+  for (const [formType, jobId, snapshot] of signedForms) {
+    const result = validateSignedSnapshot(snapshot, jobId, formType);
+    assert.equal(result.valid, true, `${formType} seed schema should validate: ${result.error || ''}`);
+  }
+});
+
+test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {
+  const validElectrical = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  const invalidCases: [string | undefined, string, string, string][] = [
+    [undefined, 'JOB-2026-103', 'ELECTRICAL', 'missing'],
+    ['{ malformed', 'JOB-2026-103', 'ELECTRICAL', 'malformed JSON'],
+    [JSON.stringify({ ...validElectrical, jobReference: undefined }), 'JOB-2026-103', 'ELECTRICAL', 'missing jobReference'],
+    [JSON.stringify({ ...validElectrical, jobReference: 'JOB-OTHER' }), 'JOB-2026-103', 'ELECTRICAL', 'mismatched jobReference'],
+    [JSON.stringify({ ...validElectrical, signedByTechName: '' }), 'JOB-2026-103', 'ELECTRICAL', 'missing signer'],
+    [JSON.stringify({ ...validElectrical, signedTimestamp: '' }), 'JOB-2026-103', 'ELECTRICAL', 'missing signed timestamp'],
+    [JSON.stringify({ ...validElectrical, frozenIssuerSnapshot: '' }), 'JOB-2026-103', 'ELECTRICAL', 'missing frozen issuer'],
+    [JSON.stringify({ ...validElectrical, certReference: '' }), 'JOB-2026-103', 'ELECTRICAL', 'missing electrical certReference'],
+    [JSON.stringify({ ...validElectrical, testedWorkItems: undefined }), 'JOB-2026-103', 'ELECTRICAL', 'incomplete electrical schema'],
+    [JSON.stringify({ ...validElectrical, signedOff: false }), 'JOB-2026-103', 'ELECTRICAL', 'not signed off'],
+  ];
+
+  for (const [snapshot, jobId, formType, reason] of invalidCases) {
+    assert.equal(validateSignedSnapshot(snapshot, jobId, formType).valid, false, reason);
+  }
+  assert.equal(validateSignedSnapshot(INITIAL_ELECTRICAL_CERT.fullSnapshot, undefined, 'ELECTRICAL').valid, false);
+});
 
 test('validateJobCompletion: direct-to-invoice job completes without forms', () => {
   const directJob: Job = {

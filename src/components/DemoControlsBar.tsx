@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { formatBusinessTime } from '../utils/businessTime.ts';
 import { useCabms, DemoScenario } from '../context/CabmsContext.tsx';
 import { Persona, BrandId } from '../types/cabms.ts';
 import {
@@ -20,6 +21,7 @@ import {
 export const DemoControlsBar: React.FC = () => {
   const {
     persona,
+    isSimulatedSignedIn,
     setPersona,
     activeBrandId,
     setActiveBrandId,
@@ -33,28 +35,33 @@ export const DemoControlsBar: React.FC = () => {
     resolveAllPendingReviews,
   } = useCabms();
 
-  const formattedDate = new Date(demoClock).toLocaleString('en-AU', {
-    timeZone: 'Australia/Brisbane',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const [controlsOpen, setControlsOpen] = React.useState(() =>
+    typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 1024px)').matches
+  );
+  React.useEffect(() => {
+    const media = window.matchMedia?.('(min-width: 1024px)');
+    const onResize = () => { if (media) setControlsOpen(media.matches); };
+    media?.addEventListener('change', onResize);
+    return () => media?.removeEventListener('change', onResize);
+  }, []);
+
+  const formattedDate = formatBusinessTime(demoClock);
 
   return (
+    <details className="cabms-demo-controls" open={controlsOpen} onToggle={event => setControlsOpen(event.currentTarget.open)}>
+      <summary>Demo controls · persona, workspace, scenario and business clock</summary>
     <div className="bg-slate-900 text-slate-100 border-b border-slate-800 px-3 py-2 text-xs md:text-sm">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
         {/* Left Section: Persona & Brand */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 w-full flex-wrap items-center gap-3 sm:w-auto">
           {/* Persona Selector */}
-          <div className="flex items-center space-x-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+          <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
             <UserCheck className="w-3.5 h-3.5 text-sky-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Persona:</span>
             <select
               value={persona}
               onChange={e => setPersona(e.target.value as Persona)}
-              className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
+              className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
               aria-label="Demo Persona Selector"
             >
               <option value="super_admin" className="bg-slate-900 text-white">Super Admin</option>
@@ -65,13 +72,13 @@ export const DemoControlsBar: React.FC = () => {
           </div>
 
           {/* Active Brand Switcher */}
-          <div className="flex items-center space-x-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+          <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
             <Building2 className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Workspace:</span>
             <select
               value={activeBrandId}
               onChange={e => setActiveBrandId(e.target.value as BrandId)}
-              className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
+              className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
               aria-label="Active Brand Workspace Selector"
             >
               {(['solarcell', 'smart_home', 'cctv'] as BrandId[]).map(id => {
@@ -86,13 +93,13 @@ export const DemoControlsBar: React.FC = () => {
           </div>
 
           {/* Named Scenario Selector */}
-          <div className="flex items-center space-x-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+          <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
             <Workflow className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Scenario:</span>
             <select
               value={activeScenario}
               onChange={e => setActiveScenario(e.target.value as DemoScenario)}
-              className="bg-transparent text-white font-medium text-xs focus:outline-none cursor-pointer"
+              className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
               aria-label="Named Scenario Preset Selector"
             >
               <option value="default" className="bg-slate-900 text-white">1. Default Seed (Connected Flow)</option>
@@ -106,11 +113,11 @@ export const DemoControlsBar: React.FC = () => {
         </div>
 
         {/* Right Section: Virtual Clock & Reset */}
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
           {/* Fictional Business Clock */}
-          <div className="flex items-center space-x-1.5 bg-slate-800/80 px-2 py-1 rounded border border-slate-700/80 text-xs">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 bg-slate-800/80 px-2 py-1 rounded border border-slate-700/80 text-xs">
             <Clock className="w-3.5 h-3.5 text-amber-300" />
-            <span className="text-slate-300 font-mono tracking-tight">{formattedDate} UTC+10</span>
+            <span className="cabms-clock min-w-0 text-slate-300 font-mono tracking-tight">{formattedDate}</span>
             <div className="flex items-center ml-1 space-x-0.5 border-l border-slate-700 pl-1">
               <button
                 onClick={() => advanceClock(1)}
@@ -130,7 +137,7 @@ export const DemoControlsBar: React.FC = () => {
           </div>
 
           {/* Dispatch Pending Reviews Action */}
-          {persona !== 'technician' && pendingReviewCount > 0 && (
+          {isSimulatedSignedIn && persona !== 'technician' && pendingReviewCount > 0 && (
             <button
               onClick={() => resolveAllPendingReviews()}
               className="flex items-center space-x-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 px-2.5 py-1 rounded text-xs font-bold transition shadow-sm cursor-pointer animate-pulse"
@@ -153,5 +160,6 @@ export const DemoControlsBar: React.FC = () => {
         </div>
       </div>
     </div>
+    </details>
   );
 };

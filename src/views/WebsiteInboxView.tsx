@@ -59,6 +59,10 @@ export const WebsiteInboxView: React.FC = () => {
 
   const pendingEnquiries = websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW');
   const processedEnquiries = websiteEnquiries.filter(e => e.status !== 'PENDING_REVIEW');
+  const conversionJobTypes = conversionModalEnquiry
+    ? jobTypes.filter(jobType => jobType.brandId === conversionModalEnquiry.brandId)
+    : [];
+  const selectedConversionJobType = conversionJobTypes.find(jobType => jobType.id === selectedJobTypeId) || conversionJobTypes[0];
 
   return (
     <div className="space-y-6">
@@ -78,11 +82,12 @@ export const WebsiteInboxView: React.FC = () => {
           </div>
 
           {/* Trigger Simulation Button */}
-          <div className="flex items-center space-x-2 bg-slate-950 p-1.5 rounded-lg border border-slate-800">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center bg-slate-950 p-1.5 rounded-lg border border-slate-800">
             <select
+              aria-label="Website submission business"
               value={selectedBrandForSim}
               onChange={e => setSelectedBrandForSim(e.target.value as BrandId)}
-              className="bg-slate-900 text-white text-xs font-semibold px-2 py-1.5 rounded focus:outline-none cursor-pointer"
+              className="w-full min-w-0 max-w-full bg-slate-900 text-white text-xs font-semibold px-2 py-1.5 rounded focus:outline-none cursor-pointer"
             >
               {Object.values(brands).map(b => (
                 <option key={b.id} value={b.id}>
@@ -92,7 +97,7 @@ export const WebsiteInboxView: React.FC = () => {
             </select>
             <button
               onClick={() => simulateWebsiteSubmission(selectedBrandForSim)}
-              className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded transition shadow-sm cursor-pointer"
+              className="flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-normal px-3 py-1.5 bg-purple-600 sm:w-auto hover:bg-purple-500 text-white text-xs font-bold rounded transition shadow-sm cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Simulate Web Submission</span>
@@ -211,7 +216,7 @@ export const WebsiteInboxView: React.FC = () => {
                         setConversionModalEnquiry(enq);
                         setSelectedCustMatchMode(enq.matchedExistingCustomerId ? 'matched' : 'new_write_through');
                         setSelectedExistingCustId(enq.matchedExistingCustomerId || customers[0]?.id || '');
-                        setSelectedJobTypeId(jobTypes[0]?.id || 'jt-solar-install');
+                        setSelectedJobTypeId(jobTypes.find(jobType => jobType.brandId === enq.brandId)?.id || '');
                       }}
                       className="flex items-center space-x-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
                     >
@@ -373,11 +378,11 @@ export const WebsiteInboxView: React.FC = () => {
               </label>
 
               <select
-                value={selectedJobTypeId}
+                value={selectedConversionJobType?.id || ''}
                 onChange={e => setSelectedJobTypeId(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white font-medium cursor-pointer"
               >
-                {jobTypes.map(jt => (
+                {conversionJobTypes.map(jt => (
                   <option key={jt.id} value={jt.id}>
                     {jt.name} ({jt.version}) {jt.isDirectToInvoice ? '• [Direct-to-Invoice]' : `• [Req: ${jt.formsRequired.join(', ')}]`}
                   </option>
@@ -385,7 +390,8 @@ export const WebsiteInboxView: React.FC = () => {
               </select>
 
               {(() => {
-                const jt = jobTypes.find(t => t.id === selectedJobTypeId) || jobTypes[0];
+                const jt = selectedConversionJobType;
+                if (!jt) return <div role="alert" className="text-red-300">No job type is configured for this enquiry business.</div>;
                 return (
                   <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
                     <div className="text-slate-400">
@@ -421,7 +427,8 @@ export const WebsiteInboxView: React.FC = () => {
                     targetCustId = undefined; // trigger new customer write-through
                   }
 
-                  const res = convertEnquiryToJob(conversionModalEnquiry.id, targetCustId, selectedJobTypeId);
+                  if (!selectedConversionJobType) return;
+                  const res = convertEnquiryToJob(conversionModalEnquiry.id, targetCustId, selectedConversionJobType.id);
                   setConversionModalEnquiry(null);
                   if (res.jobId) {
                     setSelectedJobId(res.jobId);

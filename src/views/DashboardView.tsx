@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { isInBusinessWeek } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import {
   Briefcase,
@@ -37,13 +38,15 @@ export const DashboardView: React.FC = () => {
     demoClock,
   } = useCabms();
 
-  // Filter jobs by active brand (or all if Super Admin)
-  const brandJobs = jobs.filter(j => j.brandId === activeBrandId);
+  // Technicians only see site details and work assigned to their own account.
+  const brandJobs = jobs.filter(j =>
+    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
+  );
   const pendingSyncs = customers.filter(c => c.syncStatus !== 'SYNCED').length;
   const pendingEnquiries = websiteEnquiries.filter(e => e.brandId === activeBrandId && e.status === 'PENDING_REVIEW').length;
   const inProgressJobs = brandJobs.filter(j => j.status === 'IN_PROGRESS').length;
   const needsRevisitJobs = brandJobs.filter(j => j.status === 'NEEDS_REVISIT').length;
-  const completedJobs = brandJobs.filter(j => j.status === 'COMPLETED').length;
+  const completedJobs = brandJobs.filter(j => j.status === 'COMPLETED' && isInBusinessWeek(j.completedAt, demoClock)).length;
 
   const getStatusBadge = (status: JobStatus) => {
     switch (status) {
@@ -93,18 +96,21 @@ export const DashboardView: React.FC = () => {
           </div>
 
           {/* Quick Brand Switcher Pills */}
-          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 self-start md:self-auto">
+          <div className="flex max-w-full flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 self-start md:self-auto">
             {Object.values(brands).map(b => (
               <button
                 key={b.id}
                 onClick={() => setActiveBrandId(b.id)}
+                aria-label={`Switch business to ${b.name}`}
+                title={b.name}
+                aria-pressed={activeBrandId === b.id}
                 className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
                   activeBrandId === b.id
                     ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                {b.name.split(' ')[0]}
+                {{ solarcell: 'Solarcell', smart_home: 'Smart Home', cctv: 'CCTV' }[b.id]}
               </button>
             ))}
           </div>
@@ -120,7 +126,7 @@ export const DashboardView: React.FC = () => {
           </div>
           <div className="text-2xl font-black text-white mt-2">{inProgressJobs}</div>
           <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-            <span className="text-emerald-400 font-semibold">{completedJobs}</span> completed this week
+            <span data-testid="weekly-completed" className="text-emerald-400 font-semibold">{completedJobs}</span> completed this week (Brisbane)
           </div>
         </div>
 

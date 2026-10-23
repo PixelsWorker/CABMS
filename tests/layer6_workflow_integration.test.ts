@@ -4,6 +4,9 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
+import { ComplianceFormsView } from '../src/views/ComplianceFormsView.tsx';
+import { JobsView } from '../src/views/JobsView.tsx';
+import { WebsiteInboxView } from '../src/views/WebsiteInboxView.tsx';
 import {
   Customer,
   Job,
@@ -51,7 +54,9 @@ Object.defineProperty(globalThis, 'HTMLElement', { value: dom.window.HTMLElement
 
 // Executable Mounted React Context Runner
 export async function withMountedContext(
-  testFn: (ctx: ReturnType<typeof useCabms>, container: HTMLDivElement) => Promise<void> | void
+  testFn: (ctx: ReturnType<typeof useCabms>, container: HTMLDivElement) => Promise<void> | void,
+  includeComplianceView = false,
+  additionalView?: React.ReactNode
 ) {
   const container = dom.window.document.createElement('div');
   dom.window.document.body.appendChild(container);
@@ -61,9 +66,15 @@ export async function withMountedContext(
 
   function TestObserver() {
     currentContext = useCabms();
-    return React.createElement('div', { id: 'test-observer-mounted' },
-      React.createElement('span', { id: 'job-count' }, currentContext.jobs.length),
-      React.createElement('span', { id: 'persona-badge' }, currentContext.persona)
+    return React.createElement(React.Fragment, null,
+      React.createElement('div', { id: 'test-observer-mounted' },
+        React.createElement('span', { id: 'job-count' }, currentContext.jobs.length),
+        React.createElement('span', { id: 'persona-badge' }, currentContext.persona),
+        React.createElement('pre', { id: 'rendered-jobs' }, JSON.stringify(currentContext.jobs)),
+        React.createElement('pre', { id: 'rendered-tca2-audits' }, JSON.stringify(currentContext.tca2AuditRecords))
+      ),
+      includeComplianceView ? React.createElement(ComplianceFormsView) : null,
+      additionalView
     );
   }
 
@@ -73,14 +84,64 @@ export async function withMountedContext(
     );
   });
 
+  const freshContext = new Proxy({} as ReturnType<typeof useCabms>, {
+    get: (_target, property) => (currentContext as any)[property],
+  });
+
   try {
-    await testFn(currentContext, container);
+    await testFn(freshContext, container);
   } finally {
     await act(async () => {
       root.unmount();
     });
     container.remove();
   }
+}
+
+async function clickButton(container: HTMLElement, label: string) {
+  const button = Array.from(container.querySelectorAll('button')).find(candidate => candidate.textContent?.includes(label));
+  assert.ok(button, `Expected a button containing “${label}”.`);
+  await act(async () => { button!.click(); });
+}
+
+function assertMountedStateMatchesAuthoritative(ctx: ReturnType<typeof useCabms>, container: HTMLDivElement) {
+  const authoritative = ctx.getAuthoritativeState();
+  const renderedJobs = container.querySelector('#rendered-jobs')?.textContent || '[]';
+  const renderedAudits = container.querySelector('#rendered-tca2-audits')?.textContent || '{}';
+
+  assert.deepEqual(ctx.jobs, authoritative.jobs, 'fresh React context jobs match authoritative jobs');
+  assert.equal(renderedJobs, JSON.stringify(authoritative.jobs), 'mounted React DOM jobs match authoritative jobs');
+  assert.deepEqual(ctx.tca2AuditRecords, authoritative.tca2AuditRecords, 'fresh React context TCA2 audit matches authoritative audit');
+  assert.equal(renderedAudits, JSON.stringify(authoritative.tca2AuditRecords), 'mounted React DOM TCA2 audit matches authoritative audit');
+  assert.equal(container.querySelector('#job-count')?.textContent, String(authoritative.jobs.length));
+  assert.equal(container.querySelector('#persona-badge')?.textContent, ctx.persona);
+}
+
+function jobIdentity(job: Job) {
+  const { id, brandId, customerId, siteAddress, siteContact, sitePhone } = job;
+  return { id, brandId, customerId, siteAddress, siteContact, sitePhone };
+}
+
+// Capture expectations before any journey runs; reading a polluted seed later would mask a leak.
+const originalCctvIdentity = jobIdentity(INITIAL_JOBS.find(job => job.id === 'JOB-2026-104')!);
+
+async function isolatedOperationalJob(ctx: ReturnType<typeof useCabms>, jobId: string): Promise<Job> {
+  const job = ctx.getAuthoritativeState().jobs.find(job => job.id === jobId)!;
+  // The public status transition clones the job. Detach before changing test-only operational fields.
+  await act(async () => { ctx.updateJobStatus(jobId, job.status); });
+  const isolated = ctx.getAuthoritativeState().jobs.find(job => job.id === jobId)!;
+  assert.notEqual(isolated, INITIAL_JOBS.find(job => job.id === jobId), 'test fixture must not alias the shared seed');
+  return isolated;
+}
+
+function assertOriginalCctvIdentity(ctx: ReturnType<typeof useCabms>) {
+  assert.deepEqual(jobIdentity(ctx.getAuthoritativeState().jobs.find(job => job.id === 'JOB-2026-104')!), originalCctvIdentity);
+  assert.deepEqual(jobIdentity(INITIAL_JOBS.find(job => job.id === 'JOB-2026-104')!), originalCctvIdentity);
+  const snapshot = JSON.parse(ctx.getOrCreateJsa('JOB-2026-104').fullSnapshot!);
+  assert.equal(snapshot.jobReference, originalCctvIdentity.id);
+  assert.equal(snapshot.siteAddress, originalCctvIdentity.siteAddress);
+  assert.equal(snapshot.customerName, originalCctvIdentity.siteContact);
+  assert.equal(snapshot.siteContactPlaceholder, `${originalCctvIdentity.siteContact} (${originalCctvIdentity.sitePhone})`);
 }
 
 // Synchronous helper for legacy journey calls
@@ -1035,7 +1096,7 @@ test('LAYER 6: Integration — Journey L: Technician session cannot trigger, res
       triggerRes = ctx.triggerReviewRequest(targetJobId);
     });
     assert.equal(triggerRes.success, false);
-    assert.ok(triggerRes.message.includes('Technician'));
+    assert.ok(triggerRes.message.includes('authorized session'));
 
     // Switch back to owner_admin to queue review
     await act(async () => {
@@ -1061,42 +1122,220 @@ test('LAYER 6: Integration — Journey L: Technician session cannot trigger, res
 });
 
 // -------------------------------------------------------------
-// JOURNEY M: Strict Signed Certificate Snapshot Validation & Rejection
+// JOURNEY M: Real signed form delivery and invalid snapshot rejection
 // -------------------------------------------------------------
-test('LAYER 6: Integration — Journey M: Certificate delivery rejects missing or corrupt snapshots without creating delivery records', async () => {
+test('LAYER 6: Integration — Journey M: real signed seeds and newly signed forms deliver through the validated action', async () => {
   await withMountedContext(async (ctx) => {
     await act(async () => {
       ctx.resetDemo();
       ctx.simulateSignIn('owner_admin');
     });
 
-    const targetJobId = 'JOB-2026-101';
+    const seededForms: [string, string][] = [
+      ['JOB-2026-103', 'JSA'],
+      ['JOB-2026-104', 'JSA'],
+      ['JOB-2026-103', 'ELECTRICAL'],
+      ['JOB-2026-101', 'SMOKE_ALARM'],
+      ['JOB-2026-104', 'TCA1'],
+      ['JOB-2026-104', 'TCA2'],
+    ];
+    const electricalJsaSnapshot = JSON.parse(ctx.getOrCreateJsa('JOB-2026-103').fullSnapshot!);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-103').licencePlaceholder, INITIAL_BRANDS.solarcell.electricalLicencePlaceholder);
+    assert.equal(electricalJsaSnapshot.licencePlaceholder, INITIAL_BRANDS.solarcell.electricalLicencePlaceholder);
+    assert.equal(electricalJsaSnapshot.customerName, 'Elena Rossi');
+    assert.equal(electricalJsaSnapshot.siteAddress, INITIAL_JOBS.find(job => job.id === 'JOB-2026-103')?.siteAddress);
+    assert.ok(electricalJsaSnapshot.steps[0].taskStep.includes('three-phase inverter'));
 
-    // Attempt sending certificate email on unsigned form
-    let deliveryRes: any;
+    const cctvJsaSnapshot = JSON.parse(ctx.getOrCreateJsa('JOB-2026-104').fullSnapshot!);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-104').licencePlaceholder, INITIAL_BRANDS.cctv.acmaCablerPlaceholder);
+    assert.equal(cctvJsaSnapshot.licencePlaceholder, INITIAL_BRANDS.cctv.acmaCablerPlaceholder);
+    assert.equal(cctvJsaSnapshot.customerName, 'Marcus Vance');
+    assert.equal(cctvJsaSnapshot.siteAddress, INITIAL_JOBS.find(job => job.id === 'JOB-2026-104')?.siteAddress);
+    assert.ok(cctvJsaSnapshot.frozenIssuerSnapshot.includes(INITIAL_BRANDS.cctv.legalIssuerName));
+    assert.ok(cctvJsaSnapshot.steps[0].taskStep.includes('camera work areas'));
+    assert.equal(cctvJsaSnapshot.steps.some((step: any) => step.taskStep.includes('Rooftop Access')), false);
+
+    for (const [jobId, formType] of seededForms) {
+      let result: any;
+      await act(async () => {
+        result = ctx.sendCertificateEmail(jobId, formType);
+      });
+      assert.equal(result.success, true, `${formType} seed delivery should succeed: ${result.message}`);
+    }
+    assert.equal(ctx.certificateDeliveries.length, 6);
+    for (const [jobId, formType] of seededForms) {
+      const delivery = ctx.certificateDeliveries.find(record => record.jobId === jobId && record.formType === formType);
+      assert.ok(delivery?.fullFrozenDocumentSnapshot, `${formType} delivery should preserve the exact signed snapshot`);
+      assert.equal(validateSignedSnapshot(delivery!.fullFrozenDocumentSnapshot, jobId, formType).valid, true);
+    }
+
     await act(async () => {
-      deliveryRes = ctx.sendCertificateEmail(targetJobId, 'ELECTRICAL');
+      ctx.signOffJsa('JOB-2026-101');
+      ctx.signOffElectrical('JOB-2026-101');
+      ctx.signOffSmokeAlarm('JOB-2026-102');
+      ctx.signOffTca1('JOB-2026-102');
+      ctx.signOffTca2('JOB-2026-101');
     });
-    assert.equal(deliveryRes.success, false);
-    assert.equal(ctx.certificateDeliveries.length, 0);
 
-    // Verify validateSignedSnapshot directly
-    const nullVal = validateSignedSnapshot(undefined, targetJobId, 'ELECTRICAL');
-    assert.equal(nullVal.valid, false);
+    const newlySignedForms: [string, string][] = [
+      ['JOB-2026-101', 'JSA'],
+      ['JOB-2026-101', 'ELECTRICAL'],
+      ['JOB-2026-102', 'SMOKE_ALARM'],
+      ['JOB-2026-102', 'TCA1'],
+      ['JOB-2026-101', 'TCA2'],
+    ];
+    for (const [jobId, formType] of newlySignedForms) {
+      let result: any;
+      await act(async () => {
+        result = ctx.sendCertificateEmail(jobId, formType);
+      });
+      assert.equal(result.success, true, `new ${formType} sign-off delivery should succeed: ${result.message}`);
+    }
+    assert.equal(ctx.certificateDeliveries.length, 11);
+  });
+});
 
-    const corruptVal = validateSignedSnapshot('{ bad json }', targetJobId, 'ELECTRICAL');
-    assert.equal(corruptVal.valid, false);
-
-    const validSnapshotStr = JSON.stringify({
-      jobReference: targetJobId,
-      certificateNumber: 'ELEC-9910',
-      signedOff: true,
-      signedTimestamp: '2026-11-02 10:00',
-      signer: 'Dave Miller',
-      frozenIssuerSnapshot: 'Solarcell Pty Ltd',
+test('LAYER 6: Integration — Journey M rejects invalid signed snapshots without creating delivery records', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+      ctx.simulateSignIn('owner_admin');
     });
-    const validVal = validateSignedSnapshot(validSnapshotStr, targetJobId, 'ELECTRICAL');
-    assert.equal(validVal.valid, true);
+
+    const targetJobId = 'JOB-2026-103';
+    const signedElectrical = ctx.getOrCreateElectrical(targetJobId);
+    const validSnapshot = JSON.parse(signedElectrical.fullSnapshot!);
+    const invalidSnapshots: [string | undefined, string][] = [
+      [undefined, 'missing snapshot'],
+      ['{ bad json }', 'malformed JSON'],
+      [JSON.stringify({ ...validSnapshot, testedWorkItems: undefined }), 'structurally incomplete snapshot'],
+      [JSON.stringify({ ...validSnapshot, jobReference: 'JOB-OTHER' }), 'mismatched job reference'],
+    ];
+
+    for (const [snapshot, reason] of invalidSnapshots) {
+      (signedElectrical as any).fullSnapshot = snapshot;
+      let result: any;
+      await act(async () => {
+        result = ctx.sendCertificateEmail(targetJobId, 'ELECTRICAL');
+      });
+      assert.equal(result.success, false, `${reason} must be rejected`);
+      assert.equal(ctx.certificateDeliveries.length, 0, `${reason} must not create a delivery record`);
+    }
+  });
+});
+
+test('LAYER 6: Integration — signed print preview separates frozen form details from current job and brand settings', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => {
+      ctx.resetDemo();
+      ctx.setSelectedJobId('JOB-2026-104');
+    });
+
+    const seededJsa = ctx.getOrCreateJsa('JOB-2026-104');
+    const originalSite = seededJsa.siteAddress;
+    const originalContact = seededJsa.siteContactPlaceholder;
+    const originalIssuer = seededJsa.frozenIssuerSnapshot!;
+    const originalSnapshot = seededJsa.fullSnapshot;
+    const liveJob = await isolatedOperationalJob(ctx, 'JOB-2026-104');
+
+    await act(async () => {
+      liveJob.siteAddress = 'Changed current operational site address';
+      liveJob.siteContact = 'Changed Current Contact';
+      liveJob.sitePhone = '0400 999 999';
+      ctx.updateJobStatus(liveJob.id, liveJob.status);
+      ctx.updateBrandConfig({
+        ...ctx.brands.cctv,
+        legalIssuerName: 'Changed Current Brand Issuer',
+        electricalLicencePlaceholder: 'CURRENT-LICENCE-SHOULD-NOT-PRINT',
+      });
+    });
+
+    const printButton = Array.from(container.querySelectorAll('button'))
+      .find(button => button.textContent?.includes('Branded Print / PDF Preview'));
+    assert.ok(printButton, 'print preview action is mounted');
+    await act(async () => {
+      printButton!.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true }));
+    });
+
+    const preview = Array.from(container.querySelectorAll('div'))
+      .find(element => element.className.includes('fixed') && element.textContent?.includes('Compliance Document Print Preview'));
+    assert.ok(preview, 'print preview modal is mounted');
+    const previewText = preview!.textContent || '';
+    assert.ok(previewText.includes('Document Job Reference: JOB-2026-104'));
+    assert.ok(previewText.includes('Document Date: 2026-11-02'));
+    assert.ok(previewText.includes(originalIssuer.split(' • ')[0]), 'issuer entity is read from the signed snapshot');
+    assert.ok(previewText.includes(originalIssuer.split(' • ')[1]), 'issuer ABN is read from the signed snapshot');
+    assert.ok(previewText.includes(originalSite), 'certified site address remains frozen');
+    assert.ok(previewText.includes(originalContact), 'certified customer contact remains frozen');
+    assert.ok(previewText.includes('Current operational job details — not part of the frozen signed document'));
+    assert.ok(previewText.includes('Changed current operational site address'));
+    assert.ok(previewText.includes('Changed Current Contact (0400 999 999)'));
+    assert.equal(previewText.includes('Changed Current Brand Issuer'), false);
+    assert.equal(previewText.includes('CURRENT-LICENCE-SHOULD-NOT-PRINT'), false);
+    assert.equal(ctx.getOrCreateJsa(liveJob.id).fullSnapshot, originalSnapshot, 'operational changes must not rewrite signed history');
+    assert.deepEqual(jobIdentity(INITIAL_JOBS.find(job => job.id === liveJob.id)!), originalCctvIdentity);
+  }, true);
+
+  await withMountedContext(async (ctx) => {
+    assertOriginalCctvIdentity(ctx);
+    await act(async () => { ctx.resetDemo(); });
+    assertOriginalCctvIdentity(ctx);
+  });
+});
+
+test('LAYER 6: Addendum A — failed print-history assertions cannot contaminate resets or fresh providers', async () => {
+  const simulatedFailure = new assert.AssertionError({ message: 'Intentional print-history assertion failure' });
+  await withMountedContext(async (ctx, container) => {
+    const snapshot = ctx.getOrCreateJsa('JOB-2026-104').fullSnapshot;
+    await assert.rejects(async () => {
+      const isolated = await isolatedOperationalJob(ctx, 'JOB-2026-104');
+      await act(async () => {
+        isolated.siteAddress = 'Isolated failed-test address';
+        isolated.siteContact = 'Isolated failed-test contact';
+        isolated.sitePhone = '0400 999 123';
+        ctx.updateJobStatus(isolated.id, isolated.status);
+      });
+      throw simulatedFailure;
+    }, error => error === simulatedFailure);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-104').fullSnapshot, snapshot);
+    await act(async () => { ctx.resetDemo(); });
+    assertOriginalCctvIdentity(ctx);
+    assertMountedStateMatchesAuthoritative(ctx, container);
+  });
+
+  // Exercise the runner's finally/unmount path too; even a failing journey cannot pollute another provider.
+  await assert.rejects(withMountedContext(async (ctx) => {
+    const isolated = await isolatedOperationalJob(ctx, 'JOB-2026-104');
+    isolated.siteAddress = 'Isolated unmounted-test address';
+    isolated.siteContact = 'Isolated unmounted-test contact';
+    isolated.sitePhone = '0400 999 456';
+    throw simulatedFailure;
+  }), error => error === simulatedFailure);
+  await withMountedContext(async (ctx) => {
+    assertOriginalCctvIdentity(ctx);
+    await act(async () => { ctx.resetDemo(); });
+    assertOriginalCctvIdentity(ctx);
+  });
+});
+
+test('LAYER 6: Addendum A — role-specific seed credentials stay frozen after brand settings change', async () => {
+  await withMountedContext(async (ctx) => {
+    const cctv = ctx.getOrCreateJsa('JOB-2026-104');
+    const electrical = ctx.getOrCreateJsa('JOB-2026-103');
+    const cctvSnapshot = cctv.fullSnapshot;
+    const electricalSnapshot = electrical.fullSnapshot;
+    assert.equal(cctv.licencePlaceholder, INITIAL_BRANDS.cctv.acmaCablerPlaceholder);
+    assert.equal(JSON.parse(cctvSnapshot!).licencePlaceholder, INITIAL_BRANDS.cctv.acmaCablerPlaceholder);
+    assert.equal(electrical.licencePlaceholder, INITIAL_BRANDS.solarcell.electricalLicencePlaceholder);
+    assert.equal(JSON.parse(electricalSnapshot!).licencePlaceholder, INITIAL_BRANDS.solarcell.electricalLicencePlaceholder);
+    await act(async () => {
+      ctx.updateBrandConfig({ ...ctx.brands.cctv, acmaCablerPlaceholder: 'CHANGED-CURRENT-CABLER' });
+      ctx.updateBrandConfig({ ...ctx.brands.solarcell, electricalLicencePlaceholder: 'CHANGED-CURRENT-ELECTRICAL' });
+    });
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-104').fullSnapshot, cctvSnapshot);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-103').fullSnapshot, electricalSnapshot);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-104').licencePlaceholder, cctv.licencePlaceholder);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-103').licencePlaceholder, electrical.licencePlaceholder);
   });
 });
 
@@ -1111,14 +1350,20 @@ test('LAYER 6: Integration — Journey N: Clock advancement auto-resolves pendin
     });
 
     const targetJobId = 'JOB-2026-101';
+    const failedJobId = 'JOB-2026-102';
+    const uncertainJobId = 'JOB-2026-103';
 
-    // Queue a review
+    // Queue all supported simulated outcomes; virtual-clock processing must preserve them.
     await act(async () => {
       ctx.triggerReviewRequest(targetJobId);
+      ctx.triggerReviewRequest(failedJobId, 'FAIL');
+      ctx.triggerReviewRequest(uncertainJobId, 'UNCERTAIN');
     });
 
     const pendingJob = ctx.getAuthoritativeState().jobs.find(j => j.id === targetJobId)!;
     assert.equal(pendingJob.reviewRequest.status, 'PENDING');
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === failedJobId)!.reviewRequest.status, 'PENDING');
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === uncertainJobId)!.reviewRequest.status, 'PENDING');
 
     // Advance clock by 24 hours
     await act(async () => {
@@ -1129,6 +1374,12 @@ test('LAYER 6: Integration — Journey N: Clock advancement auto-resolves pendin
     const resolvedJob = authState.jobs.find(j => j.id === targetJobId)!;
     assert.equal(resolvedJob.reviewRequest.status, 'SENT');
     assert.ok(resolvedJob.reviewRequest.history.some((h: any) => h.event.includes('virtual clock advance')));
+    const failedJob = authState.jobs.find(j => j.id === failedJobId)!;
+    assert.equal(failedJob.reviewRequest.status, 'FAILED');
+    assert.equal(failedJob.reviewRequest.uncertainReconciliationNeeded, false);
+    const uncertainJob = authState.jobs.find(j => j.id === uncertainJobId)!;
+    assert.equal(uncertainJob.reviewRequest.status, 'UNCERTAIN');
+    assert.equal(uncertainJob.reviewRequest.uncertainReconciliationNeeded, true);
 
     // Reset demo and verify clean restoration
     await act(async () => {
@@ -1137,5 +1388,431 @@ test('LAYER 6: Integration — Journey N: Clock advancement auto-resolves pendin
 
     const resetState = ctx.getAuthoritativeState();
     assert.equal(resetState.jobs.find(j => j.id === targetJobId)!.reviewRequest.status, 'NOT_SENT');
+  });
+});
+
+test('LAYER 6: Integration — mounted React jobs and TCA2 audit stay aligned with authoritative state after transitions', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => {
+      ctx.resetDemo();
+      ctx.simulateSignIn('owner_admin');
+    });
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    await act(async () => {
+      ctx.updateJobStatus('JOB-2026-102', 'IN_PROGRESS');
+    });
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    let createdJob!: Job;
+    await act(async () => {
+      createdJob = ctx.createJob({
+        brandId: 'solarcell',
+        jobType: 'Commercial Solar PV Installation',
+        title: 'Mounted state assertion job',
+        siteAddress: 'Synthetic address for mounted state verification',
+        siteContact: 'Test Customer',
+      });
+    });
+    assert.equal(ctx.getAuthoritativeState().jobs[0].id, createdJob.id);
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    await act(async () => {
+      ctx.signOffJsa('JOB-2026-101');
+    });
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    let completionResult: any;
+    await act(async () => {
+      completionResult = ctx.attemptCompleteJob('JOB-2026-101');
+    });
+    assert.equal(completionResult.canComplete, true);
+    assert.equal(ctx.getAuthoritativeState().jobs.find(job => job.id === 'JOB-2026-101')?.status, 'COMPLETED');
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    await act(async () => {
+      ctx.signOffTca2('JOB-2026-101');
+    });
+    const initializedAudit = ctx.getAuthoritativeState().tca2AuditRecords['JOB-2026-101'];
+    assert.deepEqual(initializedAudit, {
+      jobId: 'JOB-2026-101',
+      customerAcknowledged: false,
+      officeReviewCompleted: false,
+    });
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    await act(async () => {
+      ctx.customerAckTca2('JOB-2026-101');
+    });
+    assert.equal(ctx.getAuthoritativeState().tca2AuditRecords['JOB-2026-101'].customerAcknowledged, true);
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    await act(async () => {
+      ctx.officeReviewTca2('JOB-2026-101');
+    });
+    const reviewedAudit = ctx.getAuthoritativeState().tca2AuditRecords['JOB-2026-101'];
+    assert.equal(reviewedAudit.officeReviewCompleted, true);
+    assert.ok(reviewedAudit.rectificationFollowupJobId);
+    assert.ok(ctx.getAuthoritativeState().jobs.some(job => job.id === reviewedAudit.rectificationFollowupJobId));
+    assertMountedStateMatchesAuthoritative(ctx, container);
+
+    const jobCountAfterReview = ctx.getAuthoritativeState().jobs.length;
+    await act(async () => {
+      ctx.officeReviewTca2('JOB-2026-101');
+    });
+    assert.equal(ctx.getAuthoritativeState().jobs.length, jobCountAfterReview, 'repeated TCA2 review does not add a duplicate follow-up');
+    assertMountedStateMatchesAuthoritative(ctx, container);
+  });
+});
+
+test('LAYER 6: CP-01 — retained actions require a live session for every privileged persona', async () => {
+  for (const role of ['super_admin', 'owner_admin', 'office_staff'] as Persona[]) {
+    await withMountedContext(async (ctx, container) => {
+      await act(async () => {
+        ctx.simulateSignIn(role);
+        ctx.triggerReviewRequest('JOB-2026-101');
+        ctx.triggerReviewRequest('JOB-2026-102', 'FAIL');
+        ctx.resolvePendingReview('JOB-2026-102');
+        ctx.triggerReviewRequest('JOB-2026-103', 'UNCERTAIN');
+        ctx.resolvePendingReview('JOB-2026-103');
+      });
+      // Retain actual function references from the signed-in render, not the fresh-context proxy.
+      const retained = {
+        trigger: ctx.triggerReviewRequest, resolve: ctx.resolvePendingReview,
+        all: ctx.resolveAllPendingReviews, retry: ctx.retryReviewRequest,
+        reconcile: ctx.reconcileReviewRequest,
+      };
+      const before = structuredClone(ctx.getAuthoritativeState());
+      await act(async () => {
+        ctx.simulateSignOut();
+        assert.equal(retained.trigger('JOB-2026-104').success, false);
+        // A forged role argument must not restore permission.
+        assert.equal((retained.resolve as any)('JOB-2026-101', 'SENT', 'super_admin').success, false);
+        retained.all();
+        assert.equal(retained.retry('JOB-2026-102').success, false);
+        retained.reconcile('JOB-2026-103', 'SENT');
+        ctx.setPersona('super_admin');
+        assert.equal(retained.trigger('JOB-2026-104').success, false);
+        assert.equal(retained.resolve('JOB-2026-101').success, false);
+        retained.all();
+        retained.retry('JOB-2026-102');
+        retained.reconcile('JOB-2026-103');
+      });
+      assert.equal(ctx.isSimulatedSignedIn, false);
+      assert.deepEqual(ctx.getAuthoritativeState(), before, 'signed-out calls preserve jobs, histories and audits');
+      assert.equal(ctx.pendingReviewCount, 1);
+      assertMountedStateMatchesAuthoritative(ctx, container);
+      await act(async () => {
+        ctx.simulateSignIn('technician');
+        assert.equal(retained.trigger('JOB-2026-104').success, false);
+        assert.equal(retained.resolve('JOB-2026-101').success, false);
+        retained.all();
+        retained.retry('JOB-2026-102');
+        retained.reconcile('JOB-2026-103');
+      });
+      assert.deepEqual(ctx.getAuthoritativeState(), before);
+      await act(async () => {
+        ctx.simulateSignIn('office_staff');
+        assert.equal(retained.resolve('JOB-2026-101').success, true);
+        assert.equal(retained.retry('JOB-2026-102').success, true);
+        retained.reconcile('JOB-2026-103', 'SENT');
+        assert.equal(retained.trigger('JOB-2026-104').success, true);
+        retained.all();
+      });
+      for (const id of ['101', '102', '103', '104']) {
+        assert.equal(ctx.jobs.find(job => job.id === `JOB-2026-${id}`)?.reviewRequest.status, 'SENT');
+      }
+      assertMountedStateMatchesAuthoritative(ctx, container);
+    });
+  }
+});
+
+test('LAYER 6: CP-01 — queued clock events resolve as the system while signed out', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => {
+      ctx.triggerReviewRequest('JOB-2026-101', 'UNCERTAIN');
+      ctx.simulateSignOut();
+    });
+    await act(async () => { ctx.advanceClock(1); });
+    const job = ctx.jobs.find(job => job.id === 'JOB-2026-101')!;
+    assert.equal(ctx.isSimulatedSignedIn, false);
+    assert.equal(job.reviewRequest.status, 'UNCERTAIN');
+    assert.equal(job.activityHistory.at(-1)?.actor, 'Automated System Clock');
+    assertMountedStateMatchesAuthoritative(ctx, container);
+  });
+});
+
+test('LAYER 6: Wave A — signed JSA, Electrical, and Smoke row controls preserve live records and frozen snapshots', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => { ctx.resetDemo(); ctx.setSelectedJobId('JOB-2026-103'); });
+
+    const jsaBefore = structuredClone(ctx.getOrCreateJsa('JOB-2026-103'));
+    const jsaSnapshot = jsaBefore.fullSnapshot!;
+    const risk = container.querySelector<HTMLSelectElement>('tbody select')!;
+    assert.equal(risk.disabled, true, 'signed JSA row controls are disabled');
+    risk.value = risk.value === 'H' ? 'L' : 'H';
+    await act(async () => { risk.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+    await act(async () => {
+      ctx.updateJsaForm('JOB-2026-103', { steps: jsaBefore.steps.map((step, index) => index === 0 ? { ...step, initialRisk: 'L' } : step) });
+    });
+    assert.deepEqual(ctx.getOrCreateJsa('JOB-2026-103'), jsaBefore);
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-103').fullSnapshot, jsaSnapshot);
+
+    await clickButton(container, 'Electrical Cert (Part A)');
+    const electricalBefore = structuredClone(ctx.getOrCreateElectrical('JOB-2026-103'));
+    const electricalSnapshot = electricalBefore.fullSnapshot!;
+    const polarityLabel = Array.from(container.querySelectorAll('label')).find(label => label.textContent === 'Polarity')!;
+    const polarity = polarityLabel.parentElement!.querySelector<HTMLSelectElement>('select')!;
+    assert.equal(polarity.disabled, true, 'signed Electrical row controls are disabled');
+    polarity.value = polarity.value === 'Pass' ? 'Fail' : 'Pass';
+    await act(async () => { polarity.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+    await act(async () => {
+      ctx.updateElectricalForm('JOB-2026-103', {
+        testedWorkItems: electricalBefore.testedWorkItems.map((item, index) => index === 0 ? { ...item, polarityTest: 'Fail' } : item),
+      });
+    });
+    assert.deepEqual(ctx.getOrCreateElectrical('JOB-2026-103'), electricalBefore);
+    assert.equal(ctx.getOrCreateElectrical('JOB-2026-103').fullSnapshot, electricalSnapshot);
+
+    await act(async () => { ctx.setSelectedJobId('JOB-2026-101'); });
+    await clickButton(container, 'Smoke Alarm Cert');
+    const smokeBefore = structuredClone(ctx.getOrCreateSmokeAlarm('JOB-2026-101'));
+    const smokeSnapshot = smokeBefore.fullSnapshot!;
+    const interconnection = container.querySelector<HTMLButtonElement>('tbody button')!;
+    assert.equal(interconnection.disabled, true, 'signed Smoke row controls are disabled');
+    await act(async () => { interconnection.click(); });
+    await act(async () => {
+      ctx.updateSmokeAlarmForm('JOB-2026-101', {
+        alarmSchedule: smokeBefore.alarmSchedule.map((alarm, index) => index === 0 ? { ...alarm, interconnectionPass: !alarm.interconnectionPass } : alarm),
+      });
+    });
+    assert.deepEqual(ctx.getOrCreateSmokeAlarm('JOB-2026-101'), smokeBefore);
+    assert.equal(ctx.getOrCreateSmokeAlarm('JOB-2026-101').fullSnapshot, smokeSnapshot);
+  }, true);
+});
+
+test('LAYER 6: Wave A — unsigned row edits remain immutable and add/delete/add keeps JSA and Smoke IDs unique', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => { ctx.resetDemo(); ctx.setSelectedJobId('JOB-2026-102'); });
+
+    const jsaInitial = ctx.getOrCreateJsa('JOB-2026-102');
+    assert.equal(jsaInitial.signedOff, false);
+    const initialRisk = container.querySelector<HTMLSelectElement>('tbody select')!;
+    const originalTaskRow = jsaInitial.steps[0];
+    assert.equal(initialRisk.disabled, false);
+    initialRisk.value = initialRisk.value === 'H' ? 'L' : 'H';
+    await act(async () => { initialRisk.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+    const jsaEdited = ctx.getOrCreateJsa('JOB-2026-102');
+    assert.notEqual(jsaEdited.steps[0].initialRisk, originalTaskRow.initialRisk);
+    assert.notEqual(jsaEdited.steps[0], originalTaskRow, 'row update replaces the nested object');
+    assert.equal(originalTaskRow.initialRisk, jsaInitial.steps[0].initialRisk, 'old row reference remains untouched');
+
+    await clickButton(container, 'Add Task Step');
+    await clickButton(container, 'Add Task Step');
+    const firstJsaRow = container.querySelector<HTMLTableRowElement>('tbody tr')!;
+    await act(async () => { firstJsaRow.querySelector<HTMLButtonElement>('button')!.click(); });
+    await clickButton(container, 'Add Task Step');
+    const jsaIds = ctx.getOrCreateJsa('JOB-2026-102').steps.map(step => step.id);
+    assert.equal(new Set(jsaIds).size, jsaIds.length, 'JSA identifiers remain unique after add/delete/add');
+
+    await clickButton(container, 'Electrical Cert (Part A)');
+    const electricalInitial = ctx.getOrCreateElectrical('JOB-2026-102');
+    const originalElectricalRow = electricalInitial.testedWorkItems[0];
+    const polarityLabel = Array.from(container.querySelectorAll('label')).find(label => label.textContent === 'Polarity')!;
+    const polarity = polarityLabel.parentElement!.querySelector<HTMLSelectElement>('select')!;
+    const polarityBefore = originalElectricalRow.polarityTest;
+    polarity.value = polarityBefore === 'Pass' ? 'Fail' : 'Pass';
+    await act(async () => { polarity.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+    const electricalEdited = ctx.getOrCreateElectrical('JOB-2026-102');
+    assert.notEqual(electricalEdited.testedWorkItems[0].polarityTest, polarityBefore);
+    assert.notEqual(electricalEdited.testedWorkItems[0], originalElectricalRow);
+
+    await clickButton(container, 'Smoke Alarm Cert');
+    const smokeInitial = ctx.getOrCreateSmokeAlarm('JOB-2026-102');
+    assert.equal(smokeInitial.signedOff, false);
+    const originalSmokeRow = smokeInitial.alarmSchedule[0];
+    const interconnection = container.querySelector<HTMLButtonElement>('tbody button')!;
+    await act(async () => { interconnection.click(); });
+    const smokeEdited = ctx.getOrCreateSmokeAlarm('JOB-2026-102');
+    assert.equal(smokeEdited.alarmSchedule[0].interconnectionPass, !originalSmokeRow.interconnectionPass);
+    assert.notEqual(smokeEdited.alarmSchedule[0], originalSmokeRow);
+
+    await clickButton(container, 'Add Alarm Location');
+    await clickButton(container, 'Add Alarm Location');
+    const firstAlarmRow = container.querySelector<HTMLTableRowElement>('tbody tr')!;
+    await act(async () => { firstAlarmRow.querySelector<HTMLButtonElement>('button:last-child')!.click(); });
+    await clickButton(container, 'Add Alarm Location');
+    const alarmIds = ctx.getOrCreateSmokeAlarm('JOB-2026-102').alarmSchedule.map(alarm => alarm.id);
+    assert.equal(new Set(alarmIds).size, alarmIds.length, 'Smoke identifiers remain unique after add/delete/add');
+  }, true);
+});
+
+test('LAYER 6: Wave A — brand-bound job types, assigned-unscheduled work orders, and enquiry customer resolution', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    const cases = [
+      { brandId: 'solarcell' as const, typeId: 'JT-001', forms: ['JSA', 'ELECTRICAL'] },
+      { brandId: 'smart_home' as const, typeId: 'JT-002', forms: ['JSA', 'SMOKE_ALARM'] },
+      { brandId: 'cctv' as const, typeId: 'JT-003', forms: ['JSA', 'TCA1', 'TCA2'] },
+    ];
+    const created: Job[] = [];
+    for (const entry of cases) {
+      let job!: Job;
+      await act(async () => {
+        job = ctx.createJob({ brandId: entry.brandId, jobType: entry.typeId, title: `Wave A ${entry.brandId}`, assignedTechId: 'TECH-001' });
+      });
+      created.push(job);
+      assert.equal(job.brandId, entry.brandId);
+      assert.equal(job.status, 'NEW');
+      assert.equal(job.appointmentStatus, 'UNSCHEDULED');
+      assert.equal(job.scheduledDate, null);
+      assert.equal(job.scheduledTime, null);
+      assert.equal(job.assignedTechId, 'TECH-001');
+      assert.deepEqual(job.formsRequired, entry.forms);
+    }
+    const countBeforeInvalidType = ctx.getAuthoritativeState().jobs.length;
+    assert.throws(() => ctx.createJob({ brandId: 'cctv', jobType: 'JT-001', title: 'Must be rejected' }), /belongs to/);
+    assert.equal(ctx.getAuthoritativeState().jobs.length, countBeforeInvalidType, 'cross-business type rejection creates no job');
+
+    const enquiry = ctx.websiteEnquiries.find(item => item.id === 'ENQ-2026-302')!;
+    const customerDraft = {
+      name: enquiry.customerName,
+      contactPerson: enquiry.customerName,
+      email: enquiry.email,
+      phone: enquiry.phone,
+      billingAddress: enquiry.address,
+      brandAffiliations: [enquiry.brandId],
+      notes: 'Wave A duplicate-resolution fixture',
+    };
+    const jobsBeforeWrongType = ctx.getAuthoritativeState().jobs.length;
+    const customersBeforeWrongType = ctx.customers.length;
+    let rejectedConversion!: { customerId: string; jobId: string };
+    await act(async () => { rejectedConversion = ctx.convertEnquiryToJob(enquiry.id, undefined, 'JT-001'); });
+    assert.deepEqual(rejectedConversion, { customerId: '', jobId: '' });
+    assert.equal(ctx.getAuthoritativeState().jobs.length, jobsBeforeWrongType);
+    assert.equal(ctx.customers.length, customersBeforeWrongType, 'invalid type is rejected before customer creation');
+
+    let unresolvedConversion!: { customerId: string; jobId: string };
+    await act(async () => { unresolvedConversion = ctx.convertEnquiryToJob(enquiry.id, 'CUSTOMER-NOT-FOUND', 'JT-003'); });
+    assert.deepEqual(unresolvedConversion, { customerId: '', jobId: '' }, 'conversion refuses to link an unresolved customer identity');
+    assert.equal(ctx.getAuthoritativeState().jobs.length, jobsBeforeWrongType);
+    assert.equal(ctx.customers.length, customersBeforeWrongType, 'unresolved customer rejection has no side effects');
+
+    let written: any;
+    await act(async () => { written = ctx.simulateCustomerWriteThrough(customerDraft); });
+    assert.equal(written.success, true);
+    await act(async () => {});
+    let conversion!: { customerId: string; jobId: string };
+    await act(async () => { conversion = ctx.convertEnquiryToJob(enquiry.id, undefined, 'JT-003'); });
+    const linkedJob = ctx.getAuthoritativeState().jobs.find(job => job.id === conversion.jobId)!;
+    assert.equal(conversion.customerId, written.customer.id, 'duplicate result links its matched customer');
+    assert.equal(linkedJob.customerId, written.customer.id);
+    assert.equal(linkedJob.brandId, 'cctv');
+    assert.equal(linkedJob.jobType, 'Enterprise CCTV & Cabling Inspection');
+    assert.deepEqual(linkedJob.formsRequired, ['JSA', 'TCA1', 'TCA2']);
+  });
+
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    const enquiry = ctx.websiteEnquiries.find(item => item.id === 'ENQ-2026-302')!;
+    const pendingCustomer = {
+      name: enquiry.customerName,
+      contactPerson: enquiry.customerName,
+      email: enquiry.email,
+      phone: enquiry.phone,
+      billingAddress: enquiry.address,
+      brandAffiliations: [enquiry.brandId],
+      notes: 'Offline draft resolution fixture',
+    };
+    let offlineResult: any;
+    await act(async () => { offlineResult = ctx.simulateCustomerWriteThrough(pendingCustomer, 'FAILURE'); });
+    assert.equal(offlineResult.success, false);
+    assert.equal(offlineResult.customer.syncStatus, 'FAILED');
+    await act(async () => {});
+    let conversion!: { customerId: string; jobId: string; unresolvedWarning?: string };
+    await act(async () => { conversion = ctx.convertEnquiryToJob(enquiry.id, undefined, 'JT-003'); });
+    const linkedJob = ctx.getAuthoritativeState().jobs.find(job => job.id === conversion.jobId)!;
+    assert.equal(conversion.customerId, offlineResult.customer.id);
+    assert.equal(linkedJob.customerId, offlineResult.customer.id);
+    assert.ok(linkedJob.unresolvedWarnings.some(warning => warning.includes('pending MYOB reconciliation')));
+  });
+});
+
+test('LAYER 6: Wave A — job creation UI filters type choices by active business and does not invent appointment data', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => { ctx.resetDemo(); });
+    for (const [brandId, expectedType] of [['solarcell', 'JT-001'], ['smart_home', 'JT-002'], ['cctv', 'JT-003']] as const) {
+      await act(async () => { ctx.setActiveBrandId(brandId); });
+      await clickButton(container, 'Create New Job');
+      const form = container.querySelector<HTMLFormElement>('form')!;
+      const jobTypeSelect = form.querySelector<HTMLSelectElement>('select')!;
+      const expectedTypes = ctx.jobTypes.filter(jobType => jobType.brandId === brandId).map(jobType => jobType.id);
+      assert.deepEqual(Array.from(jobTypeSelect.options).map(option => option.value), expectedTypes);
+      assert.equal(jobTypeSelect.value, expectedType, 'brand switch chooses an in-brand default');
+
+      if (brandId === 'cctv') {
+        const jobsBefore = ctx.getAuthoritativeState().jobs;
+        const idsBefore = new Set(jobsBefore.map(job => job.id));
+        jobTypeSelect.value = expectedType;
+        await act(async () => {
+          jobTypeSelect.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+        });
+        await act(async () => { form.dispatchEvent(new dom.window.Event('submit', { bubbles: true, cancelable: true })); });
+        const created = ctx.getAuthoritativeState().jobs.find(job => !idsBefore.has(job.id));
+        assert.equal(ctx.getAuthoritativeState().jobs.length, jobsBefore.length + 1, 'UI creates a work order after selecting an in-brand type');
+        assert.ok(created);
+        assert.equal(created.assignedTechId, 'TECH-001');
+        assert.equal(created.status, 'NEW');
+        assert.equal(created.appointmentStatus, 'UNSCHEDULED');
+        assert.equal(created.scheduledDate, null);
+        assert.equal(created.scheduledTime, null);
+        assert.deepEqual(created.formsRequired, ['JSA', 'TCA1', 'TCA2']);
+      } else {
+        await clickButton(container, 'Cancel');
+      }
+    }
+  }, false, React.createElement(JobsView));
+});
+
+test('LAYER 6: Wave A — website conversion picker exposes only the enquiry business job types', async () => {
+  await withMountedContext(async (ctx, container) => {
+    await act(async () => { ctx.resetDemo(); });
+    for (const brandId of ['solarcell', 'smart_home', 'cctv'] as const) {
+      if (brandId === 'smart_home') {
+        await act(async () => { ctx.simulateWebsiteSubmission(brandId); });
+        await act(async () => {});
+      }
+      const enquiry = ctx.websiteEnquiries.find(item => item.brandId === brandId && item.status === 'PENDING_REVIEW')!;
+      const card = Array.from(container.querySelectorAll('div.bg-slate-900')).find(node => node.textContent?.includes(enquiry.id))!;
+      await clickButton(card as HTMLElement, 'Convert to Work Order');
+      const label = Array.from(container.querySelectorAll('label')).find(item => item.textContent?.includes('Operational Job Type'))!;
+      const select = label.parentElement!.querySelector<HTMLSelectElement>('select')!;
+      const expected = ctx.jobTypes.filter(jobType => jobType.brandId === brandId).map(jobType => jobType.id);
+      assert.deepEqual(Array.from(select.options).map(option => option.value), expected);
+      assert.equal(select.value, expected[0]);
+      await clickButton(container, 'Cancel');
+    }
+  }, false, React.createElement(WebsiteInboxView));
+});
+
+test('LAYER 6: Wave A — clock advances and future audit events retain explicit Brisbane instants', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    const initialInstant = Date.parse(ctx.demoClock);
+    await act(async () => { ctx.triggerReviewRequest('JOB-2026-101'); });
+    const pending = ctx.getAuthoritativeState().jobs.find(job => job.id === 'JOB-2026-101')!;
+    assert.equal(Date.parse(pending.reviewRequest.history.at(-1)!.timestamp), Date.parse(ctx.demoClock));
+    assert.ok(pending.reviewRequest.history.at(-1)?.timestamp.endsWith('+10:00'));
+
+    await act(async () => { ctx.advanceClock(1); });
+    assert.equal(ctx.demoClock, '2026-11-02T10:00:00.000+10:00');
+    const sent = ctx.getAuthoritativeState().jobs.find(job => job.id === 'JOB-2026-101')!;
+    assert.equal(Date.parse(sent.reviewRequest.sentTimestamp!), initialInstant + 60 * 60 * 1000);
+    assert.equal(sent.reviewRequest.sentTimestamp, ctx.demoClock);
+
+    await act(async () => { ctx.advanceClock(14); });
+    assert.equal(ctx.demoClock, '2026-11-03T00:00:00.000+10:00');
+    await act(async () => { ctx.advanceClock(24); });
+    assert.equal(ctx.demoClock, '2026-11-04T00:00:00.000+10:00');
   });
 });

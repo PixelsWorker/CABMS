@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import React from 'react';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { JSDOM } from 'jsdom';
 import { renderToString } from 'react-dom/server';
 import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
 import { Navigation } from '../src/components/Navigation.tsx';
@@ -12,20 +14,7 @@ import { ComplianceFormsView } from '../src/views/ComplianceFormsView.tsx';
 import { QuotesAcceptanceView } from '../src/views/QuotesAcceptanceView.tsx';
 import { AccessDeniedView } from '../src/components/AccessDeniedView.tsx';
 import { Persona, BrandId } from '../src/types/cabms.ts';
-import crypto from 'node:crypto';
-
-// Deterministic hashing helper for layout and view structures
-function hashSnapshot(html: string): string {
-  return crypto.createHash('sha256').update(html).digest('hex').slice(0, 16);
-}
-
-// Approved structural DOM baseline hashes
-const APPROVED_VIEWPORT_BASELINES = {
-  desktop_1440x900: '3bba58ef8603cfd7',
-  tablet_768x1024: '685f9bc2b6d332fd',
-  mobile_390x844: 'e7a67006298b0f7f',
-};
-
+// These SSR wrappers label markup fixtures; they do not execute responsive CSS.
 // Fixed Viewport Representation Wrappers
 const DesktopViewport: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   React.createElement('div', { 'data-viewport': '1440x900', className: 'w-[1440px] min-h-[900px] overflow-hidden' }, children)
@@ -41,11 +30,11 @@ const MobileViewport: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
 test('LAYER 7: Pixel Screenshot Rasterization — Engine status check', (t) => {
   t.skip(
-    'NOT RUN: Pixel-by-pixel rasterization and perceptual visual diffs require a GPU-accelerated headless browser and canvas renderer, which are unprovisioned in this container environment. Structural DOM viewport contract verification executed instead.'
+    'NOT RUN by this suite: no automated pixel-baseline comparison is configured. SSR and JSDOM assertions do not measure CSS layout. Any separate browser receipts must be reviewed independently.'
   );
 });
 
-test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Desktop (1440x900) shell and dashboard structure', () => {
+test('LAYER 7: SSR markup — default shell and dashboard in a labelled desktop fixture', () => {
   const html = renderToString(
     React.createElement(
       DesktopViewport,
@@ -67,11 +56,10 @@ test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Desktop (1440x
 
   assert.ok(html.includes('data-viewport="1440x900"'));
   assert.ok(html.includes('DEMO — NO LIVE INTEGRATIONS'));
-  const hash = hashSnapshot(html);
-  assert.equal(hash, APPROVED_VIEWPORT_BASELINES.desktop_1440x900, `Desktop snapshot hash matched approved baseline: ${hash}`);
+  assert.ok(html.includes('Smart Home') && html.includes('CCTV'), 'distinct business switch names are present');
 });
 
-test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Tablet (768x1024) navigation and jobs view', () => {
+test('LAYER 7: SSR markup — navigation and jobs in a labelled tablet fixture', () => {
   const html = renderToString(
     React.createElement(
       TabletViewport,
@@ -91,11 +79,9 @@ test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Tablet (768x10
 
   assert.ok(html.includes('data-viewport="768x1024"'));
   assert.ok(html.includes('Operational Work Orders'));
-  const hash = hashSnapshot(html);
-  assert.equal(hash, APPROVED_VIEWPORT_BASELINES.tablet_768x1024, `Tablet snapshot hash matched approved baseline: ${hash}`);
 });
 
-test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Mobile (390x844) technician compliance forms layout', () => {
+test('LAYER 7: SSR markup — default compliance form in a labelled mobile fixture', () => {
   const html = renderToString(
     React.createElement(
       MobileViewport,
@@ -115,39 +101,48 @@ test('LAYER 7: Structural Layout & DOM Viewport — Deterministic Mobile (390x84
 
   assert.ok(html.includes('data-viewport="390x844"'));
   assert.ok(html.includes('Job Safety Analysis (JSA)'));
-  const hash = hashSnapshot(html);
-  assert.equal(hash, APPROVED_VIEWPORT_BASELINES.mobile_390x844, `Mobile snapshot hash matched approved baseline: ${hash}`);
 });
 
-test('LAYER 7: Structural Layout & DOM Viewport — Four Persona shell layout validation', () => {
-  const personas: Persona[] = ['super_admin', 'owner_admin', 'office_staff', 'technician'];
-  personas.forEach(p => {
-    const html = renderToString(
-      React.createElement(
-        CabmsProvider,
-        null,
-        React.createElement(Navigation)
-      )
-    );
-    assert.ok(html.includes('CABMS') || html.includes('Solarcell'));
+test('LAYER 7: Mounted persona matrix exercises four actual roles and denied views', async () => {
+  await mountView(React.createElement(React.Fragment, null, React.createElement(Navigation), React.createElement(QuotesAcceptanceView)), async (ctx, container, window) => {
+    const states = new Set<string>();
+    const expectedVisible = { super_admin: 10, owner_admin: 9, office_staff: 8, technician: 4 };
+    for (const persona of ['super_admin', 'owner_admin', 'office_staff', 'technician'] as Persona[]) {
+      await act(async () => { ctx.simulateSignIn(persona); });
+      assert.equal(ctx.persona, persona);
+      const nav = container.querySelector('nav[aria-label="Main navigation"]')!;
+      assert.equal(nav.querySelectorAll('button').length, expectedVisible[persona]);
+      assert.equal(nav.querySelectorAll('button[title^="Access Denied"]').length, 0);
+      const quotes = nav.querySelector('button[aria-label="Quotations & Terms"]');
+      assert.equal(Boolean(quotes), persona !== 'technician');
+      // Exercise direct view selection independently of the hidden menu destination.
+      await act(async () => { ctx.setActiveTab('quotes'); });
+      assert.equal(ctx.activeTab, 'quotes');
+      assert.equal(container.textContent?.includes('Access Denied — Persona Boundary Enforced'), persona === 'technician');
+      states.add(container.innerHTML);
+    }
+    assert.equal(states.size, 4, 'four different rendered role states');
   });
 });
 
-test('LAYER 7: Structural Layout & DOM Viewport — Three Brand visual identity validation', () => {
-  const brands: BrandId[] = ['solarcell', 'smart_home', 'cctv'];
-  brands.forEach(brandId => {
-    const html = renderToString(
-      React.createElement(
-        CabmsProvider,
-        null,
-        React.createElement(DashboardView)
-      )
-    );
-    assert.ok(html.includes('Solarcell') || html.includes('Smart Home') || html.includes('CCTV'));
+test('LAYER 7: Mounted brand matrix changes identity and filters operational jobs for all three businesses', async () => {
+  await mountView(React.createElement(DashboardView), async (ctx, container) => {
+    const states = new Set<string>();
+    for (const brand of ['solarcell', 'smart_home', 'cctv'] as BrandId[]) {
+      await act(async () => { ctx.setActiveBrandId(brand); });
+      assert.equal(container.querySelector('h1')?.textContent, ctx.brands[brand].name);
+      for (const job of ctx.jobs) {
+        assert.equal(container.textContent?.includes(job.id), job.brandId === brand, `job ${job.id} belongs to ${brand}`);
+      }
+      const active = container.querySelector('button[aria-pressed="true"]');
+      assert.equal(active?.getAttribute('aria-label'), `Switch business to ${ctx.brands[brand].name}`);
+      states.add(container.innerHTML);
+    }
+    assert.equal(states.size, 3, 'three different rendered business states');
   });
 });
 
-test('LAYER 7: Structural Layout & DOM Viewport — Access Denied & Integration Failure states', () => {
+test('LAYER 7: SSR markup — explicit access-denied resource and explanation', () => {
   const htmlDenied = renderToString(
     React.createElement(
       CabmsProvider,
@@ -162,3 +157,21 @@ test('LAYER 7: Structural Layout & DOM Viewport — Access Denied & Integration 
   assert.ok(htmlDenied.includes('Access Denied — Persona Boundary Enforced'));
   assert.ok(htmlDenied.includes('Technical Credentials'));
 });
+
+
+// Mounted state assertions supplement SSR structure; JSDOM does not measure CSS layout.
+async function mountView(view: React.ReactNode, run: (ctx: ReturnType<typeof useCabms>, container: HTMLDivElement, window: JSDOM['window']) => Promise<void>) {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost:3000' });
+  Object.defineProperty(globalThis, 'window', { value: dom.window, configurable: true, writable: true });
+  Object.defineProperty(globalThis, 'document', { value: dom.window.document, configurable: true, writable: true });
+  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+  let current!: ReturnType<typeof useCabms>;
+  function Observer() { current = useCabms(); return React.createElement(React.Fragment, null, view); }
+  await act(async () => { root.render(React.createElement(CabmsProvider, null, React.createElement(Observer))); });
+  const ctx = new Proxy({} as ReturnType<typeof useCabms>, { get: (_, key) => (current as any)[key] });
+  try { await run(ctx, container, dom.window); }
+  finally { await act(async () => { root.unmount(); }); dom.window.close(); }
+}

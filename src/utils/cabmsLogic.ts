@@ -673,6 +673,56 @@ export interface SnapshotValidationResult {
   parsedSnapshot?: Record<string, any>;
 }
 
+type SignedFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
+
+const signedSnapshotSchema: Record<SignedFormType, {
+  strings: string[];
+  booleans: string[];
+  numbers: string[];
+  arrays: string[];
+  objects: string[];
+}> = {
+  JSA: {
+    strings: ['date', 'customerName', 'siteContactPlaceholder', 'siteAddress', 'taskDescription', 'assetsIdentified', 'personnelName', 'personnelRole', 'licencePlaceholder', 'licenceExpiryPlaceholder', 'formRevision', 'issuerPlaceholder', 'emergencyAssemblyArea', 'emergencyWardenPlaceholder', 'firstAidOfficerPlaceholder'],
+    booleans: ['inductionCompleted', 'competencyVerified'],
+    numbers: [],
+    arrays: ['steps', 'ppeChecklist', 'isolationsAndPermits', 'attachedSampleIds'],
+    objects: [],
+  },
+  ELECTRICAL: {
+    strings: ['certReference', 'dateOfTest', 'customerName', 'installationAddress', 'siteContact', 'occupierRole', 'contractorNamePlaceholder', 'electricianLicencePlaceholder', 'issuerWordingPlaceholder', 'partACertificationPlaceholder', 'limitationsAndConsumerRightsPlaceholder', 'unresolvedNotice'],
+    booleans: [],
+    numbers: [],
+    arrays: ['testedWorkItems', 'standardsReliedOn', 'attachedSampleIds'],
+    objects: [],
+  },
+  SMOKE_ALARM: {
+    strings: ['certReference', 'dateOfInspection', 'issuedByPlaceholder', 'issuedToRole', 'propertyType', 'occupancyStatus', 'relatedElectricalCertRef', 'limitationsAndRentalNotes', 'provisionalNote'],
+    booleans: ['attachmentsLinked'],
+    numbers: ['storeys', 'bedrooms'],
+    arrays: ['alarmSchedule', 'attachedSampleIds'],
+    objects: ['scopeOfWork'],
+  },
+  TCA1: {
+    strings: ['certReference', 'registeredCablerPlaceholder', 'cablerRegistrationNumberPlaceholder', 'employerDetailsPlaceholder', 'dateOfWork', 'workDescription', 'locationOfWork', 'customerName', 'customerContact', 'certificationPlaceholderText', 'unresolvedRegistrationExpiryNotice'],
+    booleans: ['supervisionProvided'],
+    numbers: [],
+    arrays: ['attachedSampleIds'],
+    objects: [],
+  },
+  TCA2: {
+    strings: ['reportReference', 'inspectionDate', 'businessCablerPlaceholder', 'customerName', 'siteAddress', 'cablingScope', 'locationsInspected', 'nonComplianceDescription', 'requirementReferencePlaceholder', 'riskCategory', 'rectificationRecommendation', 'responsibleParty', 'urgencyLevel', 'quotationReferencePlaceholder', 'targetResolutionDate', 'warningNotice'],
+    booleans: ['samplePhotoLinked', 'customerAcknowledged', 'officeReviewCompleted'],
+    numbers: [],
+    arrays: ['cablingTypes', 'attachedSampleIds'],
+    objects: [],
+  },
+};
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function validateSignedSnapshot(
   snapshotRaw?: string,
   expectedJobId?: string,
@@ -683,26 +733,84 @@ export function validateSignedSnapshot(
   }
   try {
     const parsed = JSON.parse(snapshotRaw);
-    if (!parsed || typeof parsed !== 'object') {
+    if (!isRecord(parsed)) {
       return { valid: false, error: 'Snapshot is not a valid JSON object.' };
+    }
+    if (!formType || !Object.prototype.hasOwnProperty.call(signedSnapshotSchema, formType)) {
+      return { valid: false, error: `Unsupported signed document form type: ${formType || 'missing'}.` };
+    }
+    if (typeof expectedJobId !== 'string' || expectedJobId.trim() === '') {
+      return { valid: false, error: 'Expected job reference is required to validate a signed snapshot.' };
     }
     if (parsed.signedOff !== true) {
       return { valid: false, error: 'Snapshot does not record finalized signedOff: true status.' };
     }
-    if (expectedJobId && parsed.jobReference && parsed.jobReference !== expectedJobId) {
+    if (typeof parsed.jobReference !== 'string' || parsed.jobReference.trim() === '') {
+      return { valid: false, error: 'Snapshot lacks mandatory jobReference.' };
+    }
+    if (parsed.jobReference !== expectedJobId) {
       return { valid: false, error: `Snapshot job reference (${parsed.jobReference}) mismatch with expected ${expectedJobId}.` };
     }
-    if (!parsed.signedTimestamp && !parsed.signedAt && !parsed.signOffTimestamp) {
+    if (typeof parsed.signedTimestamp !== 'string' || parsed.signedTimestamp.trim() === '') {
       return { valid: false, error: 'Snapshot lacks mandatory signed timestamp.' };
     }
-    if (!parsed.signer && !parsed.technicianName && !parsed.businessCablerPlaceholder && !parsed.testerName) {
+    if (typeof parsed.signedByTechName !== 'string' || parsed.signedByTechName.trim() === '') {
       return { valid: false, error: 'Snapshot lacks mandatory signer identity.' };
     }
-    if (formType === 'TCA2' && !parsed.reportReference) {
-      return { valid: false, error: 'TCA2 snapshot lacks mandatory reportReference.' };
+    if (typeof parsed.frozenIssuerSnapshot !== 'string' || parsed.frozenIssuerSnapshot.trim() === '') {
+      return { valid: false, error: 'Snapshot lacks mandatory frozenIssuerSnapshot.' };
     }
-    if (formType === 'ELECTRICAL' && !parsed.certificateNumber) {
-      return { valid: false, error: 'Electrical snapshot lacks mandatory certificateNumber.' };
+
+    const schema = signedSnapshotSchema[formType as SignedFormType];
+    for (const field of schema.strings) {
+      if (typeof parsed[field] !== 'string' || parsed[field].trim() === '') {
+        return { valid: false, error: `${formType} snapshot lacks mandatory ${field}.` };
+      }
+    }
+    for (const field of schema.booleans) {
+      if (typeof parsed[field] !== 'boolean') {
+        return { valid: false, error: `${formType} snapshot lacks valid ${field}.` };
+      }
+    }
+    for (const field of schema.numbers) {
+      if (typeof parsed[field] !== 'number' || !Number.isFinite(parsed[field])) {
+        return { valid: false, error: `${formType} snapshot lacks valid ${field}.` };
+      }
+    }
+    for (const field of schema.arrays) {
+      if (!Array.isArray(parsed[field])) {
+        return { valid: false, error: `${formType} snapshot lacks valid ${field}.` };
+      }
+    }
+    for (const field of schema.objects) {
+      if (!isRecord(parsed[field])) {
+        return { valid: false, error: `${formType} snapshot lacks valid ${field}.` };
+    }
+    }
+    if (formType === 'SMOKE_ALARM') {
+      const scopeFields = ['visualInspection', 'operationalTesting', 'interconnectionTesting', 'cleaningAndVacuuming', 'batteryReplacement', 'alarmReplacement'];
+      if (scopeFields.some(field => typeof parsed.scopeOfWork[field] !== 'boolean')) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot lacks a complete scopeOfWork object.' };
+      }
+    }
+
+    const nestedRequirements: Partial<Record<SignedFormType, Record<string, string[]>>> = {
+      JSA: {
+        steps: ['id', 'taskStep', 'hazards', 'initialRisk', 'controls', 'residualRisk', 'responsibleRole'],
+        ppeChecklist: ['item', 'status'],
+        isolationsAndPermits: ['item', 'required', 'referenceOrNotes'],
+      },
+      ELECTRICAL: {
+        testedWorkItems: ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'rcdTripTimeMs', 'workResult'],
+      },
+      SMOKE_ALARM: {
+        alarmSchedule: ['id', 'roomLocation', 'alarmBrandModel', 'standardMarkingPlaceholder', 'manufactureDateOrExpiry', 'powerSource', 'passFail', 'buttonTestPass', 'interconnectionPass', 'complianceStatusProvisional'],
+      },
+    };
+    for (const [arrayField, requiredFields] of Object.entries(nestedRequirements[formType as SignedFormType] || {})) {
+      if (parsed[arrayField].some((item: unknown) => !isRecord(item) || requiredFields.some(field => !(field in item)))) {
+        return { valid: false, error: `${formType} snapshot contains an incomplete ${arrayField} entry.` };
+      }
     }
     return { valid: true, parsedSnapshot: parsed };
   } catch (e: any) {

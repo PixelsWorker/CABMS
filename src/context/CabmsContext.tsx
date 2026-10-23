@@ -60,6 +60,7 @@ import {
   processReviewDispatch,
   validateSignedSnapshot,
 } from '../utils/cabmsLogic.ts';
+import { advanceBusinessClock, businessCalendarDate, serializeBusinessInstant } from '../utils/businessTime.ts';
 
 export type DemoScenario =
   | 'default'
@@ -190,7 +191,7 @@ interface CabmsContextType {
   reconcileReviewRequest: (jobId: string, resolution?: 'SENT' | 'FAILED') => void;
   retryReviewRequest: (jobId: string) => { success: boolean; message: string };
   pendingReviewCount: number;
-  resolvePendingReview: (jobId: string, forcedOutcome?: 'SENT' | 'FAIL' | 'UNCERTAIN') => void;
+  resolvePendingReview: (jobId: string, forcedOutcome?: 'SENT' | 'FAIL' | 'UNCERTAIN') => { success: boolean; message?: string };
   resolveAllPendingReviews: () => void;
 
   // Certificate Delivery Flow (G00-022)
@@ -281,15 +282,129 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [sampleAttachments] = useState<SampleAttachment[]>(INITIAL_SAMPLE_ATTACHMENTS);
 
   const createSignedJsaSeed = (jobId: string): JsaFormData => {
+    const job = INITIAL_JOBS.find(candidate => candidate.id === jobId);
+    const brand = INITIAL_BRANDS[job?.brandId || 'solarcell'];
+    const technicianName = job?.assignedTechName || INITIAL_JSA_FORM.personnelName;
+    const isCctvJob = job?.brandId === 'cctv';
+    const jobSafetySteps: JsaFormData['steps'] = isCctvJob
+      ? [
+          {
+            id: 'cctv-step-1',
+            taskStep: 'Establish controlled access and inspect camera work areas',
+            hazards: 'Ladder falls, work above occupied areas, and dropped tools',
+            initialRisk: 'H',
+            controls: 'Inspect access equipment, secure the work zone below, and maintain three points of contact.',
+            residualRisk: 'L',
+            responsibleRole: 'Cabling Technician',
+          },
+          {
+            id: 'cctv-step-2',
+            taskStep: 'Route and terminate telecommunications cabling',
+            hazards: 'Contact with existing electrical services, sharp edges, and trip hazards',
+            initialRisk: 'H',
+            controls: 'Identify existing services, maintain separation, protect cable paths, and keep walkways clear.',
+            residualRisk: 'L',
+            responsibleRole: 'Cabling Technician',
+          },
+          {
+            id: 'cctv-step-3',
+            taskStep: 'Mount and test security cameras',
+            hazards: 'Drilling dust, falling objects, and unexpected equipment energisation',
+            initialRisk: 'M',
+            controls: 'Use eye protection, secure equipment during mounting, and verify the intended power source before testing.',
+            residualRisk: 'L',
+            responsibleRole: 'Cabling Technician',
+          },
+        ]
+      : [
+          {
+            id: 'electrical-step-1',
+            taskStep: 'Isolate and verify the three-phase inverter supply',
+            hazards: 'Electric shock, arc flash, and unexpected re-energisation',
+            initialRisk: 'E',
+            controls: 'Apply lockout/tagout, prove the tester, test for dead, and re-prove the tester before work.',
+            residualRisk: 'L',
+            responsibleRole: 'Electrical Technician',
+          },
+          {
+            id: 'electrical-step-2',
+            taskStep: 'Remove and position the replacement inverter',
+            hazards: 'Manual handling strain, sharp enclosure edges, and unstable access equipment',
+            initialRisk: 'H',
+            controls: 'Use an assessed lift plan, team assistance where needed, and stable access equipment.',
+            residualRisk: 'L',
+            responsibleRole: 'Electrical Technician',
+          },
+          {
+            id: 'electrical-step-3',
+            taskStep: 'Reconnect, test, and commission the inverter',
+            hazards: 'Electrical fault, stored energy, and inadvertent circuit energisation',
+            initialRisk: 'H',
+            controls: 'Inspect terminations, use suitable test equipment, and re-energise only after the work area is clear.',
+            residualRisk: 'L',
+            responsibleRole: 'Electrical Technician',
+          },
+        ];
+    const jobPpeChecklist: JsaFormData['ppeChecklist'] = isCctvJob
+      ? [
+          { item: 'Safety Boots', status: 'Yes', notes: 'Synthetic demo check' },
+          { item: 'Eye Protection', status: 'Yes', notes: 'Synthetic demo check' },
+          { item: 'Fall Protection / Suitable Ladder', status: 'Yes', notes: 'Select equipment for the work area' },
+        ]
+      : [
+          { item: 'Safety Boots', status: 'Yes', notes: 'Synthetic demo check' },
+          { item: 'Electrical Insulating Gloves', status: 'Yes', notes: 'Verify rating and inspection before use' },
+          { item: 'Eye Protection', status: 'Yes', notes: 'Synthetic demo check' },
+        ];
+    const jobPermits: JsaFormData['isolationsAndPermits'] = isCctvJob
+      ? [
+          { item: 'Existing Services Identification', required: 'Yes', referenceOrNotes: 'Confirm services at the site before routing cabling' },
+          { item: 'Work-at-Height Controls', required: 'Yes', referenceOrNotes: 'Select and inspect suitable access equipment' },
+        ]
+      : [
+          { item: 'Electrical Isolation / Lockout', required: 'Yes', referenceOrNotes: 'Record the site isolation reference before work' },
+          { item: 'Test for Dead', required: 'Yes', referenceOrNotes: 'Record the verification step in the work record' },
+        ];
     const base: JsaFormData = {
       ...INITIAL_JSA_FORM,
       jobReference: jobId,
+      date: job?.scheduledDate || INITIAL_JSA_FORM.date,
+      customerName: job?.siteContact || INITIAL_JSA_FORM.customerName,
+      siteContactPlaceholder: job ? `${job.siteContact} (${job.sitePhone})` : INITIAL_JSA_FORM.siteContactPlaceholder,
+      siteAddress: job?.siteAddress || INITIAL_JSA_FORM.siteAddress,
+      taskDescription: job?.description || INITIAL_JSA_FORM.taskDescription,
+      assetsIdentified: job?.title || INITIAL_JSA_FORM.assetsIdentified,
+      personnelName: technicianName,
+      personnelRole: isCctvJob ? 'Cabling Technician / Safety Lead' : 'Electrical Technician / Safety Lead',
+      licencePlaceholder: isCctvJob
+        ? brand?.acmaCablerPlaceholder || 'Cabler registration not configured (Fictional Demo)'
+        : brand?.electricalLicencePlaceholder || INITIAL_JSA_FORM.licencePlaceholder,
+      issuerPlaceholder: brand?.legalIssuerName || INITIAL_JSA_FORM.issuerPlaceholder,
+      overallRiskLevel: 'H',
+      steps: jobSafetySteps,
+      ppeChecklist: jobPpeChecklist,
+      isolationsAndPermits: jobPermits,
+      emergencyAssemblyArea: `Confirm site-specific assembly point at ${job?.siteAddress || 'the work site'}`,
+      emergencyWardenPlaceholder: `Site contact: ${job?.siteContact || 'Confirm with site representative'}`,
+      firstAidOfficerPlaceholder: technicianName,
+      attachedSampleIds: job?.attachedSampleIds || INITIAL_JSA_FORM.attachedSampleIds,
       signedOff: true,
-      signedByTechName: 'Dave Miller (Lead Electrician)',
+      signedByTechName: technicianName,
       signedTimestamp: '2026-11-02 09:30',
-      frozenIssuerSnapshot: 'Dave Miller (Lic: Q-ELEC-98765-DEMO) on 2026-11-02 09:30',
+      frozenIssuerSnapshot: `${brand?.legalIssuerName || 'CABMS Demo'} • ${brand?.abnPlaceholder || 'Issuer placeholder'}`,
     };
     base.fullSnapshot = JSON.stringify(base);
+    return base;
+  };
+
+  const createSignedTca2Seed = (): Tca2CertData => {
+    const base = { ...INITIAL_TCA2_CERT };
+    const frozenSnapshot = JSON.parse(INITIAL_TCA2_CERT.fullSnapshot || '{}');
+    base.fullSnapshot = JSON.stringify({
+      ...frozenSnapshot,
+      customerAcknowledged: INITIAL_TCA2_CERT.customerAcknowledged,
+      officeReviewCompleted: INITIAL_TCA2_CERT.officeReviewCompleted,
+    });
     return base;
   };
 
@@ -313,7 +428,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   const [tca2Certs, setTca2Certs] = useState<Record<string, Tca2CertData>>({
-    'JOB-2026-104': { ...INITIAL_TCA2_CERT },
+    'JOB-2026-104': createSignedTca2Seed(),
   });
 
   const [tca2AuditRecords, setTca2AuditRecords] = useState<Record<string, Tca2AuditRecord>>(INITIAL_TCA2_AUDIT);
@@ -327,6 +442,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const authoritativeAuditRecordsRef = React.useRef<Record<string, Tca2AuditRecord>>({ ...INITIAL_TCA2_AUDIT });
   const authoritativeDraftBusinessesRef = React.useRef<DraftBusinessProfile[]>([]);
   const authoritativePersonaRef = React.useRef<Persona>('owner_admin');
+  const authoritativeSessionRef = React.useRef(true);
+
+  const canManageReviews = () => authoritativeSessionRef.current
+    && (['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(authoritativePersonaRef.current);
 
   const handleSetPersona = (p: Persona) => {
     authoritativePersonaRef.current = p;
@@ -358,6 +477,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const inFlightTca2ReviewsRef = React.useRef<Set<string>>(new Set());
   const completedTca2ReviewsRef = React.useRef<Map<string, string>>(new Map());
   const pendingReviewDispatchRef = React.useRef<Set<string>>(new Set());
+  const pendingReviewOutcomeRef = React.useRef<Map<string, 'SENT' | 'FAILED' | 'UNCERTAIN'>>(new Map());
 
   const createDraftBusiness = (profile: Omit<DraftBusinessProfile, 'id' | 'isDraft' | 'createdAt'>): {
     success: boolean;
@@ -383,7 +503,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       slug,
       id: draftId,
       isDraft: true,
-      createdAt: demoClock.slice(0, 10),
+      createdAt: businessCalendarDate(demoClock),
     };
     authoritativeDraftBusinessesRef.current = [...authoritativeDraftBusinessesRef.current, newDraft];
     setDraftBusinesses([...authoritativeDraftBusinessesRef.current]);
@@ -415,10 +535,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     inFlightTca2ReviewsRef.current.clear();
     completedTca2ReviewsRef.current.clear();
     pendingReviewDispatchRef.current.clear();
+    pendingReviewOutcomeRef.current.clear();
     authoritativeJobsRef.current = INITIAL_JOBS;
     authoritativeAuditRecordsRef.current = { ...INITIAL_TCA2_AUDIT };
     authoritativeDraftBusinessesRef.current = [];
     authoritativePersonaRef.current = 'owner_admin';
+    authoritativeSessionRef.current = true;
     setDraftBusinesses([]);
     setPersona('owner_admin');
     setActiveBrandId('solarcell');
@@ -445,7 +567,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setElectricalCerts({ 'JOB-2026-103': { ...INITIAL_ELECTRICAL_CERT } });
     setSmokeAlarmCerts({ 'JOB-2026-101': { ...INITIAL_SMOKE_ALARM_CERT } });
     setTca1Certs({ 'JOB-2026-104': { ...INITIAL_TCA1_CERT } });
-    setTca2Certs({ 'JOB-2026-104': { ...INITIAL_TCA2_CERT } });
+    setTca2Certs({ 'JOB-2026-104': createSignedTca2Seed() });
     setTca2AuditRecords({ ...INITIAL_TCA2_AUDIT });
     setSelectedJobId('JOB-2026-101');
     setActiveTab('dashboard');
@@ -453,11 +575,43 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification('Demo restored to clean initial seed state.', 'success');
   };
 
+  const resolveReviewJob = (
+    job: Job,
+    outcome: 'SENT' | 'FAILED' | 'UNCERTAIN',
+    timestamp: string,
+    brandName: string,
+    actor: string
+  ): Job => {
+    const message = outcome === 'SENT'
+      ? actor === 'Automated System Clock'
+        ? `Automated simulated dispatch completed for ${brandName} on virtual clock advance`
+        : `Email invitation sent to customer for ${brandName}`
+      : outcome === 'FAILED'
+        ? 'Simulated dispatch failure: SMTP 550 delivery rejection'
+        : 'Simulated dispatch gateway timeout (504 Gateway Timeout) - delivery outcome uncertain';
+    const activity = outcome === 'SENT'
+      ? `Review invitation sent to customer (${brandName})`
+      : outcome === 'FAILED'
+        ? 'Review request dispatch failed (SMTP 550)'
+        : 'Review request dispatch resulted in UNCERTAIN status (504)';
+
+    return {
+      ...job,
+      reviewRequest: {
+        ...job.reviewRequest,
+        status: outcome,
+        sentTimestamp: outcome === 'SENT' ? timestamp : undefined,
+        uncertainReconciliationNeeded: outcome === 'UNCERTAIN',
+        history: [...job.reviewRequest.history, { timestamp, event: message, status: outcome }],
+      },
+      activityHistory: [...job.activityHistory, { timestamp, action: activity, actor }],
+    };
+  };
+
   // Clock Advancement with Deterministic Event Processor (G00-020)
   const advanceClock = (hours: number) => {
-    const current = new Date(demoClock);
-    current.setHours(current.getHours() + hours);
-    const newClock = current.toISOString();
+    const newClock = advanceBusinessClock(demoClock, hours);
+    const current = new Date(newClock);
     setDemoClock(newClock);
 
     let deliveredCount = 0;
@@ -476,7 +630,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               return {
                 ...r,
                 delivered: true,
-                deliveredAt: newClock.slice(0, 16),
+                deliveredAt: newClock,
               };
             }
           }
@@ -488,28 +642,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (updatedJob.reviewRequest?.status === 'PENDING') {
           resolvedCount++;
           const brand = brands[updatedJob.brandId] || brands.solarcell;
-          updatedJob.reviewRequest = {
-            ...updatedJob.reviewRequest,
-            status: 'SENT',
-            sentTimestamp: newClock.slice(0, 16),
-            uncertainReconciliationNeeded: false,
-            history: [
-              ...updatedJob.reviewRequest.history,
-              {
-                timestamp: newClock.slice(0, 16),
-                status: 'SENT',
-                event: `Automated simulated dispatch completed for ${brand.name} on virtual clock advance`,
-              },
-            ],
-          };
-          updatedJob.activityHistory = [
-            ...updatedJob.activityHistory,
-            {
-              timestamp: newClock.slice(0, 16),
-              action: `Review invitation sent to customer (${brand.name})`,
-              actor: 'Automated System Clock',
-            },
-          ];
+          const outcome = pendingReviewOutcomeRef.current.get(j.id)
+            || (activeScenario === 'myob_uncertain' ? 'UNCERTAIN' : 'SENT');
+          updatedJob = resolveReviewJob(updatedJob, outcome, newClock, brand.name, 'Automated System Clock');
+          pendingReviewOutcomeRef.current.delete(j.id);
         }
 
         return updatedJob;
@@ -544,7 +680,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Scenario: TCA1/TCA2 Cabling Non-Compliance & Revisit loaded.', 'warning');
     } else if (activeScenario === 'unassigned_denied') {
       setSelectedJobId('JOB-2026-105');
-      setPersona('technician');
+      handleSetPersona('technician');
       setActiveTab('jobs');
       showDemoNotification('Scenario: Technician persona selected on unassigned job (Denied view active).', 'error');
     } else if (activeScenario === 'myob_failed') {
@@ -585,10 +721,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         id: `CUSTOMER-DRAFT-${seqCounters.customer}`,
         myobCustomerId: 'PENDING_MYOB_SYNC',
         syncStatus: 'FAILED',
-        createdAt: demoClock.slice(0, 10),
+        createdAt: businessCalendarDate(demoClock),
         isRecoverableDraft: true,
         activityHistory: [
-          { timestamp: demoClock.slice(0, 16), action: 'Draft entry saved locally (MYOB Offline)', actor: persona },
+          { timestamp: serializeBusinessInstant(demoClock), action: 'Draft entry saved locally (MYOB Offline)', actor: persona },
         ],
       };
       setCustomers(prev => [draftCustomer, ...prev]);
@@ -604,10 +740,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         id: `CUSTOMER-UNCERTAIN-${seqCounters.customer}`,
         myobCustomerId: 'AWAITING_RECONCILIATION',
         syncStatus: 'UNCERTAIN',
-        createdAt: demoClock.slice(0, 10),
+        createdAt: businessCalendarDate(demoClock),
         isRecoverableDraft: true,
         activityHistory: [
-          { timestamp: demoClock.slice(0, 16), action: 'Uncertain response from MYOB. Reconciliation queued.', actor: persona },
+          { timestamp: serializeBusinessInstant(demoClock), action: 'Uncertain response from MYOB. Reconciliation queued.', actor: persona },
         ],
       };
       setCustomers(prev => [uncertainCustomer, ...prev]);
@@ -622,10 +758,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: `CUSTOMER-DEMO-${seqCounters.customer}`,
       myobCustomerId: `MYOB-DEMO-${seqCounters.customer}`,
       syncStatus: 'SYNCED',
-      createdAt: demoClock.slice(0, 10),
+      createdAt: businessCalendarDate(demoClock),
       isRecoverableDraft: false,
       activityHistory: [
-        { timestamp: demoClock.slice(0, 16), action: `Created & acknowledged in MYOB Business (#MYOB-DEMO-${seqCounters.customer})`, actor: persona },
+        { timestamp: serializeBusinessInstant(demoClock), action: `Created & acknowledged in MYOB Business (#MYOB-DEMO-${seqCounters.customer})`, actor: persona },
       ],
     };
 
@@ -649,7 +785,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               isRecoverableDraft: false,
               activityHistory: [
                 ...(c.activityHistory || []),
-                { timestamp: demoClock.slice(0, 16), action: 'Reconciled: Confirmed created in MYOB', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Reconciled: Confirmed created in MYOB', actor: persona },
               ],
             };
           } else {
@@ -659,7 +795,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               notes: 'Reconciliation discarded duplicate entry.',
               activityHistory: [
                 ...(c.activityHistory || []),
-                { timestamp: demoClock.slice(0, 16), action: 'Reconciled: Discarded as duplicate', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Reconciled: Discarded as duplicate', actor: persona },
               ],
             };
           }
@@ -688,7 +824,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             isRecoverableDraft: false,
             activityHistory: [
               ...(c.activityHistory || []),
-              { timestamp: demoClock.slice(0, 16), action: 'Retry successful: Synced to MYOB', actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: 'Retry successful: Synced to MYOB', actor: persona },
             ],
           };
         }
@@ -700,20 +836,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Job Actions (G00-012, G00-013, G00-014)
   const createJob = (jobData: Partial<Job>): Job => {
-    seqCounters.job++;
-    const nextId = `JOB-2026-${seqCounters.job}`;
-
     // Runtime brand isolation check: ensure brand is strictly an operational brand, never draft
     const targetBrandId: BrandId = (['solarcell', 'smart_home', 'cctv'].includes(jobData.brandId as any))
       ? (jobData.brandId as BrandId)
       : activeBrandId;
 
-    // Lookup job type config for form requirements and version snapshot
-    const matchedJobType =
-      jobTypes.find(jt => jt.id === jobData.jobType && jt.brandId === targetBrandId) ||
-      jobTypes.find(jt => jt.name === jobData.jobType && jt.brandId === targetBrandId) ||
-      jobTypes.find(jt => jt.brandId === targetBrandId) ||
-      jobTypes[0];
+    // Known job types are business-bound; never reinterpret a foreign business type.
+    const requestedJobType = jobTypes.find(jt => jt.id === jobData.jobType || jt.name === jobData.jobType);
+    if (requestedJobType && requestedJobType.brandId !== targetBrandId) {
+      const message = `Job type ${requestedJobType.name} belongs to ${brands[requestedJobType.brandId]?.name || requestedJobType.brandId}, not ${brands[targetBrandId]?.name || targetBrandId}.`;
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
+
+    // Preserve the legacy free-text entry path, but keep its configured fallback within this business.
+    const matchedJobType = requestedJobType || jobTypes.find(jt => jt.brandId === targetBrandId);
+    if (!matchedJobType) {
+      const message = `No configured job type is available for ${targetBrandId}.`;
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
+
+    seqCounters.job++;
+    const nextId = `JOB-2026-${seqCounters.job}`;
 
     // G00-012/P1: Mandatory compliance forms configured on the Job Type cannot be bypassed
     const forms = matchedJobType.formsRequired.length > 0
@@ -788,10 +933,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         history: [],
       },
       reminders,
-      unresolvedWarnings: isDirect ? ['Direct-to-invoice service: no compliance documentation required.'] : [],
+      unresolvedWarnings: [
+        ...(jobData.unresolvedWarnings || []),
+        ...(isDirect ? ['Direct-to-invoice service: no compliance documentation required.'] : []),
+      ],
       activityHistory: [
         {
-          timestamp: demoClock.slice(0, 16),
+          timestamp: serializeBusinessInstant(demoClock),
           action: `Work order created (${matchedJobType.name} ${matchedJobType.version})`,
           actor: persona,
           notes: assignedTechId ? `Assigned to ${assignedTechId} (${assignedTechName})` : 'Unassigned pool',
@@ -799,26 +947,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ],
     };
 
-    authoritativeJobsRef.current = [newJob, ...authoritativeJobsRef.current];
-    setJobs([...authoritativeJobsRef.current]);
+    commitJobsState(current => [newJob, ...current]);
     showDemoNotification(`Job ${newJob.id} created successfully.`, 'success');
     return newJob;
   };
 
   const updateJobStatus = (jobId: string, newStatus: JobStatus) => {
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j =>
+    commitJobsState(current => current.map(j =>
       j.id === jobId
         ? {
             ...j,
             status: newStatus,
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: demoClock.slice(0, 16), action: `Operational status updated to ${newStatus}`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Operational status updated to ${newStatus}`, actor: persona },
             ],
           }
         : j
-    );
-    setJobs([...authoritativeJobsRef.current]);
+    ));
     showDemoNotification(`Job ${jobId} status updated to ${newStatus}.`, 'info');
   };
 
@@ -842,21 +988,20 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const validation = validateJobCompletion(job, forms, auditRecord);
 
     if (validation.canComplete) {
-      authoritativeJobsRef.current = authoritativeJobsRef.current.map(j =>
+      commitJobsState(current => current.map(j =>
         j.id === jobId
           ? {
               ...j,
               status: 'COMPLETED',
-              completedAt: demoClock,
+              completedAt: serializeBusinessInstant(demoClock),
               completionNotes: 'All applicable synthetic demo completion requirements satisfied.',
               activityHistory: [
                 ...j.activityHistory,
-                { timestamp: demoClock.slice(0, 16), action: 'Job marked COMPLETED (requirements validated)', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Job marked COMPLETED (requirements validated)', actor: persona },
               ],
             }
           : j
-      );
-      setJobs([...authoritativeJobsRef.current]);
+      ));
       showDemoNotification(`SUCCESS: Job ${jobId} marked COMPLETED. Synthetic requirements satisfied.`, 'success');
     } else {
       showDemoNotification(
@@ -901,7 +1046,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             reminders: [...updatedReminders, newReminder],
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: demoClock.slice(0, 16), action: `Appointment rescheduled to ${newDate} ${newTime}`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Appointment rescheduled to ${newDate} ${newTime}`, actor: persona },
             ],
           };
         }
@@ -930,7 +1075,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             reminders: updatedReminders,
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: demoClock.slice(0, 16), action: `Visit cancelled (${reason}). Appointment status marked CANCELLED. Job remains active for rescheduling.`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Visit cancelled (${reason}). Appointment status marked CANCELLED. Job remains active for rescheduling.`, actor: persona },
             ],
           };
         }
@@ -955,7 +1100,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             reminders: updatedReminders,
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: demoClock.slice(0, 16), action: `Job CANCELLED: ${reason}`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Job CANCELLED: ${reason}`, actor: persona },
             ],
           };
         }
@@ -979,7 +1124,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             activityHistory: [
               ...j.activityHistory,
               {
-                timestamp: demoClock.slice(0, 16),
+                timestamp: serializeBusinessInstant(demoClock),
                 action: hasCompleteAppointment
                   ? 'Job reopened from cancelled state and returned to active schedule'
                   : 'Job reopened from cancelled state as unscheduled new work order',
@@ -999,7 +1144,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const job = jobs.find(j => j.id === jobId);
     return {
       jobReference: jobId,
-      date: job?.scheduledDate || demoClock.slice(0, 10),
+      date: job?.scheduledDate || businessCalendarDate(demoClock),
       customerName: job?.siteContact || 'Customer',
       siteContactPlaceholder: `${job?.siteContact || 'Customer'} (${job?.sitePhone || '0400 000 000'})`,
       siteAddress: job?.siteAddress || '[Fictional] Site Address',
@@ -1048,7 +1193,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return {
       certReference: `ELEC-CERT-2026-${seqCounters.job}`,
       jobReference: jobId,
-      dateOfTest: job?.scheduledDate || demoClock.slice(0, 10),
+      dateOfTest: job?.scheduledDate || businessCalendarDate(demoClock),
       customerName: job?.siteContact || 'Customer',
       installationAddress: job?.siteAddress || '[Fictional] Site Address',
       siteContact: `${job?.siteContact || 'Customer'} (${job?.sitePhone || '0400 000 000'})`,
@@ -1082,7 +1227,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return {
       certReference: `SMOKE-2026-${seqCounters.job}`,
       jobReference: jobId,
-      dateOfInspection: job?.scheduledDate || demoClock.slice(0, 10),
+      dateOfInspection: job?.scheduledDate || businessCalendarDate(demoClock),
       issuedByPlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'Smart Home Solutions Safety',
       issuedToRole: 'Owner',
       propertyType: 'Detached House',
@@ -1128,7 +1273,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       registeredCablerPlaceholder: job?.assignedTechName || 'Alex Taylor',
       cablerRegistrationNumberPlaceholder: 'ACMA-REG-44210-DEMO',
       employerDetailsPlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'Gold Coast CCTV & Cabling',
-      dateOfWork: job?.scheduledDate || demoClock.slice(0, 10),
+      dateOfWork: job?.scheduledDate || businessCalendarDate(demoClock),
       workDescription: 'Installation of Category 6 data cabling drops',
       locationOfWork: job?.siteAddress || '[Fictional] Site Address',
       supervisionProvided: true,
@@ -1146,7 +1291,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return {
       reportReference: `TCA2-DEFECT-2026-${seqCounters.job}`,
       jobReference: jobId,
-      inspectionDate: job?.scheduledDate || demoClock.slice(0, 10),
+      inspectionDate: job?.scheduledDate || businessCalendarDate(demoClock),
       businessCablerPlaceholder: job?.assignedTechName || 'Alex Taylor',
       customerName: job?.siteContact || 'Customer',
       siteAddress: job?.siteAddress || '[Fictional] Site Address',
@@ -1266,7 +1411,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const job = jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.solarcell;
     const signer = job?.assignedTechName || 'Dave Miller';
-    const timestamp = demoClock.slice(0, 16);
+    const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
     const finalized: JsaFormData = {
@@ -1291,7 +1436,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const job = jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.smart_home;
     const signer = job?.assignedTechName || 'Dave Miller';
-    const timestamp = demoClock.slice(0, 16);
+    const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
     const finalized: SmokeAlarmCertData = {
@@ -1316,7 +1461,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const job = jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.solarcell;
     const signer = job?.assignedTechName || 'Dave Miller';
-    const timestamp = demoClock.slice(0, 16);
+    const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
     const finalized: ElectricalCertData = {
@@ -1341,7 +1486,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const job = jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.cctv;
     const signer = job?.assignedTechName || 'Alex Taylor';
-    const timestamp = demoClock.slice(0, 16);
+    const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
     const finalized: Tca1CertData = {
@@ -1366,7 +1511,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const job = jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.cctv;
     const signer = job?.assignedTechName || 'Alex Taylor';
-    const timestamp = demoClock.slice(0, 16);
+    const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
     const finalized: Tca2CertData = {
@@ -1379,14 +1524,19 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     finalized.fullSnapshot = JSON.stringify(finalized);
 
     setTca2Certs(prev => ({ ...prev, [jobId]: finalized }));
-    setTca2AuditRecords(prev => ({
-      ...prev,
-      [jobId]: prev[jobId] || {
-        jobId,
-        customerAcknowledged: false,
-        officeReviewCompleted: false,
-      },
-    }));
+    commitJobsState(
+      currentJobs => currentJobs,
+      currentAudits => currentAudits[jobId]
+        ? currentAudits
+        : {
+            ...currentAudits,
+            [jobId]: {
+              jobId,
+              customerAcknowledged: false,
+              officeReviewCompleted: false,
+            },
+          }
+    );
     showDemoNotification(`TCA2 Cabling Defect signed off for Job ${jobId}. Non-compliance recorded and document permanently frozen.`, 'warning');
   };
 
@@ -1404,7 +1554,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       actorPersona: persona,
       tca2Cert: cert,
       existingAudit,
-      demoClock,
+      demoClock: serializeBusinessInstant(demoClock),
     });
 
     if (!result.success) {
@@ -1412,13 +1562,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    // Immediately update authoritative ref before React re-render
-    authoritativeAuditRecordsRef.current = {
-      ...authoritativeAuditRecordsRef.current,
-      [jobId]: result.updatedAuditRecord!,
-    };
-
-    setTca2AuditRecords({ ...authoritativeAuditRecordsRef.current });
+    const acknowledgedAt = serializeBusinessInstant(demoClock);
+    commitJobsState(
+      currentJobs => currentJobs,
+      currentAudits => ({
+        ...currentAudits,
+        [jobId]: { ...result.updatedAuditRecord!, customerAckTimestamp: acknowledgedAt },
+      })
+    );
     showDemoNotification(`Customer acknowledgement captured for TCA2 Defect on Job ${jobId}. Signed report remains immutable.`, 'info');
   };
 
@@ -1457,7 +1608,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         existingAudit,
         existingJobs: currentJobs,
         nextJobSeq: seqCounters.job,
-        demoClock,
+        demoClock: serializeBusinessInstant(demoClock),
       });
 
       if (!result.success) {
@@ -1481,23 +1632,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       // Single authoritative coupled state transition
       seqCounters.job = result.nextJobSeq;
-      const followupJob = result.newFollowupJob!;
-      const updatedAudit = result.updatedAuditRecord;
-
-      // Update authoritative stores indivisibly
-      authoritativeJobsRef.current = [followupJob, ...authoritativeJobsRef.current.filter(j => j.id !== followupJob.id)];
-      authoritativeAuditRecordsRef.current = {
-        ...authoritativeAuditRecordsRef.current,
-        [jobId]: updatedAudit,
+      const eventTimestamp = serializeBusinessInstant(demoClock);
+      const rawFollowupJob = result.newFollowupJob!;
+      const followupJob = {
+        ...rawFollowupJob,
+        activityHistory: rawFollowupJob.activityHistory.map((event, index) => index === rawFollowupJob.activityHistory.length - 1
+          ? { ...event, timestamp: eventTimestamp }
+          : event),
       };
+      const updatedAudit = { ...result.updatedAuditRecord, officeReviewTimestamp: eventTimestamp };
 
       // Record stable completion mapping & clear in-flight status
       completedTca2ReviewsRef.current.set(jobId, followupJob.id);
       inFlightTca2ReviewsRef.current.delete(jobId);
 
-      // Commit to React state from authoritative single transition
-      setJobs([...authoritativeJobsRef.current]);
-      setTca2AuditRecords({ ...authoritativeAuditRecordsRef.current });
+      commitJobsState(
+        currentJobs => [followupJob, ...currentJobs.filter(j => j.id !== followupJob.id)],
+        currentAudits => ({ ...currentAudits, [jobId]: updatedAudit })
+      );
 
       showDemoNotification(
         `TCA2 Office Review completed. Rectification follow-up work order #${followupJob.id} created in operational pool.`,
@@ -1666,12 +1818,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       linkScenario: 'valid',
       acceptanceHistory: [
         {
-          timestamp: demoClock.slice(0, 16),
+          timestamp: serializeBusinessInstant(demoClock),
           action: `Quote generated & synced to MYOB Business (#MYOB-Q-${88200 + seqCounters.quote})`,
           actor: persona,
         },
         {
-          timestamp: demoClock.slice(0, 16),
+          timestamp: serializeBusinessInstant(demoClock),
           action: 'Acceptance link generated and sent via email',
           actor: 'Automated Service',
         },
@@ -1711,7 +1863,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message: `Quotation was already accepted on ${job.quote.acceptedAt}. Duplicate acceptance rejected.` };
     }
 
-    const acceptedTimestamp = demoClock.slice(0, 16);
+    const acceptedTimestamp = serializeBusinessInstant(demoClock);
     const historyEntry = {
       timestamp: acceptedTimestamp,
       action: 'Accepted via Customer Online Portal',
@@ -1763,8 +1915,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       amount,
       status: isOffline ? 'DRAFT' : 'SENT_TO_MYOB',
       syncStatus: isOffline ? 'FAILED' : 'SYNCED',
-      issuedDate: demoClock.slice(0, 10),
-      dueDate: demoClock.slice(0, 10),
+      issuedDate: businessCalendarDate(demoClock),
+      dueDate: businessCalendarDate(demoClock),
       reconciliationRequired: isOffline,
       reconciliationNotes: isOffline
         ? 'MYOB API connection offline (504 Timeout). Invoice saved locally and requires reconciliation.'
@@ -1781,7 +1933,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               activityHistory: [
                 ...j.activityHistory,
                 {
-                  timestamp: demoClock.slice(0, 16),
+                  timestamp: serializeBusinessInstant(demoClock),
                   action: isOffline
                     ? `Invoice ${invoiceId} held in local draft (MYOB offline, reconciliation required)`
                     : `MYOB Invoice ${myobRef} prepared for $${amount}`,
@@ -1818,7 +1970,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               },
               activityHistory: [
                 ...j.activityHistory,
-                { timestamp: demoClock.slice(0, 16), action: 'Invoice synced to MYOB following manual reconciliation', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice synced to MYOB following manual reconciliation', actor: persona },
               ],
             };
           } else {
@@ -1843,9 +1995,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Reviews Deduplication & Full Workflow (G00-021: PENDING -> SENT / FAILED / UNCERTAIN)
   const triggerReviewRequest = (jobId: string, simulateOutcome?: 'FAIL' | 'UNCERTAIN') => {
-    if (authoritativePersonaRef.current === 'technician') {
-      showDemoNotification('DENIED: Technician cannot dispatch review invitations.', 'error');
-      return { success: false, message: 'Technician persona lacks review dispatch permission.' };
+    if (!canManageReviews()) {
+      showDemoNotification('DENIED: An active authorized session is required to dispatch review invitations.', 'error');
+      return { success: false, message: 'An active authorized session is required for review dispatch.' };
     }
 
     const currentJobs = authoritativeJobsRef.current;
@@ -1855,10 +2007,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     const brand = brands[job.brandId] || brands.solarcell;
+    const intendedOutcome = simulateOutcome || (activeScenario === 'myob_uncertain' ? 'UNCERTAIN' : undefined);
     const dispatchRes = processReviewDispatch({
       currentJob: job,
-      simulateOutcome,
-      demoClock,
+      simulateOutcome: intendedOutcome,
+      demoClock: serializeBusinessInstant(demoClock),
       reviewUrl: brand.reviewUrlPlaceholder || 'https://demo.reviews.invalid',
       brandName: brand.name,
     });
@@ -1869,17 +2022,31 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // Persist PENDING job into authoritative state & React state
-    const pendingJob = dispatchRes.pendingJob!;
+    const rawPendingJob = dispatchRes.pendingJob!;
+    const eventTimestamp = serializeBusinessInstant(demoClock);
+    const pendingJob: Job = {
+      ...rawPendingJob,
+      reviewRequest: {
+        ...rawPendingJob.reviewRequest,
+        history: rawPendingJob.reviewRequest.history.map((event, index) => index === rawPendingJob.reviewRequest.history.length - 1
+          ? { ...event, timestamp: eventTimestamp }
+          : event),
+      },
+      activityHistory: rawPendingJob.activityHistory.map((event, index) => index === rawPendingJob.activityHistory.length - 1
+        ? { ...event, timestamp: eventTimestamp }
+        : event),
+    };
+    pendingReviewOutcomeRef.current.set(jobId, dispatchRes.outcomeStatus || 'SENT');
     commitJobsState(current => current.map(j => (j.id === jobId ? pendingJob : j)));
 
     showDemoNotification(`Review invitation for Job ${jobId} queued in PENDING state (${brand.name}).`, 'info');
     return { success: true, message: 'Review request queued in PENDING state.' };
   };
 
-  const resolvePendingReview = (jobId: string, forcedOutcome?: 'SENT' | 'FAIL' | 'UNCERTAIN', actorPersona?: Persona): { success: boolean; message?: string } => {
-    if (authoritativePersonaRef.current === 'technician') {
-      showDemoNotification('DENIED: Technician cannot resolve review invitations.', 'error');
-      return { success: false, message: 'Technician persona lacks review resolution permission.' };
+  const resolvePendingReview = (jobId: string, forcedOutcome?: 'SENT' | 'FAIL' | 'UNCERTAIN'): { success: boolean; message?: string } => {
+    if (!canManageReviews()) {
+      showDemoNotification('DENIED: An active authorized session is required to resolve review invitations.', 'error');
+      return { success: false, message: 'An active authorized session is required for review resolution.' };
     }
 
     const currentJobs = authoritativeJobsRef.current;
@@ -1895,73 +2062,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     pendingReviewDispatchRef.current.add(jobId);
 
     const brand = brands[targetJob.brandId] || brands.solarcell;
-    const outcome = forcedOutcome || (activeScenario === 'myob_uncertain' ? 'UNCERTAIN' : 'SENT');
-    const timestamp = demoClock.slice(0, 16);
-
-    let resolvedJob: Job;
+    const queuedOutcome = pendingReviewOutcomeRef.current.get(jobId);
+    const outcome: 'SENT' | 'FAILED' | 'UNCERTAIN' = forcedOutcome
+      ? forcedOutcome === 'FAIL' ? 'FAILED' : forcedOutcome
+      : queuedOutcome || (activeScenario === 'myob_uncertain' ? 'UNCERTAIN' : 'SENT');
+    const timestamp = serializeBusinessInstant(demoClock);
+    const resolvedJob = resolveReviewJob(targetJob, outcome, timestamp, brand.name, authoritativePersonaRef.current);
     if (outcome === 'UNCERTAIN') {
-      resolvedJob = {
-        ...targetJob,
-        reviewRequest: {
-          ...targetJob.reviewRequest,
-          status: 'UNCERTAIN',
-          uncertainReconciliationNeeded: true,
-          history: [
-            ...targetJob.reviewRequest.history,
-            { timestamp, event: 'Simulated dispatch gateway timeout (504 Gateway Timeout) - delivery outcome uncertain', status: 'UNCERTAIN' },
-          ],
-        },
-        activityHistory: [
-          ...targetJob.activityHistory,
-          { timestamp, action: 'Review request dispatch resulted in UNCERTAIN status (504)', actor: 'Automated Service' },
-        ],
-      };
       showDemoNotification('Review request dispatch uncertain (504 gateway timeout). Manual reconciliation required.', 'warning');
-    } else if (outcome === 'FAIL') {
-      resolvedJob = {
-        ...targetJob,
-        reviewRequest: {
-          ...targetJob.reviewRequest,
-          status: 'FAILED',
-          history: [
-            ...targetJob.reviewRequest.history,
-            { timestamp, event: 'Simulated dispatch failure: SMTP 550 delivery rejection', status: 'FAILED' },
-          ],
-        },
-        activityHistory: [
-          ...targetJob.activityHistory,
-          { timestamp, action: 'Review request dispatch failed (SMTP 550)', actor: 'Automated Service' },
-        ],
-      };
+    } else if (outcome === 'FAILED') {
       showDemoNotification('Review request failed to dispatch (SMTP 550). Controlled retry available.', 'error');
     } else {
-      resolvedJob = {
-        ...targetJob,
-        reviewRequest: {
-          ...targetJob.reviewRequest,
-          status: 'SENT',
-          sentTimestamp: timestamp,
-          history: [
-            ...targetJob.reviewRequest.history,
-            { timestamp, event: `Email invitation sent to customer for ${brand.name}`, status: 'SENT' },
-          ],
-        },
-        activityHistory: [
-          ...targetJob.activityHistory,
-          { timestamp, action: `Review invitation delivered to customer (${brand.name})`, actor: 'Automated Service' },
-        ],
-      };
       showDemoNotification(`Review request dispatched to ${targetJob.siteContact} (${brand.name}).`, 'success');
     }
 
     commitJobsState(current => current.map(j => (j.id === jobId ? resolvedJob : j)));
     pendingReviewDispatchRef.current.delete(jobId);
+    pendingReviewOutcomeRef.current.delete(jobId);
     return { success: true, message: `Review resolved to ${resolvedJob.reviewRequest.status}` };
   };
 
   const resolveAllPendingReviews = () => {
-    if (authoritativePersonaRef.current === 'technician') {
-      showDemoNotification('DENIED: Technician cannot dispatch review invitations.', 'error');
+    if (!canManageReviews()) {
+      showDemoNotification('DENIED: An active authorized session is required to dispatch review invitations.', 'error');
       return;
     }
     const pendingJobs = authoritativeJobsRef.current.filter(j => j.reviewRequest?.status === 'PENDING');
@@ -1975,8 +2098,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pendingReviewCount = jobs.filter(j => j.reviewRequest?.status === 'PENDING').length;
 
   const reconcileReviewRequest = (jobId: string, resolution: 'SENT' | 'FAILED' = 'SENT') => {
-    if (authoritativePersonaRef.current === 'technician') {
-      showDemoNotification('DENIED: Technician cannot reconcile review requests.', 'error');
+    if (!canManageReviews()) {
+      showDemoNotification('DENIED: An active authorized session is required to reconcile review requests.', 'error');
       return;
     }
 
@@ -1998,11 +2121,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 ...j.reviewRequest,
                 status: resolution,
                 uncertainReconciliationNeeded: false,
-                sentTimestamp: resolution === 'SENT' ? demoClock.slice(0, 16) : undefined,
+                sentTimestamp: resolution === 'SENT' ? serializeBusinessInstant(demoClock) : undefined,
                 history: [
                   ...j.reviewRequest.history,
                   {
-                    timestamp: demoClock.slice(0, 16),
+                    timestamp: serializeBusinessInstant(demoClock),
                     event: resolution === 'SENT'
                       ? 'Reconciled manual check: delivery confirmed in gateway dispatch log.'
                       : 'Reconciled manual check: delivery confirmed failed. Marked FAILED for retry.',
@@ -2018,9 +2141,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const retryReviewRequest = (jobId: string) => {
-    if (authoritativePersonaRef.current === 'technician') {
-      showDemoNotification('DENIED: Technician cannot retry review requests.', 'error');
-      return { success: false, message: 'Technician persona lacks permission.' };
+    if (!canManageReviews()) {
+      showDemoNotification('DENIED: An active authorized session is required to retry review requests.', 'error');
+      return { success: false, message: 'An active authorized session is required.' };
     }
 
     const currentJobs = authoritativeJobsRef.current;
@@ -2038,13 +2161,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               reviewRequest: {
                 ...j.reviewRequest,
                 status: 'SENT',
-                sentTimestamp: demoClock.slice(0, 16),
+                sentTimestamp: serializeBusinessInstant(demoClock),
                 reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
                 uncertainReconciliationNeeded: false,
                 history: [
                   ...j.reviewRequest.history,
                   {
-                    timestamp: demoClock.slice(0, 16),
+                    timestamp: serializeBusinessInstant(demoClock),
                     event: 'Controlled retry successful: email dispatched and confirmed.',
                     status: 'SENT',
                   },
@@ -2090,7 +2213,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             version: `${t.currentVersion}-draft`,
             status: 'DRAFT' as const,
             content: newContent,
-            updatedAt: demoClock.slice(0, 16),
+            updatedAt: serializeBusinessInstant(demoClock),
             updatedBy: persona.toUpperCase(),
           };
           return {
@@ -2116,7 +2239,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       prev.map(t => {
         if (t.id === templateId) {
           const revs = t.revisions.map((r, idx) =>
-            idx === 0 ? { ...r, status: 'REVIEW' as const, updatedAt: demoClock.slice(0, 16) } : r
+            idx === 0 ? { ...r, status: 'REVIEW' as const, updatedAt: serializeBusinessInstant(demoClock) } : r
           );
           return {
             ...t,
@@ -2149,7 +2272,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             version: jt.version,
             formsRequired: jt.formsRequired,
             isDirectToInvoice: jt.isDirectToInvoice,
-            updatedAt: demoClock.slice(0, 16),
+            updatedAt: serializeBusinessInstant(demoClock),
             updatedBy: persona.toUpperCase(),
           };
           return {
@@ -2228,7 +2351,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       formType,
       recipientEmail: `${job.siteContact.toLowerCase().replace(/[^a-z0-9]/g, '.')}@example.invalid`,
       status: simulateFail ? 'FAILED' : 'SENT',
-      sentAt: demoClock.slice(0, 16),
+      sentAt: serializeBusinessInstant(demoClock),
       documentTitle: docTitle,
       snapshotSummary: formSnapshot,
       fullFrozenDocumentSnapshot: fullDocSnapshot,
@@ -2249,7 +2372,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCertificateDeliveries(prev =>
       prev.map(d =>
         d.id === deliveryId
-          ? { ...d, status: 'SENT', sentAt: demoClock.slice(0, 16) }
+          ? { ...d, status: 'SENT', sentAt: serializeBusinessInstant(demoClock) }
           : d
       )
     );
@@ -2262,7 +2385,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const brandName = brands[brandId]?.name || 'CABMS Brand';
     const newEnquiry: WebsiteEnquiry = {
       id: `ENQ-2026-${seqCounters.enquiry}`,
-      submissionDate: demoClock.slice(0, 16),
+      submissionDate: serializeBusinessInstant(demoClock),
       sourceWebsite: `${brandName} Public Online Form`,
       brandId,
       customerName: 'Marcus Vance',
@@ -2292,9 +2415,20 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { customerId: enq.matchedExistingCustomerId || '', jobId: enq.convertedJobId || '' };
     }
 
+    const matchedJt = jobTypes.find(jt => jt.id === jobTypeId);
+    if (!matchedJt || matchedJt.brandId !== enq.brandId) {
+      showDemoNotification('Enquiry conversion blocked: choose a configured job type for the enquiry business.', 'error');
+      return { customerId: '', jobId: '' };
+    }
+
     // Customer match resolution
     let customerId = matchedCustomerId || enq.matchedExistingCustomerId;
     let unresolvedWarning: string | undefined;
+
+    if (customerId && !customers.some(customer => customer.id === customerId)) {
+      showDemoNotification('Enquiry conversion blocked: the selected customer record no longer exists.', 'error');
+      return { customerId: '', jobId: '' };
+    }
 
     if (!customerId) {
       const res = simulateCustomerWriteThrough({
@@ -2307,25 +2441,34 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         notes: `Converted from website enquiry ${enquiryId}`,
       });
 
-      if (!res.success) {
-        unresolvedWarning = 'Customer saved as unresolved local draft (MYOB offline). Work order created with pending sync flag.';
+      if ('matchedCustomer' in res && res.matchedCustomer) {
+        customerId = res.matchedCustomer.id;
+        if (res.matchedCustomer.syncStatus !== 'SYNCED' || res.matchedCustomer.isRecoverableDraft) {
+          unresolvedWarning = 'Matched customer is a recoverable local draft with pending MYOB reconciliation.';
+        }
+      } else if ('customer' in res && res.customer) {
+        customerId = res.customer.id;
+        if (!res.success) {
+          unresolvedWarning = 'Customer saved as a recoverable local draft (MYOB unavailable). Work order linked to that pending customer record.';
+        }
+      } else {
+        showDemoNotification('Enquiry conversion blocked: no valid customer record could be resolved.', 'error');
+        return { customerId: '', jobId: '' };
       }
-      customerId = res.customer?.id || 'CUSTOMER-DEMO-001';
     }
-
-    const matchedJt = jobTypes.find(jt => jt.id === jobTypeId) || jobTypes[0];
 
     const newJob = createJob({
       brandId: enq.brandId,
       customerId,
       title: `${enq.serviceRequested}`,
-      jobType: matchedJt.name,
+      jobType: matchedJt.id,
       formsRequired: matchedJt.formsRequired,
       isDirectToInvoice: matchedJt.isDirectToInvoice,
       siteAddress: enq.address,
       siteContact: enq.customerName,
       sitePhone: enq.phone,
       description: `Originating from enquiry ${enquiryId}: ${enq.notes}`,
+      unresolvedWarnings: unresolvedWarning ? [unresolvedWarning] : [],
     });
 
     setWebsiteEnquiries(prev =>
@@ -2363,6 +2506,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const simulateSignIn = (role: Persona) => {
+    authoritativeSessionRef.current = true;
     authoritativePersonaRef.current = role;
     setPersona(role);
     setIsSimulatedSignedIn(true);
@@ -2370,6 +2514,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const simulateSignOut = () => {
+    authoritativeSessionRef.current = false;
     setIsSimulatedSignedIn(false);
     showDemoNotification('Signed out of demo session.', 'info');
   };

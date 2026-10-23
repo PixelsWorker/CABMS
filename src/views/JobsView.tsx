@@ -9,7 +9,6 @@
 
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
-import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import {
   Briefcase,
   Search,
@@ -69,6 +68,8 @@ export const JobsView: React.FC = () => {
   const [newTitle, setNewTitle] = useState('');
   const [newCustId, setNewCustId] = useState(customers[0]?.id || '');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState<string>(jobTypes[0]?.id || '');
+  const brandJobTypes = jobTypes.filter(jobType => jobType.brandId === activeBrandId);
+  const selectedJobType = brandJobTypes.find(jobType => jobType.id === selectedJobTypeId) || brandJobTypes[0];
   const [newSiteAddress, setNewSiteAddress] = useState('[Fictional] 50 Cavill Avenue, Surfers Paradise QLD 4217');
   const [newSiteContact, setNewSiteContact] = useState('John Citizen');
   const [newSitePhone, setNewSitePhone] = useState('0400 000 001');
@@ -77,39 +78,22 @@ export const JobsView: React.FC = () => {
   const [newIsDirectToInvoice, setNewIsDirectToInvoice] = useState(false);
   const [newForms, setNewForms] = useState<('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[]>(['JSA']);
 
-  // Selected job
-  const selectedJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
-
-  // Technician Access Enforcement AFTER hooks (G00-008)
-  const isTechnicianRestricted =
-    persona === 'technician' &&
-    selectedJob &&
-    (selectedJob.assignedTechId === null || selectedJob.assignedTechId !== 'TECH-001');
-
-  if (isTechnicianRestricted) {
-    return (
-      <AccessDeniedView
-        resourceName={`Unassigned or External Job Order (${selectedJob?.id || 'JOB'})`}
-        requiredRoleDescription="Assigned Field Technician (Dave Miller TECH-001) or Office Staff"
-        customExplanation="Technicians can only access jobs directly assigned to them. Direct route access to unassigned pool jobs or other technician's work orders is denied."
-      />
-    );
-  }
+  // Resolve selection only inside the active business/persona boundary. A stale id
+  // after a brand or persona switch must never select an out-of-scope record.
+  const authorizedJobs = jobs.filter(j =>
+    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
+  );
+  const selectedJob = authorizedJobs.find(j => j.id === selectedJobId) || authorizedJobs[0];
 
   // Filter jobs by active brand & status
-  const filteredJobs = jobs.filter(j => {
-    // If technician, only show assigned to Dave Miller (TECH-001)
-    if (persona === 'technician' && j.assignedTechId !== 'TECH-001') {
-      return false;
-    }
-    const matchesBrand = j.brandId === activeBrandId;
+  const filteredJobs = authorizedJobs.filter(j => {
     const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
     const matchesSearch =
       j.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       j.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       j.siteContact.toLowerCase().includes(searchQuery.toLowerCase()) ||
       j.siteAddress.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesBrand && matchesStatus && matchesSearch;
+    return matchesStatus && matchesSearch;
   });
 
   const handleCompleteAttempt = () => {
@@ -120,7 +104,7 @@ export const JobsView: React.FC = () => {
 
   const handleJobTypeChange = (typeId: string) => {
     setSelectedJobTypeId(typeId);
-    const jt = jobTypes.find(t => t.id === typeId);
+    const jt = brandJobTypes.find(t => t.id === typeId);
     if (jt) {
       setNewIsDirectToInvoice(jt.isDirectToInvoice);
       setNewForms(jt.formsRequired);
@@ -136,20 +120,16 @@ export const JobsView: React.FC = () => {
 
     const matchedCust = customers.find(c => c.id === newCustId) || customers[0];
     const tech = technicians.find(t => t.id === newAssignedTechId);
-    const selectedJt = jobTypes.find(t => t.id === selectedJobTypeId) || jobTypes[0];
-    const hasTech = Boolean(newAssignedTechId);
+    const selectedJt = selectedJobType;
+    if (!selectedJt) return;
 
     const created = createJob({
       brandId: activeBrandId,
       customerId: matchedCust.id,
       title: newTitle,
-      jobType: selectedJt.name,
+      jobType: selectedJt.id,
       jobTypeVersion: selectedJt.version,
       description: newDescription || `${newTitle} for ${matchedCust.name}`,
-      status: hasTech ? 'SCHEDULED' : 'NEW',
-      appointmentStatus: hasTech ? 'SCHEDULED' : 'UNSCHEDULED',
-      scheduledDate: hasTech ? '2026-11-04' : null,
-      scheduledTime: hasTech ? '10:00' : null,
       assignedTechId: newAssignedTechId,
       assignedTechName: tech ? tech.name : null,
       siteAddress: newSiteAddress,
@@ -182,6 +162,14 @@ export const JobsView: React.FC = () => {
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">{status}</span>;
     }
   };
+
+  if (!selectedJob) {
+    return (
+      <div role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-300">
+        No work orders are available for this business and your current access.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -662,11 +650,11 @@ export const JobsView: React.FC = () => {
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">Standard Job Type (Template)</label>
                 <select
-                  value={selectedJobTypeId}
+                  value={selectedJobType?.id || ''}
                   onChange={e => handleJobTypeChange(e.target.value)}
                   className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white cursor-pointer"
                 >
-                  {jobTypes.map(jt => (
+                  {brandJobTypes.map(jt => (
                     <option key={jt.id} value={jt.id}>
                       {jt.name} ({jt.isDirectToInvoice ? 'Direct to Invoice' : jt.formsRequired.join('+')})
                     </option>
@@ -751,25 +739,25 @@ export const JobsView: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <span className="text-white font-semibold">Job Type Compliance Policy</span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                    jobTypes.find(t => t.id === selectedJobTypeId)?.isDirectToInvoice
+                    selectedJobType?.isDirectToInvoice
                       ? 'bg-sky-950 text-sky-400 border border-sky-800'
                       : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                   }`}>
-                    {jobTypes.find(t => t.id === selectedJobTypeId)?.isDirectToInvoice ? 'Direct to Invoice' : 'Compliance Documents Required'}
+                    {selectedJobType?.isDirectToInvoice ? 'Direct to Invoice' : 'Compliance Documents Required'}
                   </span>
                 </div>
 
-                {jobTypes.find(t => t.id === selectedJobTypeId)?.isDirectToInvoice ? (
+                {selectedJobType?.isDirectToInvoice ? (
                   <p className="text-slate-400 text-[11px]">
                     Direct-to-invoice service: no compliance documentation required for operational completion.
                   </p>
                 ) : (
                   <div>
                     <span className="block text-slate-400 font-semibold mb-1">
-                      Mandatory Forms (governed by {jobTypes.find(t => t.id === selectedJobTypeId)?.name} {jobTypes.find(t => t.id === selectedJobTypeId)?.version}):
+                      Mandatory Forms (governed by {selectedJobType?.name} {selectedJobType?.version}):
                     </span>
                     <div className="flex flex-wrap gap-2">
-                      {jobTypes.find(t => t.id === selectedJobTypeId)?.formsRequired.map(ft => (
+                      {selectedJobType?.formsRequired.map(ft => (
                         <span key={ft} className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-sky-300 font-mono text-[11px] font-bold">
                           {ft}
                         </span>

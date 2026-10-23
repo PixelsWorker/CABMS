@@ -125,7 +125,7 @@ export const QuotesAcceptanceView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex w-full min-w-0 flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
             <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
               <button
                 onClick={() => setViewMode('office')}
@@ -150,12 +150,14 @@ export const QuotesAcceptanceView: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <span className="text-xs text-slate-400">Target Job:</span>
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="quote-work-order" className="shrink-0 text-xs text-slate-400">Target Job:</label>
               <select
+                id="quote-work-order"
+                title={`${currentJob.id} — ${currentJob.title}`}
                 value={selectedJobId || ''}
                 onChange={e => setSelectedJobId(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono text-xs font-bold cursor-pointer"
+                className="w-full min-w-0 max-w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono text-xs font-bold cursor-pointer"
               >
                 {jobs.map(j => (
                   <option key={j.id} value={j.id}>

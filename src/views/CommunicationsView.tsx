@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react';
+import { formatBusinessTime } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import {
@@ -88,10 +89,6 @@ export const CommunicationsView: React.FC = () => {
     signedCerts.push(`TCA2_Defect_Notice_${currentJob.id}_Signed.pdf`);
   }
 
-  const formatClock = (isoStr: string) => {
-    const d = new Date(isoStr);
-    return `${d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`;
-  };
 
   return (
     <div className="space-y-6">
@@ -110,11 +107,11 @@ export const CommunicationsView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex w-full min-w-0 flex-wrap items-center gap-3 sm:w-auto">
             {/* Clock Advance Widget (G00-020) */}
-            <div className="flex items-center space-x-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
+            <div className="flex max-w-full flex-wrap items-center gap-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-mono text-white font-bold">{formatClock(demoClock)}</span>
+              <span className="font-mono text-white font-bold">{formatBusinessTime(demoClock)}</span>
               <button
                 onClick={() => advanceClock(2)}
                 className="ml-2 px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[10px] font-semibold cursor-pointer"
@@ -124,19 +121,21 @@ export const CommunicationsView: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <span className="text-xs text-slate-400">Target Work Order:</span>
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+              <label htmlFor="communications-work-order" className="shrink-0 text-xs text-slate-400">Target Work Order:</label>
               <select
+                id="communications-work-order"
+                title={`${currentJob.id} — ${currentJob.title}`}
                 value={selectedJobId || ''}
                 onChange={e => {
                   setSelectedJobId(e.target.value);
                   setReviewFeedback(null);
                 }}
-                className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono text-xs font-bold cursor-pointer"
+                className="w-full min-w-0 max-w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono text-xs font-bold cursor-pointer"
               >
                 {jobs.map(j => (
                   <option key={j.id} value={j.id}>
-                    {j.id} ({j.title.slice(0, 30)}...)
+                    {j.id} — {j.title}
                   </option>
                 ))}
               </select>
@@ -145,10 +144,10 @@ export const CommunicationsView: React.FC = () => {
         </div>
 
         {/* Sub-Tabs */}
-        <div className="flex space-x-2 mt-4 pt-4 border-t border-slate-800 text-xs">
+        <div className="flex min-w-0 flex-wrap gap-2 mt-4 pt-4 border-t border-slate-800 text-xs">
           <button
             onClick={() => setActiveTab('reviews')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
+            className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'reviews'
                 ? 'bg-emerald-600 text-slate-950 shadow-sm'
                 : 'bg-slate-950 text-slate-400 hover:text-white'
@@ -160,7 +159,7 @@ export const CommunicationsView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('reminders')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
+            className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'reminders'
                 ? 'bg-emerald-600 text-slate-950 shadow-sm'
                 : 'bg-slate-950 text-slate-400 hover:text-white'
@@ -172,7 +171,7 @@ export const CommunicationsView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('certificates')}
-            className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
+            className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'certificates'
                 ? 'bg-emerald-600 text-slate-950 shadow-sm'
                 : 'bg-slate-950 text-slate-400 hover:text-white'

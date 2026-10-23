@@ -1,6 +1,0 @@
-{
-  "summary":  "Revised technical implementation plan for CABMS G00 incorporating all eight manager review adjustments: TCA2 completion validation dependency via Tca2AuditRecord, single authoritative state atomicity with ref lifecycle, dual-level tests (pure logic + real context operations), observable review PENDING lifecycle, complete UI isolation for draft business profiles across SuperAdminSetupView and DemoControlsBar, dynamic runner test count reporting, calibrated synthetic demo wording with preserved dark styling, and strict G00 release guardrails.",
-  "updatedAt":  "2026-10-23T05:07:29.967183354Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

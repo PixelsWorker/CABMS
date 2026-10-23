@@ -5,6 +5,7 @@
  */
 
 import React, { useState } from 'react';
+import { formatBusinessTime } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import {
   Calendar as CalendarIcon,
@@ -73,11 +74,6 @@ export const ScheduleView: React.FC = () => {
     setCancelTarget(null);
   };
 
-  const formatClock = (isoStr: string) => {
-    const d = new Date(isoStr);
-    return `${d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })} ${d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`;
-  };
-
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -99,7 +95,7 @@ export const ScheduleView: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800 text-xs">
             <div className="flex items-center space-x-1.5 text-slate-400">
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-mono text-white font-bold">{formatClock(demoClock)}</span>
+              <span className="font-mono text-white font-bold">{formatBusinessTime(demoClock)}</span>
             </div>
             <div className="flex items-center space-x-1 pl-2 border-l border-slate-800">
               <button

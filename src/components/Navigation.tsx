@@ -1,224 +1,205 @@
-/**
- * Application Navigation & Brand Header
- * Responsive desktop & mobile navigation with persona-aware tabs
- */
-
+/** Shared ten-area navigation policy and presentation-only sidebar/drawer shell. */
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { Persona } from '../types/cabms.ts';
 import {
-  LayoutDashboard,
-  Users,
-  Briefcase,
-  Calendar,
-  FileCheck2,
-  FileText,
-  MessageSquare,
-  Inbox,
-  Settings,
-  Sliders,
-  ShieldAlert,
-  Menu,
-  X,
-  LogOut,
+  LayoutDashboard, Users, Briefcase, Calendar, FileCheck2, FileText,
+  MessageSquare, Inbox, Settings, Sliders, Menu, X, LogOut,
+  PanelLeftClose, PanelLeftOpen, type LucideIcon,
 } from 'lucide-react';
 
-export const Navigation: React.FC = () => {
-  const {
-    activeTab,
-    setActiveTab,
-    activeBrand,
-    persona,
-    websiteEnquiries,
-    demoNotification,
-    clearDemoNotification,
-    simulateSignOut,
-  } = useCabms();
+type Destination = {
+  id: string; label: string; icon: LucideIcon;
+  roles: readonly Persona[]; section: 'Operations' | 'Administration';
+};
+const everyone: readonly Persona[] = ['super_admin', 'owner_admin', 'office_staff', 'technician'];
+const office: readonly Persona[] = ['super_admin', 'owner_admin', 'office_staff'];
 
-  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
+export const CORE_DESTINATIONS: readonly Destination[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: everyone, section: 'Operations' },
+  { id: 'jobs', label: 'Jobs & Operations', icon: Briefcase, roles: everyone, section: 'Operations' },
+  { id: 'schedule', label: 'Schedule & Calendar', icon: Calendar, roles: everyone, section: 'Operations' },
+  { id: 'compliance', label: 'Compliance & Forms', icon: FileCheck2, roles: everyone, section: 'Operations' },
+  { id: 'customers', label: 'Customers (MYOB)', icon: Users, roles: office, section: 'Operations' },
+  { id: 'quotes', label: 'Quotations & Terms', icon: FileText, roles: office, section: 'Operations' },
+  { id: 'communications', label: 'Communications & Reviews', icon: MessageSquare, roles: office, section: 'Operations' },
+  { id: 'website_inbox', label: 'Website Enquiries', icon: Inbox, roles: office, section: 'Operations' },
+  { id: 'templates', label: 'Templates & Content', icon: Sliders, roles: ['super_admin', 'owner_admin'], section: 'Administration' },
+  { id: 'super_admin_setup', label: 'Integration Settings', icon: Settings, roles: ['super_admin'], section: 'Administration' },
+];
 
-  // Compute pending website inbox count
-  const pendingEnquiriesCount = websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW').length;
+export function canAccessDestination(persona: Persona, destinationId: string): boolean {
+  return CORE_DESTINATIONS.some(item => item.id === destinationId && item.roles.includes(persona));
+}
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['super_admin', 'owner_admin', 'office_staff', 'technician'] },
-    { id: 'jobs', label: 'Jobs & Operations', icon: Briefcase, roles: ['super_admin', 'owner_admin', 'office_staff', 'technician'] },
-    { id: 'schedule', label: 'Schedule & Calendar', icon: Calendar, roles: ['super_admin', 'owner_admin', 'office_staff', 'technician'] },
-    { id: 'compliance', label: 'Compliance & Forms', icon: FileCheck2, roles: ['super_admin', 'owner_admin', 'office_staff', 'technician'] },
-    { id: 'customers', label: 'Customers (MYOB)', icon: Users, roles: ['super_admin', 'owner_admin', 'office_staff'] }, // Not technician!
-    { id: 'quotes', label: 'Quotations & Terms', icon: FileText, roles: ['super_admin', 'owner_admin', 'office_staff'] },
-    { id: 'communications', label: 'Communications & Reviews', icon: MessageSquare, roles: ['super_admin', 'owner_admin', 'office_staff'] },
-    { id: 'website_inbox', label: 'Website Enquiries', icon: Inbox, badge: pendingEnquiriesCount > 0 ? pendingEnquiriesCount : undefined, roles: ['super_admin', 'owner_admin', 'office_staff'] },
-    { id: 'templates', label: 'Templates & Content', icon: Sliders, roles: ['super_admin', 'owner_admin'] },
-    { id: 'super_admin_setup', label: 'Integration Settings', icon: Settings, roles: ['super_admin'] },
-  ];
+const personaLabels: Record<Persona, string> = {
+  super_admin: 'Super Admin', owner_admin: 'Owner / Admin',
+  office_staff: 'Office Staff', technician: 'Technician (Dave Miller)',
+};
 
-  const handleTabClick = (tabId: string) => {
-    setActiveTab(tabId);
-    setMobileMenuOpen(false);
+export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+  const { activeTab, setActiveTab, activeBrand, persona, websiteEnquiries,
+    demoNotification, clearDemoNotification, simulateSignOut } = useCabms();
+  const [collapsed, setCollapsed] = React.useState(false);
+  const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [hint, setHint] = React.useState<{ label: string; top: number; left: number } | null>(null);
+  const openerRef = React.useRef<HTMLButtonElement>(null);
+  const collapseRef = React.useRef<HTMLButtonElement>(null);
+  const drawerRef = React.useRef<HTMLDivElement>(null);
+  const layerRef = React.useRef<HTMLDivElement>(null);
+  const closeRef = React.useRef<HTMLButtonElement>(null);
+  const permitted = CORE_DESTINATIONS.filter(item => item.roles.includes(persona));
+  const pendingEnquiries = websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW').length;
+  const activeDestination = CORE_DESTINATIONS.find(item => item.id === activeTab);
+
+  React.useEffect(() => {
+    // A changed persona or externally selected page must not leave an obsolete drawer open.
+    setMobileOpen(false);
+    setHint(null);
+  }, [persona, activeTab]);
+
+  React.useEffect(() => {
+    const media = window.matchMedia?.('(min-width: 1024px)');
+    const onDesktop = () => {
+      setHint(null);
+      if (media?.matches) setMobileOpen(false);
+    };
+    media?.addEventListener('change', onDesktop);
+    return () => media?.removeEventListener('change', onDesktop);
+  }, []);
+
+  React.useEffect(() => {
+    if (!mobileOpen || !drawerRef.current || !layerRef.current) return;
+    const drawer = drawerRef.current;
+    const savedOverflow = document.body.style.overflow;
+    const background = Array.from(document.body.children)
+      .filter(element => element !== layerRef.current)
+      .map(element => ({ element, wasInert: element.hasAttribute('inert') }));
+    background.forEach(({ element }) => element.setAttribute('inert', ''));
+    document.body.style.overflow = 'hidden';
+    closeRef.current?.focus();
+
+    const focusable = () => Array.from(drawer.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(element => !element.closest('[hidden]'));
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setMobileOpen(false);
+      } else if (event.key === 'Tab') {
+        const items = focusable();
+        const first = items[0];
+        const last = items.at(-1);
+        if (event.shiftKey && (document.activeElement === first || !drawer.contains(document.activeElement))) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !drawer.contains(document.activeElement))) {
+          event.preventDefault(); first?.focus();
+        }
+      }
+    };
+    const onFocus = (event: FocusEvent) => {
+      if (!drawer.contains(event.target as Node)) closeRef.current?.focus();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('focusin', onFocus);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('focusin', onFocus);
+      background.forEach(({ element, wasInert }) => { if (!wasInert) element.removeAttribute('inert'); });
+      document.body.style.overflow = savedOverflow;
+      const target = window.matchMedia?.('(min-width: 1024px)').matches ? collapseRef.current : openerRef.current;
+      if (target?.isConnected) target.focus();
+    };
+  }, [mobileOpen]);
+
+  const selectDestination = (id: string) => {
+    if (!canAccessDestination(persona, id)) return;
+    setActiveTab(id);
+    setMobileOpen(false);
+    setHint(null);
   };
+  const showHint = (button: HTMLButtonElement, label: string) => {
+    if (!collapsed) return;
+    const rect = button.getBoundingClientRect();
+    setHint({ label, top: rect.top + rect.height / 2, left: rect.right + 8 });
+  };
+  const links = (isDrawer: boolean) => (['Operations', 'Administration'] as const).map(section => {
+    const items = permitted.filter(item => item.section === section);
+    if (!items.length) return null;
+    return <section className="cabms-nav-section" key={section} aria-label={section}>
+      <h2 className={`cabms-nav-section-title ${!isDrawer && collapsed ? 'cabms-sr-only' : ''}`}>{section}</h2>
+      {items.map(item => <button
+        key={item.id} type="button" className="cabms-nav-link"
+        aria-label={item.label} aria-current={activeTab === item.id ? 'page' : undefined}
+        title={item.label} onClick={() => selectDestination(item.id)}
+        onFocus={event => { if (!isDrawer) showHint(event.currentTarget, item.label); }}
+        onBlur={() => setHint(null)}
+        onMouseEnter={event => { if (!isDrawer) showHint(event.currentTarget, item.label); }}
+        onMouseLeave={event => { if (document.activeElement !== event.currentTarget) setHint(null); }}
+      >
+        <item.icon aria-hidden="true" className="cabms-nav-icon" />
+        <span className={!isDrawer && collapsed ? 'cabms-sr-only' : 'cabms-nav-label'}>{item.label}</span>
+        {item.id === 'website_inbox' && pendingEnquiries > 0 &&
+          <span className="cabms-nav-badge" aria-label={`${pendingEnquiries} pending enquiries`}>{pendingEnquiries}</span>}
+      </button>)}
+    </section>;
+  });
 
-  return (
-    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40">
-      {/* Brand & Role Header Bar */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between">
-        {/* Brand Logo & Identifier */}
-        <div className="flex items-center space-x-3">
-          <div
-            className="w-9 h-9 rounded-lg flex items-center justify-center font-black text-white text-lg shadow-md"
-            style={{ backgroundColor: activeBrand.primaryColor }}
-          >
-            {activeBrand.name.charAt(0)}
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-extrabold text-base md:text-lg text-white tracking-tight">
-                {activeBrand.name}
-              </span>
-              <span
-                className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded text-white"
-                style={{ backgroundColor: activeBrand.primaryColor }}
-              >
-                CABMS
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 hidden sm:block">
-              {activeBrand.tagline}
-            </p>
-          </div>
-        </div>
-
-        {/* Persona Badge, Sign Out & Mobile Menu Toggle */}
-        <div className="flex items-center space-x-3">
-          <div className="text-right hidden sm:block">
-            <span className="text-[11px] text-slate-400 block">Current Persona</span>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-800 text-sky-300 border border-slate-700">
-              {persona === 'super_admin' && 'Super Admin'}
-              {persona === 'owner_admin' && 'Owner / Admin'}
-              {persona === 'office_staff' && 'Office Staff'}
-              {persona === 'technician' && 'Technician (Dave Miller)'}
-            </span>
-          </div>
-
-          <button
-            onClick={simulateSignOut}
-            className="flex items-center space-x-1 px-2.5 py-1 bg-slate-800/80 hover:bg-red-950/60 hover:text-red-300 hover:border-red-800 border border-slate-700 text-slate-300 text-xs rounded transition cursor-pointer"
-            title="Simulate signing out of the current demo session"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Sign Out</span>
-          </button>
-
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg"
-            aria-label="Toggle navigation menu"
-          >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-        </div>
+  return <div className="cabms-shell" data-sidebar-collapsed={collapsed}>
+    <a className="cabms-skip-link" href="#cabms-main-content" onClick={() => document.getElementById('cabms-main-content')?.focus()}>Skip to main content</a>
+    <aside className="cabms-sidebar" aria-label="Desktop sidebar">
+      <div className="cabms-sidebar-heading">
+        {!collapsed && <span className="cabms-sidebar-wordmark">CABMS<span>Business operations</span></span>}
+        <button ref={collapseRef} type="button" className="cabms-icon-button"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!collapsed} aria-controls="cabms-desktop-navigation"
+          onClick={() => { setCollapsed(value => !value); setHint(null); }}>
+          {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+        </button>
       </div>
-
-      {/* Desktop Navigation Tabs */}
-      <nav className="hidden md:block bg-slate-950/70 border-t border-slate-800/80 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto flex space-x-1 overflow-x-auto scrollbar-none py-1">
-          {navItems.map(item => {
-            const hasAccess = item.roles.includes(persona);
-            const isActive = activeTab === item.id;
-
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleTabClick(item.id)}
-                className={`flex items-center space-x-1.5 px-3 py-2 text-xs font-medium rounded-md whitespace-nowrap transition cursor-pointer ${
-                  isActive
-                    ? 'bg-slate-800 text-white shadow-sm border border-slate-700'
-                    : hasAccess
-                    ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/80'
-                    : 'text-slate-600 hover:text-red-400 hover:bg-red-950/20'
-                }`}
-                title={!hasAccess ? `Access Denied for ${persona}` : item.label}
-              >
-                <item.icon className={`w-3.5 h-3.5 ${isActive ? 'text-amber-400' : hasAccess ? 'text-slate-400' : 'text-slate-600'}`} />
-                <span>{item.label}</span>
-                {item.badge !== undefined && (
-                  <span className="bg-amber-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.2 rounded-full">
-                    {item.badge}
-                  </span>
-                )}
-                {!hasAccess && (
-                  <span className="text-[10px] text-red-400 bg-red-950/60 px-1 rounded">
-                    Denied
-                  </span>
-                )}
-              </button>
-            );
-          })}
+      <nav id="cabms-desktop-navigation" aria-label="Main navigation" className="cabms-nav-scroll" onScroll={() => setHint(null)}>{links(false)}</nav>
+      <p className={`cabms-sidebar-disclosure ${collapsed ? 'cabms-sr-only' : ''}`}>Demo workspace<br />No live integrations</p>
+    </aside>
+    <div className="cabms-workspace">
+      <header className="cabms-topbar">
+        <button ref={openerRef} type="button" className="cabms-icon-button cabms-mobile-toggle"
+          aria-label="Open navigation" aria-expanded={mobileOpen} aria-controls="cabms-mobile-drawer"
+          onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></button>
+        <div className="cabms-brand-mark" style={{ backgroundColor: activeBrand.primaryColor }} aria-hidden="true">{activeBrand.name.charAt(0)}</div>
+        <div className="cabms-topbar-identity">
+          <span className="cabms-business-name">{activeBrand.name}</span>
+          <span className="cabms-active-area">{activeDestination?.label || 'Restricted destination'}</span>
         </div>
-      </nav>
-
-      {/* Mobile Drawer Menu */}
-      {mobileMenuOpen && (
-        <div className="md:hidden bg-slate-950 border-t border-slate-800 px-4 py-3 space-y-1">
-          {navItems.map(item => {
-            const hasAccess = item.roles.includes(persona);
-            const isActive = activeTab === item.id;
-
-            return (
-              <button
-                key={item.id}
-                onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-md transition ${
-                  isActive
-                    ? 'bg-slate-800 text-white font-semibold'
-                    : hasAccess
-                    ? 'text-slate-300 hover:bg-slate-900'
-                    : 'text-slate-600 hover:text-red-400'
-                }`}
-              >
-                <div className="flex items-center space-x-2">
-                  <item.icon className="w-4 h-4" />
-                  <span>{item.label}</span>
-                </div>
-                {item.badge !== undefined && (
-                  <span className="bg-amber-500 text-slate-950 text-xs font-bold px-2 py-0.5 rounded-full">
-                    {item.badge}
-                  </span>
-                )}
-                {!hasAccess && (
-                  <span className="text-xs text-red-400 bg-red-950/60 px-1.5 py-0.5 rounded">
-                    Role Denied
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Global Interactive Demo Notification / Feedback Toast */}
-      {demoNotification && (
-        <div
-          className={`px-4 py-2 text-xs flex items-center justify-between ${
-            demoNotification.type === 'error'
-              ? 'bg-red-950 border-b border-red-800 text-red-200'
-              : demoNotification.type === 'warning'
-              ? 'bg-amber-950 border-b border-amber-800 text-amber-200'
-              : demoNotification.type === 'success'
-              ? 'bg-emerald-950 border-b border-emerald-800 text-emerald-200'
-              : 'bg-sky-950 border-b border-sky-800 text-sky-200'
-          }`}
-        >
-          <div className="max-w-7xl mx-auto w-full flex items-center justify-between">
-            <span className="font-medium">{demoNotification.message}</span>
-            <button
-              onClick={clearDemoNotification}
-              className="text-xs hover:underline ml-4 font-bold"
-            >
-              Dismiss
-            </button>
+        <span className="cabms-persona">{personaLabels[persona]}</span>
+        <button type="button" className="cabms-icon-button" aria-label="Sign out"
+          title="Simulate signing out of the current demo session" onClick={simulateSignOut}>
+          <LogOut aria-hidden="true" /><span className="cabms-sr-only">Sign out</span>
+        </button>
+      </header>
+      {demoNotification && <div className="cabms-notification" data-tone={demoNotification.type} role="status" aria-live="polite">
+        <span>{demoNotification.message}</span>
+        <button type="button" onClick={clearDemoNotification}>Dismiss</button>
+      </div>}
+      {children}
+    </div>
+    {hint && collapsed && typeof document !== 'undefined' && createPortal(
+      <div className="cabms-nav-tooltip" role="tooltip" style={{ top: hint.top, left: hint.left }}>{hint.label}</div>, document.body
+    )}
+    {mobileOpen && typeof document !== 'undefined' && createPortal(
+      <div ref={layerRef} className="cabms-drawer-layer">
+        <div className="cabms-drawer-backdrop" aria-hidden="true" onClick={() => setMobileOpen(false)} />
+        <div ref={drawerRef} id="cabms-mobile-drawer" className="cabms-mobile-drawer" role="dialog" aria-modal="true" aria-labelledby="cabms-drawer-title">
+          <div className="cabms-drawer-heading">
+            <h2 id="cabms-drawer-title">CABMS navigation</h2>
+            <button ref={closeRef} type="button" className="cabms-icon-button" aria-label="Close navigation" onClick={() => setMobileOpen(false)}><X aria-hidden="true" /></button>
           </div>
+          <p className="cabms-drawer-identity">{activeBrand.name}<br /><span>{personaLabels[persona]}</span></p>
+          <nav aria-label="Mobile navigation" className="cabms-nav-scroll">{links(true)}</nav>
+          <p className="cabms-sidebar-disclosure">Demo workspace · No live integrations</p>
         </div>
-      )}
-    </header>
-  );
+      </div>, document.body
+    )}
+  </div>;
 };

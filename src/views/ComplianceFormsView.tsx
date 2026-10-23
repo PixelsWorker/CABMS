@@ -166,11 +166,43 @@ export const ComplianceFormsView: React.FC = () => {
   };
 
   const activeStatus = getActiveFormStatus();
+  const activeFormRecord: any = (() => {
+    switch (activeFormTab) {
+      case 'JSA': return currentJsa;
+      case 'ELECTRICAL': return currentElec;
+      case 'SMOKE_ALARM': return currentSmoke;
+      case 'TCA1': return currentTca1;
+      case 'TCA2': return currentTca2;
+    }
+  })();
+  const snapshotValidation = activeStatus.signedOff
+    ? validateSignedSnapshot(activeFormRecord?.fullSnapshot, currentJob.id, activeFormTab)
+    : undefined;
+  const frozenDocumentSnapshot = snapshotValidation?.valid ? snapshotValidation.parsedSnapshot : undefined;
+  const documentData = frozenDocumentSnapshot || activeFormRecord;
+  const documentDate = documentData?.date
+    || documentData?.dateOfTest
+    || documentData?.dateOfInspection
+    || documentData?.dateOfWork
+    || documentData?.inspectionDate;
+  const documentSigner = activeStatus.signedOff
+    ? frozenDocumentSnapshot?.signedByTechName || 'Unavailable (invalid snapshot)'
+    : activeStatus.signerName;
+  const documentSignedTimestamp = activeStatus.signedOff
+    ? frozenDocumentSnapshot?.signedTimestamp || 'Unavailable (invalid snapshot)'
+    : activeStatus.timestamp;
 
-  // Helper for adding a new JSA step (deterministic sequential ID)
+  const nextRowId = (prefix: string, existingIds: string[]) => {
+    const used = new Set(existingIds);
+    let sequence = 1;
+    while (used.has(`${prefix}-${sequence}`)) sequence++;
+    return `${prefix}-${sequence}`;
+  };
+
+  // Preserve existing row IDs and choose an unused ID after additions/deletions.
   const handleAddJsaStep = () => {
     const newStep = {
-      id: `STEP-${currentJsa.steps.length + 1}`,
+      id: nextRowId('STEP', currentJsa.steps.map(step => step.id)),
       taskStep: 'Additional Site Task',
       hazards: 'Site-specific hazard identified',
       initialRisk: 'M' as const,
@@ -194,7 +226,7 @@ export const ComplianceFormsView: React.FC = () => {
   // Helper for adding Smoke Alarm row (deterministic sequential ID)
   const handleAddSmokeAlarmRow = () => {
     const newRow = {
-      id: `ALARM-${currentSmoke.alarmSchedule.length + 1}`,
+      id: nextRowId('ALARM', currentSmoke.alarmSchedule.map(alarm => alarm.id)),
       roomLocation: 'Additional Bedroom / Hallway',
       alarmBrandModel: 'Clipsal 755PSMA4',
       standardMarkingPlaceholder: 'AS 3786:2014',
@@ -241,12 +273,14 @@ export const ComplianceFormsView: React.FC = () => {
 
         {/* Selected Job Indicator */}
         <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center space-x-2">
-            <span className="text-slate-400">Current Work Order:</span>
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+            <label htmlFor="compliance-work-order" className="shrink-0 text-xs text-slate-400">Current Work Order:</label>
             <select
+              id="compliance-work-order"
+              title={`${currentJob.id} — ${currentJob.title}`}
               value={selectedJobId || ''}
               onChange={e => setSelectedJobId(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono font-bold cursor-pointer"
+              className="w-full min-w-0 max-w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono font-bold cursor-pointer"
             >
               {jobs
                 .filter(j => persona !== 'technician' || j.assignedTechId === 'TECH-001')
@@ -483,6 +517,7 @@ export const ComplianceFormsView: React.FC = () => {
                 </h3>
                 <button
                   onClick={handleAddJsaStep}
+                  disabled={currentJsa.signedOff}
                   className="flex items-center space-x-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded text-xs font-semibold cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
@@ -507,11 +542,11 @@ export const ComplianceFormsView: React.FC = () => {
                       <tr key={step.id}>
                         <td className="p-2.5 font-semibold text-white">
                           <input
+                            disabled={currentJsa.signedOff}
                             type="text"
                             value={step.taskStep}
                             onChange={e => {
-                              const updated = [...currentJsa.steps];
-                              updated[idx].taskStep = e.target.value;
+                              const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, taskStep: e.target.value } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-white"
@@ -519,11 +554,11 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-red-300">
                           <input
+                            disabled={currentJsa.signedOff}
                             type="text"
                             value={step.hazards}
                             onChange={e => {
-                              const updated = [...currentJsa.steps];
-                              updated[idx].hazards = e.target.value;
+                              const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, hazards: e.target.value } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-red-200"
@@ -531,10 +566,10 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <select
+                            disabled={currentJsa.signedOff}
                             value={step.initialRisk}
                             onChange={e => {
-                              const updated = [...currentJsa.steps];
-                              updated[idx].initialRisk = e.target.value as any;
+                              const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, initialRisk: e.target.value as any } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
                             className="bg-red-950 border border-red-800 text-red-300 rounded px-1.5 py-0.5 text-[11px] font-bold"
@@ -547,11 +582,11 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-slate-300">
                           <input
+                            disabled={currentJsa.signedOff}
                             type="text"
                             value={step.controls}
                             onChange={e => {
-                              const updated = [...currentJsa.steps];
-                              updated[idx].controls = e.target.value;
+                              const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, controls: e.target.value } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-slate-200"
@@ -559,10 +594,10 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <select
+                            disabled={currentJsa.signedOff}
                             value={step.residualRisk}
                             onChange={e => {
-                              const updated = [...currentJsa.steps];
-                              updated[idx].residualRisk = e.target.value as any;
+                              const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, residualRisk: e.target.value as any } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
                             className="bg-emerald-950 border border-emerald-800 text-emerald-300 rounded px-1.5 py-0.5 text-[11px] font-bold"
@@ -574,6 +609,7 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <button
+                            disabled={currentJsa.signedOff}
                             onClick={() => {
                               const updated = currentJsa.steps.filter((_, i) => i !== idx);
                               updateJsaForm(currentJob.id, { steps: updated });
@@ -603,6 +639,7 @@ export const ComplianceFormsView: React.FC = () => {
                     <button
                       key={idx}
                       type="button"
+                      disabled={currentJsa.signedOff}
                       onClick={() => handleTogglePpe(idx)}
                       className={`flex items-center space-x-2 p-2 rounded-lg border text-left transition cursor-pointer ${
                         isYes
@@ -696,11 +733,11 @@ export const ComplianceFormsView: React.FC = () => {
                       <div>
                         <label className="text-slate-400 block mb-0.5">Insulation Res.</label>
                         <input
+                            disabled={currentElec.signedOff}
                           type="text"
                           value={item.insulationResistanceResult}
                           onChange={e => {
-                            const updated = [...currentElec.testedWorkItems];
-                            updated[idx].insulationResistanceResult = e.target.value;
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, insulationResistanceResult: e.target.value } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono w-full"
@@ -710,11 +747,11 @@ export const ComplianceFormsView: React.FC = () => {
                       <div>
                         <label className="text-slate-400 block mb-0.5">RCD Trip Time</label>
                         <input
+                            disabled={currentElec.signedOff}
                           type="text"
                           value={item.rcdTripTimeMs}
                           onChange={e => {
-                            const updated = [...currentElec.testedWorkItems];
-                            updated[idx].rcdTripTimeMs = e.target.value;
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, rcdTripTimeMs: e.target.value } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono w-full"
@@ -724,10 +761,10 @@ export const ComplianceFormsView: React.FC = () => {
                       <div>
                         <label className="text-slate-400 block mb-0.5">Polarity</label>
                         <select
+                            disabled={currentElec.signedOff}
                           value={item.polarityTest}
                           onChange={e => {
-                            const updated = [...currentElec.testedWorkItems];
-                            updated[idx].polarityTest = e.target.value as any;
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, polarityTest: e.target.value as any } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white w-full"
@@ -740,10 +777,10 @@ export const ComplianceFormsView: React.FC = () => {
                       <div>
                         <label className="text-slate-400 block mb-0.5">Earth Continuity</label>
                         <select
+                            disabled={currentElec.signedOff}
                           value={item.earthContinuity}
                           onChange={e => {
-                            const updated = [...currentElec.testedWorkItems];
-                            updated[idx].earthContinuity = e.target.value as any;
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, earthContinuity: e.target.value as any } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white w-full"
@@ -807,6 +844,7 @@ export const ComplianceFormsView: React.FC = () => {
                 </h3>
                 <button
                   onClick={handleAddSmokeAlarmRow}
+                  disabled={currentSmoke.signedOff}
                   className="flex items-center space-x-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded text-xs font-semibold cursor-pointer"
                 >
                   <Plus className="w-3 h-3" />
@@ -831,11 +869,11 @@ export const ComplianceFormsView: React.FC = () => {
                       <tr key={alarm.id}>
                         <td className="p-2.5 font-semibold text-white">
                           <input
+                            disabled={currentSmoke.signedOff}
                             type="text"
                             value={alarm.roomLocation}
                             onChange={e => {
-                              const updated = [...currentSmoke.alarmSchedule];
-                              updated[idx].roomLocation = e.target.value;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, roomLocation: e.target.value } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-white"
@@ -843,10 +881,10 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-slate-300">
                           <select
+                            disabled={currentSmoke.signedOff}
                             value={alarm.powerSource}
                             onChange={e => {
-                              const updated = [...currentSmoke.alarmSchedule];
-                              updated[idx].powerSource = e.target.value as any;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, powerSource: e.target.value as any } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-300"
@@ -858,10 +896,10 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <button
+                            disabled={currentSmoke.signedOff}
                             type="button"
                             onClick={() => {
-                              const updated = [...currentSmoke.alarmSchedule];
-                              updated[idx].interconnectionPass = !updated[idx].interconnectionPass;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, interconnectionPass: !row.interconnectionPass } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -875,11 +913,11 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <input
+                            disabled={currentSmoke.signedOff}
                             type="text"
                             value={alarm.manufactureDateOrExpiry}
                             onChange={e => {
-                              const updated = [...currentSmoke.alarmSchedule];
-                              updated[idx].manufactureDateOrExpiry = e.target.value;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, manufactureDateOrExpiry: e.target.value } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-24 text-center text-white font-mono"
@@ -887,10 +925,10 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <select
+                            disabled={currentSmoke.signedOff}
                             value={alarm.passFail}
                             onChange={e => {
-                              const updated = [...currentSmoke.alarmSchedule];
-                              updated[idx].passFail = e.target.value as any;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, passFail: e.target.value as any } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -905,6 +943,7 @@ export const ComplianceFormsView: React.FC = () => {
                         </td>
                         <td className="p-2.5 text-center">
                           <button
+                            disabled={currentSmoke.signedOff}
                             onClick={() => {
                               const updated = currentSmoke.alarmSchedule.filter((_, i) => i !== idx);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
@@ -1255,7 +1294,8 @@ export const ComplianceFormsView: React.FC = () => {
                   {activeStatus.title}
                 </h2>
                 <div className="text-xs text-slate-600 font-mono">
-                  Job Reference: {currentJob.id} • Scheduled Date: {currentJob.scheduledDate}
+                  Document Job Reference: {activeStatus.signedOff && !frozenDocumentSnapshot ? 'Unavailable (invalid snapshot)' : documentData?.jobReference || currentJob.id}
+                  {' • Document Date: '}{activeStatus.signedOff && !frozenDocumentSnapshot ? 'Unavailable (invalid snapshot)' : documentDate || 'Not recorded'}
                 </div>
               </div>
               <button
@@ -1266,17 +1306,9 @@ export const ComplianceFormsView: React.FC = () => {
               </button>
             </div>
 
-            {/* Legal Issuer Header Snapshot: Uses saved issuer snapshot when signed, or live brand when unsigned */}
+            {/* Signed issuer details come from the frozen snapshot; current job data is identified separately below. */}
             {(() => {
-              const savedIssuer = (() => {
-                switch (activeFormTab) {
-                  case 'JSA': return currentJsa.signedOff ? currentJsa.frozenIssuerSnapshot : null;
-                  case 'ELECTRICAL': return currentElec.signedOff ? currentElec.frozenIssuerSnapshot : null;
-                  case 'SMOKE_ALARM': return currentSmoke.signedOff ? currentSmoke.frozenIssuerSnapshot : null;
-                  case 'TCA1': return currentTca1.signedOff ? currentTca1.frozenIssuerSnapshot : null;
-                  case 'TCA2': return currentTca2.signedOff ? currentTca2.frozenIssuerSnapshot : null;
-                }
-              })();
+              const savedIssuer = activeStatus.signedOff ? frozenDocumentSnapshot?.frozenIssuerSnapshot : null;
 
               return (
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
@@ -1287,7 +1319,7 @@ export const ComplianceFormsView: React.FC = () => {
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                       savedIssuer ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-slate-200 text-slate-700'
                     }`}>
-                      {savedIssuer ? 'Frozen Issuer Snapshot' : 'Live Brand Settings (Unsigned)'}
+                      {savedIssuer ? 'Frozen Issuer Snapshot' : activeStatus.signedOff ? 'Frozen Snapshot Unavailable' : 'Live Brand Settings (Unsigned)'}
                     </span>
                   </div>
 
@@ -1295,29 +1327,43 @@ export const ComplianceFormsView: React.FC = () => {
                     <div>
                       <span className="font-semibold block text-slate-500 text-[10px] uppercase">Issuer Name / Trading Entity:</span>
                       <strong className="text-slate-900 text-sm">
-                        {savedIssuer ? savedIssuer.split(' • ')[0] : jobBrand.legalIssuerName}
+                        {savedIssuer ? savedIssuer.split(' • ')[0] : activeStatus.signedOff ? 'Unavailable (invalid snapshot)' : jobBrand.legalIssuerName}
                       </strong>
-                      <span className="block text-slate-600 font-mono text-[11px]">Brand: {jobBrand.name}</span>
+                      {!activeStatus.signedOff && <span className="block text-slate-600 font-mono text-[11px]">Current brand: {jobBrand.name}</span>}
                     </div>
                     <div>
-                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Licences & ABN:</span>
+                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Issuer ABN:</span>
                       <span className="font-mono block text-[11px]">
-                        {savedIssuer && savedIssuer.includes('•') ? savedIssuer.split(' • ')[1] : `ABN: ${jobBrand.abnPlaceholder}`}
+                        {savedIssuer && savedIssuer.includes('•')
+                          ? savedIssuer.split(' • ')[1]
+                          : activeStatus.signedOff ? 'Unavailable (invalid snapshot)' : `ABN: ${jobBrand.abnPlaceholder}`}
                       </span>
-                      <span className="font-mono block text-[11px]">Elec Lic: {jobBrand.electricalLicencePlaceholder}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Site Address:</span>
-                      <span>{currentJob.siteAddress}</span>
-                    </div>
-                    <div>
-                      <span className="font-semibold block text-slate-500 text-[10px] uppercase">Customer / Contact:</span>
-                      <span>{currentJob.siteContact} ({currentJob.sitePhone})</span>
+                      {!activeStatus.signedOff && <span className="font-mono block text-[11px]">Current electrical licence setting: {jobBrand.electricalLicencePlaceholder}</span>}
                     </div>
                   </div>
                 </div>
               );
             })()}
+
+            <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg text-xs text-blue-950">
+              <strong>{activeStatus.signedOff ? 'Current operational job details — not part of the frozen signed document' : 'Current operational job details'}</strong>
+              <div className="mt-1">Site: {currentJob.siteAddress}</div>
+              <div>Customer / contact: {currentJob.siteContact} ({currentJob.sitePhone})</div>
+              {activeStatus.signedOff && <div className="italic mt-1">Certified form content below is rendered from its signed snapshot.</div>}
+            </div>
+
+            {activeStatus.signedOff && frozenDocumentSnapshot && (
+              <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-lg text-xs text-emerald-950">
+                <strong>Historical job details frozen in signed form</strong>
+                {frozenDocumentSnapshot.customerName && <div className="mt-1">Customer: {frozenDocumentSnapshot.customerName}</div>}
+                {(frozenDocumentSnapshot.siteAddress || frozenDocumentSnapshot.installationAddress || frozenDocumentSnapshot.locationOfWork) && (
+                  <div>Signed site / work location: {frozenDocumentSnapshot.siteAddress || frozenDocumentSnapshot.installationAddress || frozenDocumentSnapshot.locationOfWork}</div>
+                )}
+                {(frozenDocumentSnapshot.siteContactPlaceholder || frozenDocumentSnapshot.siteContact || frozenDocumentSnapshot.customerContact) && (
+                  <div>Signed customer contact: {frozenDocumentSnapshot.siteContactPlaceholder || frozenDocumentSnapshot.siteContact || frozenDocumentSnapshot.customerContact}</div>
+                )}
+              </div>
+            )}
 
             {/* TRUTHFUL SIGN-OFF STATUS WATERMARK / BOX (G00-004) */}
             <div
@@ -1345,10 +1391,10 @@ export const ComplianceFormsView: React.FC = () => {
               {activeStatus.signedOff ? (
                 <div className="space-y-0.5 text-slate-700 text-[11px]">
                   <div>
-                    Licensed Practitioner / Field Technician: <strong>{activeStatus.signerName}</strong>
+                    Licensed Practitioner / Field Technician: <strong>{documentSigner}</strong>
                   </div>
                   <div>
-                    Timestamp of Sign-Off: <span className="font-mono">{activeStatus.timestamp}</span>
+                    Timestamp of Sign-Off: <span className="font-mono">{documentSignedTimestamp}</span>
                   </div>
                   <div className="text-[10px] text-slate-500 italic">
                     Demonstration sign-off applied for UI/UX evaluation. Immutable snapshot preserved.
@@ -1364,33 +1410,14 @@ export const ComplianceFormsView: React.FC = () => {
             {/* Electrical Part B Notice in Print Preview */}
             {activeFormTab === 'ELECTRICAL' && (
               <div className="bg-amber-50 border border-amber-300 p-2.5 rounded-lg text-amber-900 text-xs font-semibold">
-                {currentElec.unresolvedNotice}
+                {frozenDocumentSnapshot?.unresolvedNotice || currentElec.unresolvedNotice}
               </div>
             )}
 
             {/* ================= COMPLETED FORM CONTENT REPRODUCTION ================= */}
             {(() => {
-              const activeFormObj = (() => {
-                switch (activeFormTab) {
-                  case 'JSA': return currentJsa;
-                  case 'ELECTRICAL': return currentElec;
-                  case 'SMOKE_ALARM': return currentSmoke;
-                  case 'TCA1': return currentTca1;
-                  case 'TCA2': return currentTca2;
-                }
-              })();
-
-              let parsedSnapshot: any = null;
-              let isSnapshotCorrupted = false;
-
-              if (activeStatus.signedOff) {
-                const valRes = validateSignedSnapshot(activeFormObj?.fullSnapshot, selectedJobId || undefined, activeFormTab);
-                if (!valRes.valid) {
-                  isSnapshotCorrupted = true;
-                } else {
-                  parsedSnapshot = valRes.parsedSnapshot;
-                }
-              }
+              const parsedSnapshot = frozenDocumentSnapshot;
+              const isSnapshotCorrupted = Boolean(activeStatus.signedOff && !parsedSnapshot);
 
               if (isSnapshotCorrupted) {
                 return (

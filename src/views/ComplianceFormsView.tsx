@@ -39,6 +39,7 @@ import {
   Tca1CertData,
   Tca2CertData,
 } from '../types/cabms.ts';
+import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
 
 type ActiveFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
 
@@ -1383,14 +1384,11 @@ export const ComplianceFormsView: React.FC = () => {
               let isSnapshotCorrupted = false;
 
               if (activeStatus.signedOff) {
-                if (!activeFormObj?.fullSnapshot) {
+                const valRes = validateSignedSnapshot(activeFormObj?.fullSnapshot, selectedJobId || undefined, activeFormTab);
+                if (!valRes.valid) {
                   isSnapshotCorrupted = true;
                 } else {
-                  try {
-                    parsedSnapshot = JSON.parse(activeFormObj.fullSnapshot);
-                  } catch {
-                    isSnapshotCorrupted = true;
-                  }
+                  parsedSnapshot = valRes.parsedSnapshot;
                 }
               }
 

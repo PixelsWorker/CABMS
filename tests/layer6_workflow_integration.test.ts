@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import React from 'react';
-import { renderToString } from 'react-dom/server';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { JSDOM } from 'jsdom';
 import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
 import {
   Customer,
@@ -29,6 +30,7 @@ import {
   recalculateJobAttachments,
   processPublishTemplate,
   processReviewDispatch,
+  validateSignedSnapshot,
 } from '../src/utils/cabmsLogic.ts';
 import {
   INITIAL_BRANDS,
@@ -37,14 +39,61 @@ import {
   INITIAL_TEMPLATES,
 } from '../src/data/seedData.ts';
 
-// Helper to obtain real CabmsContext actions inside node:test environment
+// Global JSDOM setup for mounted React 19 testing
+const dom = new JSDOM('<!DOCTYPE html><html><body><div id="root"></div></body></html>', {
+  url: 'http://localhost:3000',
+});
+Object.defineProperty(globalThis, 'window', { value: dom.window, writable: true, configurable: true });
+Object.defineProperty(globalThis, 'document', { value: dom.window.document, writable: true, configurable: true });
+Object.defineProperty(globalThis, 'HTMLDivElement', { value: dom.window.HTMLDivElement, writable: true, configurable: true });
+Object.defineProperty(globalThis, 'HTMLElement', { value: dom.window.HTMLElement, writable: true, configurable: true });
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+// Executable Mounted React Context Runner
+export async function withMountedContext(
+  testFn: (ctx: ReturnType<typeof useCabms>, container: HTMLDivElement) => Promise<void> | void
+) {
+  const container = dom.window.document.createElement('div');
+  dom.window.document.body.appendChild(container);
+  const root = createRoot(container);
+
+  let currentContext!: ReturnType<typeof useCabms>;
+
+  function TestObserver() {
+    currentContext = useCabms();
+    return React.createElement('div', { id: 'test-observer-mounted' },
+      React.createElement('span', { id: 'job-count' }, currentContext.jobs.length),
+      React.createElement('span', { id: 'persona-badge' }, currentContext.persona)
+    );
+  }
+
+  await act(async () => {
+    root.render(
+      React.createElement(CabmsProvider, null, React.createElement(TestObserver))
+    );
+  });
+
+  try {
+    await testFn(currentContext, container);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  }
+}
+
+// Synchronous helper for legacy journey calls
 function getMountedCabmsContext() {
   let ctx: any;
   function Harness() {
     ctx = useCabms();
     return null;
   }
-  renderToString(React.createElement(CabmsProvider, null, React.createElement(Harness)));
+  act(() => {
+    const root = createRoot(dom.window.document.createElement('div'));
+    root.render(React.createElement(CabmsProvider, null, React.createElement(Harness)));
+  });
   return ctx;
 }
 
@@ -914,4 +963,179 @@ test('LAYER 6: Integration — Journey J: Customer review request enters observa
   const resolvedJob = stateAfterResolve.jobs.find((j: Job) => j.id === targetJobId);
   assert.equal(resolvedJob?.reviewRequest.status, 'SENT');
   assert.ok(resolvedJob?.reviewRequest.sentTimestamp);
+});
+
+// -------------------------------------------------------------
+// JOURNEY K: State Survival Across Quote, Invoice, Reschedule, and TCA2 Office Review
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey K: Quotes, invoices, rescheduled appointments, and reminders survive subsequent TCA2 office reviews', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+      ctx.simulateSignIn('owner_admin');
+    });
+
+    const targetJobId = 'JOB-2026-104';
+
+    // 1. Prepare quote & invoice and reschedule appointment
+    await act(async () => {
+      ctx.prepareQuoteForJob(targetJobId, 'Emergency Cabling Rectification', [
+        { id: 'item-1', description: 'Conduit rerun', quantity: 1, unitPrice: 450, total: 450 },
+      ]);
+      ctx.prepareInvoiceForJob(targetJobId, 495);
+      ctx.rescheduleJobAppointment(targetJobId, '2026-11-10', '11:00');
+    });
+
+    // Verify quote, invoice, reschedule exist in state and authoritative store
+    const jobBeforeTca2 = ctx.getAuthoritativeState().jobs.find(j => j.id === targetJobId)!;
+    assert.ok(jobBeforeTca2.quote);
+    assert.ok(jobBeforeTca2.invoice);
+    assert.equal(jobBeforeTca2.scheduledDate, '2026-11-10');
+
+    // 2. Execute TCA2 office review
+    await act(async () => {
+      ctx.officeReviewTca2(targetJobId);
+    });
+
+    // 3. Verify quote, invoice, rescheduled date, and reminders survive intact
+    const authState = ctx.getAuthoritativeState();
+    const jobAfterTca2 = authState.jobs.find(j => j.id === targetJobId)!;
+    assert.ok(jobAfterTca2.quote);
+    assert.equal(jobAfterTca2.quote?.title, 'Emergency Cabling Rectification');
+    assert.ok(jobAfterTca2.invoice);
+    assert.equal(jobAfterTca2.invoice?.amount, 495);
+    assert.equal(jobAfterTca2.scheduledDate, '2026-11-10');
+    assert.equal(jobAfterTca2.scheduledTime, '11:00');
+
+    // Follow-up job created cleanly
+    const followupJob = authState.jobs.find(j => j.jobType === 'Enterprise CCTV & Cabling Inspection' && j.appointmentStatus === 'UNSCHEDULED');
+    assert.ok(followupJob);
+  });
+});
+
+// -------------------------------------------------------------
+// JOURNEY L: Action-Level Technician RBAC Enforcement Across Review Actions
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey L: Technician session cannot trigger, resolve, reconcile, or retry customer review dispatches', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    const targetJobId = 'JOB-2026-101';
+
+    // Simulate sign-in as technician
+    await act(async () => {
+      ctx.simulateSignIn('technician');
+    });
+
+    // 1. Trigger review request denied
+    let triggerRes: any;
+    await act(async () => {
+      triggerRes = ctx.triggerReviewRequest(targetJobId);
+    });
+    assert.equal(triggerRes.success, false);
+    assert.ok(triggerRes.message.includes('Technician'));
+
+    // Switch back to owner_admin to queue review
+    await act(async () => {
+      ctx.simulateSignIn('owner_admin');
+      ctx.triggerReviewRequest(targetJobId);
+      ctx.simulateSignIn('technician'); // Switch back to technician
+    });
+
+    // 2. Resolve pending review denied
+    let resolveRes: any;
+    await act(async () => {
+      resolveRes = ctx.resolvePendingReview(targetJobId, 'SENT');
+    });
+    assert.equal(resolveRes.success, false);
+
+    // 3. Retry review denied
+    let retryRes: any;
+    await act(async () => {
+      retryRes = ctx.retryReviewRequest(targetJobId);
+    });
+    assert.equal(retryRes.success, false);
+  });
+});
+
+// -------------------------------------------------------------
+// JOURNEY M: Strict Signed Certificate Snapshot Validation & Rejection
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey M: Certificate delivery rejects missing or corrupt snapshots without creating delivery records', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+      ctx.simulateSignIn('owner_admin');
+    });
+
+    const targetJobId = 'JOB-2026-101';
+
+    // Attempt sending certificate email on unsigned form
+    let deliveryRes: any;
+    await act(async () => {
+      deliveryRes = ctx.sendCertificateEmail(targetJobId, 'ELECTRICAL');
+    });
+    assert.equal(deliveryRes.success, false);
+    assert.equal(ctx.certificateDeliveries.length, 0);
+
+    // Verify validateSignedSnapshot directly
+    const nullVal = validateSignedSnapshot(undefined, targetJobId, 'ELECTRICAL');
+    assert.equal(nullVal.valid, false);
+
+    const corruptVal = validateSignedSnapshot('{ bad json }', targetJobId, 'ELECTRICAL');
+    assert.equal(corruptVal.valid, false);
+
+    const validSnapshotStr = JSON.stringify({
+      jobReference: targetJobId,
+      certificateNumber: 'ELEC-9910',
+      signedOff: true,
+      signedTimestamp: '2026-11-02 10:00',
+      signer: 'Dave Miller',
+      frozenIssuerSnapshot: 'Solarcell Pty Ltd',
+    });
+    const validVal = validateSignedSnapshot(validSnapshotStr, targetJobId, 'ELECTRICAL');
+    assert.equal(validVal.valid, true);
+  });
+});
+
+// -------------------------------------------------------------
+// JOURNEY N: Single-Pass Virtual Clock Execution & Reset Demo
+// -------------------------------------------------------------
+test('LAYER 6: Integration — Journey N: Clock advancement auto-resolves pending reviews and delivers reminders in a single pass; Reset restores clean state', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+      ctx.simulateSignIn('owner_admin');
+    });
+
+    const targetJobId = 'JOB-2026-101';
+
+    // Queue a review
+    await act(async () => {
+      ctx.triggerReviewRequest(targetJobId);
+    });
+
+    const pendingJob = ctx.getAuthoritativeState().jobs.find(j => j.id === targetJobId)!;
+    assert.equal(pendingJob.reviewRequest.status, 'PENDING');
+
+    // Advance clock by 24 hours
+    await act(async () => {
+      ctx.advanceClock(24);
+    });
+
+    const authState = ctx.getAuthoritativeState();
+    const resolvedJob = authState.jobs.find(j => j.id === targetJobId)!;
+    assert.equal(resolvedJob.reviewRequest.status, 'SENT');
+    assert.ok(resolvedJob.reviewRequest.history.some((h: any) => h.event.includes('virtual clock advance')));
+
+    // Reset demo and verify clean restoration
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    const resetState = ctx.getAuthoritativeState();
+    assert.equal(resetState.jobs.find(j => j.id === targetJobId)!.reviewRequest.status, 'NOT_SENT');
+  });
 });

@@ -1,111 +1,269 @@
-# CABMS G00 Remediation & Workflow Integrity Implementation Plan
+# Implementation Plan — CABMS G00 State Integrity, Action-Level RBAC & Snapshot Delivery Remediation (Revised)
 
-CABMS (Central Automated Business Management System) coordinates jobs, compliance workflows, and business automation across Solarcell, Gold Coast Smart Home Solutions, and Gold Coast CCTV. This plan provides the exact, focused technical and architectural remediation for commit `ba9296e` to achieve G00 approval.
-
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> The following decisions were clarified and confirmed for this remediation:
-> - **Review PENDING Resolution**: Customer review request transitions from `PENDING` to resolved via an instant resolve action button and automatic advancement on virtual clock steps, protected against duplicate dispatch.
-> - **Fixture Brand Alignment**: `JOB-2026-101` smoke alarm certificate issuer is corrected to Solarcell Technologies to strictly match the job's brand identity.
-> - **Draft Business Profile Fields**: All entered fields (Brand ID slug, Electrical Licence, ACMA Cabler, QBCC, and contact info) are fully persisted to the isolated draft business profile state with slug uniqueness validation and runtime isolation.
+## Executive Summary
+This revised implementation plan incorporates the manager review directives for CABMS G00 (`PixelsWorker/CABMS` at HEAD `9a069ad`). It establishes a pure, synchronous authoritative state mutation model for jobs and audit records, enforces mandatory action-level persona authorization across all protected review operations, unifies strict structural validation for signed document snapshots (used identically for print previews and email deliveries), repairs seed fixtures for complete snapshot integrity, implements an atomic single-pass virtual clock processor, and specifies an executable mounted React integration harness for Layer 6 testing.
 
 ---
 
-## 1. Overview & Core Concept
+## 1. Corrective Technical Design & Architectural Specifications
 
-- **What It Does**: Resolves all functional, state machine, and test integrity blockers across job assignments, compliance verification (TCA2), customer review dispatch, master templates, and draft business profiles.
-- **Target Audience / Persona**: Super Admin, Owner/Admin, Office Staff, and Field Technicians operating in an isolated, deterministic simulation environment.
-- **Key Value Delivered**: Complete workflow integrity with atomic state transactions, authentic immutable document freezing, and genuine end-to-end integration test assertions.
+### A. Pure Synchronous Authoritative Job & Audit State Mutations (P0)
 
----
+#### Architectural Requirement
+React state updater functions (`setJobs(prev => ...)`) are asynchronous, pure functions that React may execute multiple times in Strict Mode or defer during batching. Assigining side-effects like `authoritativeJobsRef.current = next` inside a `setJobs` callback is impure and non-deterministic.
 
-## 2. Four Technical Amendments (Detailed Architecture)
-
-### Amendment 1: Authoritative Coupled State Transition Model for TCA2 Office Review (P0)
-- **Problem in `ba9296e`**: `jobs` and `tca2AuditRecords` are maintained as separate React states. Updating them in separate `setJobs` and `setTca2AuditRecords` calls creates a decoupled window where an audit record could point to a follow-up job that failed to insert, and repeated clicks risk race conditions.
-- **Authoritative Coupled Architecture**:
-  - Introduce a single coupled state transition handler: `commitCoupledTca2Review(jobId: string, followupJob: Job, updatedAuditRecord: Tca2AuditRecord, nextSeq: number)`.
-  - Maintain an authoritative in-memory coupled state manager / synchronous ref (`coupledStateRef`) backing `jobs` and `tca2AuditRecords`. When an office review is executed:
-    1. Synchronous mutex check: verify `jobId` is neither in-flight nor already completed (`createdFollowupJobIdsRef`).
-    2. Atomic transition: `coupledStateRef.current.jobs` and `coupledStateRef.current.auditRecords` are mutated indivisibly.
-    3. State synchronization: `setJobs` and `setTca2AuditRecords` are scheduled together from the identical authoritative transition receipt.
-    4. Mutex lifecycle: remove `jobId` from `inFlightTca2ReviewsRef` immediately upon successful completion and store the mapping in `createdFollowupJobIdsRef` so subsequent clicks are handled cleanly as completed duplicates.
-    5. Rejection safety: any validation failure or unauthorized role attempt aborts cleanly without altering jobs, audit records, or sequence counters.
-
-### Amendment 2: Real Mounted-State Test Harness for Layer 6 Integration (P0)
-- **Problem in `ba9296e`**: `renderToString()` in server environments executes a single synchronous render pass where React state setters do not trigger component re-renders or update returned closure variables. Assertions were verifying pure logic stubs rather than mounted application state.
-- **Mounted-State Test Harness Architecture**:
-  - Implement a dedicated test harness component that mounts `CabmsProvider`, subscribes to context state updates, and exposes a synchronous snapshot accessor `getAuthoritativeState()` that reads directly from the authoritative context state.
-  - In `tests/layer6_workflow_integration.test.ts`:
-    1. Invoke `ctx.officeReviewTca2('JOB-2026-104')` twice in succession.
-    2. Assert that `state.jobs.filter(j => j.title.includes('Follow-up to JOB-2026-104'))` has length **exactly 1**.
-    3. Assert that `state.tca2AuditRecords['JOB-2026-104'].rectificationFollowupJobId` strictly equals the ID of that newly created follow-up job.
-    4. Assert that `state.tca2AuditRecords['JOB-2026-104'].officeReviewCompleted` is `true`.
-    5. Assert that resetting the demo restores the clean baseline and clears all follow-up jobs and locks.
-
-### Amendment 3: Deterministic Review Request PENDING Queue Mechanics (P1)
-- **Problem in `ba9296e`**: `processReviewDispatch()` created a pending job in pure logic, but `triggerReviewRequest()` immediately saved only the resolved job, making `PENDING` invisible.
-- **Queue Mechanics & Dual-Dispatch Protection**:
-  - When `triggerReviewRequest(jobId)` is invoked:
-    1. Transitions job to `reviewRequest.status = 'PENDING'` with timestamped queue log in `reviewRequest.history`.
-    2. Persists the `PENDING` job into `jobs` state. The UI displays an amber `PENDING DISPATCH` badge and review counter.
-  - Resolution paths (Instant Action or Virtual Clock):
-    1. **Instant Resolution**: A dedicated **"Dispatch Pending Review"** action button in the Demo Controls Bar and Communications View, restricted to authorized operational personas (`super_admin`, `owner_admin`, `office_staff`).
-    2. **Virtual Clock Advance**: When `advanceClock(hours)` is called, any review with `status === 'PENDING'` is automatically resolved using the configured simulation outcome.
-  - **Deduplication Invariant**: Both resolution pathways check an atomic dispatch lock (`pendingReviewDispatchRef`) to guarantee that an item pending dispatch can only be resolved once. Repeat actions or rapid clicks on the resolve button produce a no-op advisory toast rather than duplicate invitations.
-
-### Amendment 4: Complete Document Snapshot Validation Across All Five Form Families (P1)
-- **Problem in `ba9296e`**: Seeded snapshots for Electrical and Smoke Alarm contained only 4–5 scalar fields. Printable forms and emails still read live fields or fell back to certificate metadata.
-- **Immutable Snapshot Validation Architecture**:
-  - Enforce full JSON serialization into `fullSnapshot` for **all five signed form families**:
-    1. **JSA**: All hazard/control steps, PPE checklist items, emergency details, risk ratings, revision version, and sample attachments.
-    2. **Electrical Certificate**: All tested work items, circuit results, insulation resistance, polarity, earth continuity, RCD trip times, standards relied on, limitations, and sample attachments.
-    3. **Smoke Alarm Certificate**: All alarm schedule items, locations, brands/models, power sources, AS 3786 standards, test results, scope of work, and sample attachments.
-    4. **TCA1 Cabling Advice**: Registered cabler, registration number, employer, location, scope of work, supervision, and certification statement.
-    5. **TCA2 Cabling Defect Notice**: Inspected locations, cabling types/scope, defect description, risk category, urgency, standards reference, and rectification recommendation.
-  - **Zero-Fallback Policy**:
-    - When a form is signed (`signedOff: true`), printable preview and certificate delivery email MUST render content exclusively from `fullSnapshot`.
-    - If `fullSnapshot` is missing or invalid JSON, render a high-visibility error boundary: `"DOCUMENT CORRUPTION ERROR: Immutable snapshot missing on finalized certificate. Live field fallback prohibited."`
-    - In `validateJobCompletion`, check only `tca2Audit.customerAcknowledged` from the authoritative audit store. A missing audit record fails completion validation immediately without falling back to `tca2.customerAcknowledged`.
+#### Revised Implementation
+1. **Synchronous Mutation Helper (`commitJobsState`)**:
+   In `CabmsContext.tsx`:
+   ```typescript
+   const commitJobsState = (
+     mutation: (currentJobs: Job[]) => Job[],
+     auditMutation?: (currentAudits: Record<string, Tca2AuditRecord>) => Record<string, Tca2AuditRecord>
+   ): Job[] => {
+     // 1. Compute next immutable state directly from synchronous authoritative ref
+     const nextJobs = mutation(authoritativeJobsRef.current);
+     
+     // 2. Synchronously update authoritative ref immediately BEFORE scheduling React state update
+     authoritativeJobsRef.current = nextJobs;
+     
+     // 3. If coupled audit mutation provided, update audit ref & state atomically
+     if (auditMutation) {
+       const nextAudits = auditMutation(authoritativeAuditRecordsRef.current);
+       authoritativeAuditRecordsRef.current = nextAudits;
+       setTca2AuditRecords(nextAudits);
+     }
+     
+     // 4. Schedule React render with the pre-computed nextJobs value (pure value pass)
+     setJobs(nextJobs);
+     
+     return nextJobs;
+   };
+   ```
+2. **Unified Routing**:
+   Every job state mutation—including appointment rescheduling (`rescheduleAppointment`), quote creation/acceptance (`createQuote`, `acceptQuote`), invoice creation (`createInvoice`), attachment updates (`attachedSampleIds`), reminder updates, and status transitions—MUST execute through `commitJobsState`. Direct unmonitored calls to `setJobs()` are strictly eliminated.
 
 ---
 
-## 3. Additional Workflow Invariants & Edge Cases
+### B. Action-Level Persona Authorization & Role Enforcement (P0)
 
-### A. Scheduling & Reopening State Invariants
-- **Unscheduled Assignment**: `createJob()` allows assigning a technician (`assignedTechId`, `assignedTechName`) while leaving `scheduledDate = null`, `scheduledTime = null`, `status = 'NEW'`, and `appointmentStatus = 'UNSCHEDULED'`.
-- **Reopening Cancelled Jobs**: When `reopenCancelledJob(jobId)` is invoked:
-  - If the cancelled job had a complete appointment tuple (tech + date + time), it reopens as `SCHEDULED`.
-  - If date or time was absent or cleared upon cancellation, it MUST reopen as `status = 'NEW'` and `appointmentStatus = 'UNSCHEDULED'`, preventing orphan "SCHEDULED" states without bookings.
+#### Architectural Requirement
+Updating `authoritativePersonaRef.current` in `simulateSignIn` fixes stale role tracking, but actions must also perform explicit permission enforcement at call time against `authoritativePersonaRef.current` (the active session persona).
 
-### B. Draft Business Profiles Isolation & Validation
-- **Field Persistence**: Persist all draft form fields: `name`, `tagline`, `slug` (Brand ID), `primaryColor`, `accentColor`, `legalIssuerName`, `abnPlaceholder`, `electricalLicencePlaceholder`, `acmaCablerPlaceholder`, `qbccLicencePlaceholder`.
-- **Slug Uniqueness**: Validate that the draft slug does not collide with existing operational brands (`solarcell`, `smart_home`, `cctv`) or existing draft businesses.
-- **Runtime Isolation**: Ensure draft businesses cannot be selected in work order creation, invoicing, quotation, or compliance certificate workflows (enforced via explicit runtime brand checks, not just UI dropdown filtering).
-
----
-
-## 4. Test Verification & Reporting Standards
-
-Test results must follow calibrated reporting categories rather than misleading aggregate pass counts:
-- **PASS**: Pure domain logic, component rendering, access control, state transitions, and integration tests executed in the Node.js/tsx environment.
-- **SKIPPED / NOT RUN**: Pixel-by-pixel rendering and headless browser E2E tests where browser binaries or GPU rasterization engines are unprovisioned in the container environment.
-- **FAILED**: Any test revealing an actual CABMS functional defect or regression.
-- **UNAVAILABLE**: Any requested capability absent from the runtime environment.
-- Keep `tsc --noEmit` static type-check results strictly distinct from ESLint/runtime tests.
+#### Revised Implementation
+1. **Session Persona Synchronization**:
+   ```typescript
+   const simulateSignIn = (role: Persona) => {
+     authoritativePersonaRef.current = role;
+     setPersona(role);
+     setIsSimulatedSignedIn(true);
+     showDemoNotification(`Signed in as ${role.toUpperCase()} (Simulated Demo Session).`, 'info');
+   };
+   ```
+2. **Action-Level Permission Enforcement**:
+   Every protected review and compliance action must evaluate `authoritativePersonaRef.current`:
+   - `triggerReviewRequest(jobId)`: Enforce `verifyPersonaAccess(authoritativePersonaRef.current, 'assigned_job' | 'office_compliance_review')`. Non-admin/non-office roles (or technicians attempting unassigned jobs) are explicitly rejected (`{ success: false, message: 'Access Denied: Persona lacks review dispatch permission.' }`).
+   - `resolvePendingReview(jobId)`: Restrict execution to non-technician roles (`authoritativePersonaRef.current !== 'technician'`). Optional actor parameters cannot override this check.
+   - `retryReviewRequest(jobId)` / `reconcileReviewRequest(jobId)`: Strictly evaluate `authoritativePersonaRef.current` against required permissions before executing state mutations.
 
 ---
 
-## 5. Execution Appendix & Delivery Gates
+### C. Strict Signed Document Snapshot Contract & Seed Fixture Repair (P1)
 
-| Item | Specification |
-|---|---|
-| **Product / Group** | CABMS / existing G00 Prototype Demo |
-| **Baseline Main Commit** | `ba9296e373e5f6fad53cc603cafdc8b163426474` |
-| **Working Branch** | Proposed `feat/g00-workflow-integrity` (subject to approval) |
-| **In Scope** | Focused state model, coupled TCA2 transition, Layer 6 test harness, review PENDING queue, complete frozen snapshots, appointment reopening invariants, draft profile persistence, and fixture correction. |
-| **Out of Scope** | External backend databases, live third-party cloud APIs, external OAuth redirects, unrelated visual redesigns. |
-| **Estimated Effort** | 8–16 focused engineering hours (planning approximation). |
-| **Acceptance Criteria** | 100% passing executed unit/integration tests (with explicit SKIPPED markings for unprovisioned browser layers), clean type-check/build output, atomic state transitions verified. |
-| **Git & Release Safety** | Zero automatic commits, pushes, merges, resets, destructive cleanups, or production deployments without explicit user authorization. |
+#### Architectural Requirement
+Validating JSON string syntax alone is insufficient. Signed document snapshots must satisfy a strict structural compliance contract containing all required metadata before rendering print previews or dispatching email deliveries.
+
+#### Unified Snapshot Validation Contract (`validateSignedSnapshot`)
+Implement a single shared validator in `src/utils/cabmsLogic.ts`:
+```typescript
+export interface SnapshotValidationResult {
+  valid: boolean;
+  error?: string;
+  parsedSnapshot?: Record<string, any>;
+}
+
+export function validateSignedSnapshot(
+  snapshotRaw?: string,
+  expectedJobId?: string,
+  formType?: string
+): SnapshotValidationResult {
+  if (!snapshotRaw || typeof snapshotRaw !== 'string' || snapshotRaw.trim() === '') {
+    return { valid: false, error: 'Signed document snapshot is missing or empty.' };
+  }
+  try {
+    const parsed = JSON.parse(snapshotRaw);
+    if (!parsed || typeof parsed !== 'object') {
+      return { valid: false, error: 'Snapshot is not a valid JSON object.' };
+    }
+    if (parsed.signedOff !== true) {
+      return { valid: false, error: 'Snapshot does not record finalized signedOff: true status.' };
+    }
+    if (expectedJobId && parsed.jobReference && parsed.jobReference !== expectedJobId) {
+      return { valid: false, error: `Snapshot job reference (${parsed.jobReference}) mismatch with expected ${expectedJobId}.` };
+    }
+    if (!parsed.signedTimestamp && !parsed.signedAt && !parsed.signOffTimestamp) {
+      return { valid: false, error: 'Snapshot lacks mandatory signed timestamp.' };
+    }
+    if (!parsed.signer && !parsed.technicianName && !parsed.businessCablerPlaceholder && !parsed.testerName) {
+      return { valid: false, error: 'Snapshot lacks mandatory signer identity.' };
+    }
+    // Form-specific mandatory fields check
+    if (formType === 'TCA2' && !parsed.reportReference) {
+      return { valid: false, error: 'TCA2 snapshot lacks mandatory reportReference.' };
+    }
+    if (formType === 'ELECTRICAL' && !parsed.certificateNumber) {
+      return { valid: false, error: 'Electrical snapshot lacks mandatory certificateNumber.' };
+    }
+    return { valid: true, parsedSnapshot: parsed };
+  } catch (e: any) {
+    return { valid: false, error: `Snapshot JSON syntax error: ${e.message}` };
+  }
+}
+```
+
+#### Shared Application Usage
+1. **Print Preview (`ComplianceFormsView.tsx`)**: Call `validateSignedSnapshot(form.fullSnapshot, jobId, formType)`. If invalid, render the snapshot corruption error boundary UI.
+2. **Email Delivery (`sendCertificateEmail` in `CabmsContext.tsx`)**: Call `validateSignedSnapshot(form.fullSnapshot, jobId, formType)`. If invalid, immediately log demo notification error, reject delivery (`return { success: false, message: result.error }`), and block `CertificateDeliveryRecord` creation.
+3. **Seed Fixture Repair (`src/data/seedData.ts`)**: Repair signed JSA records for `JOB-2026-103` and `JOB-2026-104` to provide complete, compliant `fullSnapshot` string values including `jobReference`, `signer`, `signedTimestamp`, and task step records.
+
+---
+
+### D. Single-Pass Deterministic Virtual Clock Processor (P1)
+
+#### Architectural Requirement
+`advanceClock(hours)` must process due reminders and auto-resolve `PENDING` reviews in a single deterministic, non-recursive transition using `commitJobsState`.
+
+#### Revised Implementation
+```typescript
+const advanceClock = (hours: number) => {
+  const current = new Date(demoClock);
+  current.setHours(current.getHours() + hours);
+  const newClockIso = current.toISOString();
+  setDemoClock(newClockIso);
+
+  let deliveredRemindersCount = 0;
+  let resolvedReviewsCount = 0;
+
+  commitJobsState(currentJobs => {
+    return currentJobs.map(job => {
+      let updatedJob = { ...job };
+
+      // 1. Process due reminders
+      const updatedReminders = updatedJob.reminders.map(r => {
+        if (!r.delivered && !r.suppressed) {
+          const schedDate = new Date(r.scheduledFor.replace(' ', 'T') + ':00+10:00');
+          if (schedDate <= current) {
+            deliveredRemindersCount++;
+            return { ...r, delivered: true, deliveredAt: newClockIso.slice(0, 16) };
+          }
+        }
+        return r;
+      });
+      updatedJob.reminders = updatedReminders;
+
+      // 2. Automated system resolution for PENDING review requests
+      if (updatedJob.reviewRequest?.status === 'PENDING') {
+        resolvedReviewsCount++;
+        updatedJob.reviewRequest = {
+          ...updatedJob.reviewRequest,
+          status: 'SENT',
+          sentTimestamp: newClockIso.slice(0, 16),
+          history: [
+            ...updatedJob.reviewRequest.history,
+            {
+              timestamp: newClockIso.slice(0, 16),
+              status: 'SENT',
+              note: 'Automated simulated dispatch completed on virtual clock advance.',
+              actorPersona: 'system_daemon',
+            },
+          ],
+        };
+      }
+
+      return updatedJob;
+    });
+  });
+
+  showDemoNotification(
+    `Demo clock advanced ${hours}h. ${deliveredRemindersCount} reminder(s) delivered, ${resolvedReviewsCount} review(s) resolved.`,
+    'info'
+  );
+};
+```
+
+---
+
+### E. Executable Mounted React Integration Test Harness for Layer 6 (P1)
+
+#### Environment & Setup
+Layer 6 tests execute in Node.js with `jsdom` global DOM simulation installed. We utilize `react-dom/client` `createRoot` and React's `act()` from `react` (or `react-dom/test-utils`) to mount `CabmsProvider` inside a real DOM container div.
+
+#### Harness Structure (`tests/layer6_workflow_integration.test.ts`)
+```typescript
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import React from 'react';
+import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
+
+export async function withMountedContext(
+  testFn: (ctx: ReturnType<typeof useCabms>, container: HTMLDivElement) => Promise<void> | void
+) {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  let currentContext!: ReturnType<typeof useCabms>;
+
+  function TestObserver() {
+    currentContext = useCabms();
+    return <div id="test-observer-mounted">Mounted</div>;
+  }
+
+  await act(async () => {
+    root.render(
+      <CabmsProvider>
+        <TestObserver />
+      </CabmsProvider>
+    );
+  });
+
+  try {
+    await testFn(currentContext, container);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  }
+}
+```
+
+---
+
+## 2. Test Verification Strategy & Regression Verification Matrix
+
+### Verification Evidence Checklist (Pending Execution)
+
+| Regression Scenario | Acceptance Condition | Verification Status |
+|---|---|---|
+| **Scenario 1: State Survival across Workflow** | Create a quote & invoice, reschedule appointment, then execute TCA2 office review. Verify quote, invoice, schedule date, and reminders exist unmodified in `authoritativeJobsRef.current`. | `[ ] Pending Verification` |
+| **Scenario 2: Double TCA2 Office Review Idempotency** | Execute `processOfficeReviewTca2` twice synchronously in the same tick. Verify exactly 1 follow-up job created, 1 audit link established, 1 sequence increment. | `[ ] Pending Verification` |
+| **Scenario 3: Action-Level Technician RBAC** | Call `simulateSignIn('technician')` and directly call `triggerReviewRequest`, `resolvePendingReview`, and `retryReviewRequest`. Verify all actions are explicitly denied. | `[ ] Pending Verification` |
+| **Scenario 4: Corrupt/Missing Snapshot Rejection** | Attempt `sendCertificateEmail` on an unsigned form or form with invalid `fullSnapshot`. Verify action returns `{ success: false }`, no `CertificateDeliveryRecord` is created, and source form is unmodified. | `[ ] Pending Verification` |
+| **Scenario 5: Single-Pass Virtual Clock Execution** | Advance demo clock by 24 hours with pending reminders and a `PENDING` review request. Verify reminders delivered, review status transitions to `SENT` with `system_daemon` actor, and state updates atomically. | `[ ] Pending Verification` |
+| **Scenario 6: Reset Demo Restoration** | Execute full workflow mutations then invoke `resetDemo()`. Verify clean seed state restored, refs reset, and locks cleared. | `[ ] Pending Verification` |
+| **Scenario 7: Mounted React State & DOM Harness** | Run Layer 6 mounted integration harness tests. Assert context state and DOM updates after `act()` steps. | `[ ] Pending Verification` |
+
+---
+
+## 3. Plan Verification Commands
+
+After completing code changes, run the following commands sequentially:
+
+1. **Static Analysis & Type Checking**:
+   `npm run lint` (`tsc --noEmit`)
+2. **Build Verification**:
+   `compile_applet`
+3. **Layer 6 Integration Suite**:
+   `npx tsx --test tests/layer6_workflow_integration.test.ts`
+4. **Full Test Suite Run**:
+   `npm test`

@@ -58,6 +58,7 @@ import {
   recalculateJobAttachments,
   processPublishTemplate,
   processReviewDispatch,
+  validateSignedSnapshot,
 } from '../utils/cabmsLogic.ts';
 
 export type DemoScenario =
@@ -279,11 +280,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [websiteEnquiries, setWebsiteEnquiries] = useState<WebsiteEnquiry[]>(INITIAL_WEBSITE_ENQUIRIES);
   const [sampleAttachments] = useState<SampleAttachment[]>(INITIAL_SAMPLE_ATTACHMENTS);
 
+  const createSignedJsaSeed = (jobId: string): JsaFormData => {
+    const base: JsaFormData = {
+      ...INITIAL_JSA_FORM,
+      jobReference: jobId,
+      signedOff: true,
+      signedByTechName: 'Dave Miller (Lead Electrician)',
+      signedTimestamp: '2026-11-02 09:30',
+      frozenIssuerSnapshot: 'Dave Miller (Lic: Q-ELEC-98765-DEMO) on 2026-11-02 09:30',
+    };
+    base.fullSnapshot = JSON.stringify(base);
+    return base;
+  };
+
   // Compliance Forms per Job (G00-005: job-owned instances)
   const [jsaForms, setJsaForms] = useState<Record<string, JsaFormData>>({
     'JOB-2026-101': { ...INITIAL_JSA_FORM },
-    'JOB-2026-103': { ...INITIAL_JSA_FORM, jobReference: 'JOB-2026-103', signedOff: true },
-    'JOB-2026-104': { ...INITIAL_JSA_FORM, jobReference: 'JOB-2026-104', signedOff: true },
+    'JOB-2026-103': createSignedJsaSeed('JOB-2026-103'),
+    'JOB-2026-104': createSignedJsaSeed('JOB-2026-104'),
   });
 
   const [electricalCerts, setElectricalCerts] = useState<Record<string, ElectricalCertData>>({
@@ -317,6 +331,27 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const handleSetPersona = (p: Persona) => {
     authoritativePersonaRef.current = p;
     setPersona(p);
+  };
+
+  /**
+   * Authoritative synchronous state mutation helper.
+   * Computes nextJobs synchronously from authoritativeJobsRef.current,
+   * updates authoritativeJobsRef.current immediately,
+   * and schedules React state update setJobs(nextJobs).
+   */
+  const commitJobsState = (
+    mutation: (currentJobs: Job[]) => Job[],
+    auditMutation?: (currentAudits: Record<string, Tca2AuditRecord>) => Record<string, Tca2AuditRecord>
+  ): Job[] => {
+    const nextJobs = mutation(authoritativeJobsRef.current);
+    authoritativeJobsRef.current = nextJobs;
+    if (auditMutation) {
+      const nextAudits = auditMutation(authoritativeAuditRecordsRef.current);
+      authoritativeAuditRecordsRef.current = nextAudits;
+      setTca2AuditRecords(nextAudits);
+    }
+    setJobs(nextJobs);
+    return nextJobs;
   };
 
   // Synchronous execution refs to prevent duplicate calls in the same tick / before re-render
@@ -404,8 +439,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setCertificateDeliveries([]);
     setJsaForms({
       'JOB-2026-101': { ...INITIAL_JSA_FORM },
-      'JOB-2026-103': { ...INITIAL_JSA_FORM, jobReference: 'JOB-2026-103', signedOff: true },
-      'JOB-2026-104': { ...INITIAL_JSA_FORM, jobReference: 'JOB-2026-104', signedOff: true },
+      'JOB-2026-103': createSignedJsaSeed('JOB-2026-103'),
+      'JOB-2026-104': createSignedJsaSeed('JOB-2026-104'),
     });
     setElectricalCerts({ 'JOB-2026-103': { ...INITIAL_ELECTRICAL_CERT } });
     setSmokeAlarmCerts({ 'JOB-2026-101': { ...INITIAL_SMOKE_ALARM_CERT } });
@@ -425,13 +460,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const newClock = current.toISOString();
     setDemoClock(newClock);
 
-    // Process due reminders
     let deliveredCount = 0;
-    setJobs(prev =>
-      prev.map(j => {
-        const updatedReminders = j.reminders.map(r => {
+    let resolvedCount = 0;
+
+    commitJobsState(currentJobs => {
+      return currentJobs.map(j => {
+        let updatedJob = { ...j };
+
+        // 1. Process due reminders
+        const updatedReminders = updatedJob.reminders.map(r => {
           if (!r.delivered && !r.suppressed) {
-            // Check if scheduledFor <= newClock
             const schedDate = new Date(r.scheduledFor.replace(' ', 'T') + ':00+10:00');
             if (schedDate <= current) {
               deliveredCount++;
@@ -444,19 +482,42 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
           return r;
         });
-        return { ...j, reminders: updatedReminders };
-      })
-    );
+        updatedJob.reminders = updatedReminders;
 
-    // Auto-resolve any reviews in PENDING state on clock advance
-    authoritativeJobsRef.current.forEach(j => {
-      if (j.reviewRequest?.status === 'PENDING') {
-        resolvePendingReview(j.id);
-      }
+        // 2. Auto-resolve review requests in PENDING state as an automated system event
+        if (updatedJob.reviewRequest?.status === 'PENDING') {
+          resolvedCount++;
+          const brand = brands[updatedJob.brandId] || brands.solarcell;
+          updatedJob.reviewRequest = {
+            ...updatedJob.reviewRequest,
+            status: 'SENT',
+            sentTimestamp: newClock.slice(0, 16),
+            uncertainReconciliationNeeded: false,
+            history: [
+              ...updatedJob.reviewRequest.history,
+              {
+                timestamp: newClock.slice(0, 16),
+                status: 'SENT',
+                event: `Automated simulated dispatch completed for ${brand.name} on virtual clock advance`,
+              },
+            ],
+          };
+          updatedJob.activityHistory = [
+            ...updatedJob.activityHistory,
+            {
+              timestamp: newClock.slice(0, 16),
+              action: `Review invitation sent to customer (${brand.name})`,
+              actor: 'Automated System Clock',
+            },
+          ];
+        }
+
+        return updatedJob;
+      });
     });
 
     showDemoNotification(
-      `Demo business clock advanced by ${hours} hr(s). ${deliveredCount > 0 ? `${deliveredCount} due email reminder(s) dispatched.` : ''}`,
+      `Demo business clock advanced by ${hours} hr(s). ${deliveredCount > 0 ? `${deliveredCount} due email reminder(s) dispatched.` : ''} ${resolvedCount > 0 ? `${resolvedCount} pending review(s) auto-resolved.` : ''}`,
       'info'
     );
   };
@@ -808,8 +869,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const rescheduleJobAppointment = (jobId: string, newDate: string, newTime: string) => {
-    setJobs(prev =>
-      prev.map(j => {
+    commitJobsState(current =>
+      current.map(j => {
         if (j.id === jobId) {
           const updatedReminders = suppressOldReminders(
             j,
@@ -854,79 +915,82 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const cancelJobAppointment = (jobId: string, reason: string) => {
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j => {
-      if (j.id === jobId) {
-        const updatedReminders = suppressOldReminders(
-          j,
-          `Visit cancelled: ${reason}`,
-          demoClock
-        );
-        return {
-          ...j,
-          appointmentStatus: 'CANCELLED',
-          calendarSyncStatus: 'SYNCED',
-          reminders: updatedReminders,
-          activityHistory: [
-            ...j.activityHistory,
-            { timestamp: demoClock.slice(0, 16), action: `Visit cancelled (${reason}). Appointment status marked CANCELLED. Job remains active for rescheduling.`, actor: persona },
-          ],
-        };
-      }
-      return j;
-    });
-    setJobs([...authoritativeJobsRef.current]);
+    commitJobsState(current =>
+      current.map(j => {
+        if (j.id === jobId) {
+          const updatedReminders = suppressOldReminders(
+            j,
+            `Visit cancelled: ${reason}`,
+            demoClock
+          );
+          return {
+            ...j,
+            appointmentStatus: 'CANCELLED',
+            calendarSyncStatus: 'SYNCED',
+            reminders: updatedReminders,
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp: demoClock.slice(0, 16), action: `Visit cancelled (${reason}). Appointment status marked CANCELLED. Job remains active for rescheduling.`, actor: persona },
+            ],
+          };
+        }
+        return j;
+      })
+    );
     showDemoNotification(`Appointment for Job ${jobId} cancelled. Reminders suppressed. Job remains open for rescheduling.`, 'warning');
   };
 
   const cancelWholeJob = (jobId: string, reason: string) => {
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j => {
-      if (j.id === jobId) {
-        const updatedReminders = suppressOldReminders(
-          j,
-          `Job cancelled: ${reason}`,
-          demoClock
-        );
-        return {
-          ...j,
-          status: 'CANCELLED',
-          reminders: updatedReminders,
-          activityHistory: [
-            ...j.activityHistory,
-            { timestamp: demoClock.slice(0, 16), action: `Job CANCELLED: ${reason}`, actor: persona },
-          ],
-        };
-      }
-      return j;
-    });
-    setJobs([...authoritativeJobsRef.current]);
+    commitJobsState(current =>
+      current.map(j => {
+        if (j.id === jobId) {
+          const updatedReminders = suppressOldReminders(
+            j,
+            `Job cancelled: ${reason}`,
+            demoClock
+          );
+          return {
+            ...j,
+            status: 'CANCELLED',
+            reminders: updatedReminders,
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp: demoClock.slice(0, 16), action: `Job CANCELLED: ${reason}`, actor: persona },
+            ],
+          };
+        }
+        return j;
+      })
+    );
     showDemoNotification(`Job ${jobId} marked CANCELLED.`, 'warning');
   };
 
   const reopenCancelledJob = (jobId: string) => {
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j => {
-      if (j.id === jobId) {
-        const hasCompleteAppointment = Boolean(j.assignedTechId && j.scheduledDate && j.scheduledTime);
-        const newStatus: JobStatus = hasCompleteAppointment ? 'SCHEDULED' : 'NEW';
-        const newApptStatus: AppointmentStatus = hasCompleteAppointment ? 'SCHEDULED' : 'UNSCHEDULED';
-        return {
-          ...j,
-          status: newStatus,
-          appointmentStatus: newApptStatus,
-          activityHistory: [
-            ...j.activityHistory,
-            {
-              timestamp: demoClock.slice(0, 16),
-              action: hasCompleteAppointment
-                ? 'Job reopened from cancelled state and returned to active schedule'
-                : 'Job reopened from cancelled state as unscheduled new work order',
-              actor: persona,
-            },
-          ],
-        };
-      }
-      return j;
-    });
-    setJobs([...authoritativeJobsRef.current]);
+    commitJobsState(current =>
+      current.map(j => {
+        if (j.id === jobId) {
+          const hasCompleteAppointment = Boolean(j.assignedTechId && j.scheduledDate && j.scheduledTime);
+          const newStatus: JobStatus = hasCompleteAppointment ? 'SCHEDULED' : 'NEW';
+          const newApptStatus: AppointmentStatus = hasCompleteAppointment ? 'SCHEDULED' : 'UNSCHEDULED';
+          return {
+            ...j,
+            status: newStatus,
+            appointmentStatus: newApptStatus,
+            activityHistory: [
+              ...j.activityHistory,
+              {
+                timestamp: demoClock.slice(0, 16),
+                action: hasCompleteAppointment
+                  ? 'Job reopened from cancelled state and returned to active schedule'
+                  : 'Job reopened from cancelled state as unscheduled new work order',
+                actor: persona,
+              },
+            ],
+          };
+        }
+        return j;
+      })
+    );
     showDemoNotification(`Job ${jobId} reopened from cancelled state.`, 'info');
   };
 
@@ -1487,8 +1551,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // Add to job ONLY after form check passed
-    setJobs(prev =>
-      prev.map(j =>
+    commitJobsState(current =>
+      current.map(j =>
         j.id === jobId && !j.attachedSampleIds.includes(sampleId)
           ? { ...j, attachedSampleIds: [...j.attachedSampleIds, sampleId] }
           : j
@@ -1553,8 +1617,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       tca2Remaining,
     ]);
 
-    setJobs(prev =>
-      prev.map(j =>
+    commitJobsState(current =>
+      current.map(j =>
         j.id === jobId
           ? { ...j, attachedSampleIds: updatedJobAttachments }
           : j
@@ -1614,8 +1678,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ],
     };
 
-    setJobs(prev =>
-      prev.map(j => (j.id === jobId ? { ...j, quote: newQuote } : j))
+    commitJobsState(current =>
+      current.map(j => (j.id === jobId ? { ...j, quote: newQuote } : j))
     );
 
     showDemoNotification(`Quote ${newQuote.externalMyobRef} prepared (Subtotal: $${subtotal.toLocaleString()} + GST: $${gst.toLocaleString()} = Total: $${total.toLocaleString()}).`, 'success');
@@ -1655,8 +1719,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       notes: `Customer accepted Terms snapshot ${job.quote.termsVersion}`,
     };
 
-    setJobs(prev =>
-      prev.map(j => {
+    commitJobsState(current =>
+      current.map(j => {
         if (j.id === jobId && j.quote) {
           return {
             ...j,
@@ -1708,8 +1772,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       errorMessage: isOffline ? 'Simulated MYOB Connection Offline' : undefined,
     };
 
-    setJobs(prev =>
-      prev.map(j =>
+    commitJobsState(current =>
+      current.map(j =>
         j.id === jobId
           ? {
               ...j,
@@ -1737,8 +1801,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const reconcileInvoiceSync = (jobId: string, outcome: 'SUCCESS' | 'FAIL') => {
-    setJobs(prev =>
-      prev.map(j => {
+    commitJobsState(current =>
+      current.map(j => {
         if (j.id === jobId && j.invoice) {
           if (outcome === 'SUCCESS') {
             return {
@@ -1779,6 +1843,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Reviews Deduplication & Full Workflow (G00-021: PENDING -> SENT / FAILED / UNCERTAIN)
   const triggerReviewRequest = (jobId: string, simulateOutcome?: 'FAIL' | 'UNCERTAIN') => {
+    if (authoritativePersonaRef.current === 'technician') {
+      showDemoNotification('DENIED: Technician cannot dispatch review invitations.', 'error');
+      return { success: false, message: 'Technician persona lacks review dispatch permission.' };
+    }
+
     const currentJobs = authoritativeJobsRef.current;
     const job = currentJobs.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job) {
@@ -1801,18 +1870,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // Persist PENDING job into authoritative state & React state
     const pendingJob = dispatchRes.pendingJob!;
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j => (j.id === jobId ? pendingJob : j));
-    setJobs([...authoritativeJobsRef.current]);
+    commitJobsState(current => current.map(j => (j.id === jobId ? pendingJob : j)));
 
     showDemoNotification(`Review invitation for Job ${jobId} queued in PENDING state (${brand.name}).`, 'info');
     return { success: true, message: 'Review request queued in PENDING state.' };
   };
 
   const resolvePendingReview = (jobId: string, forcedOutcome?: 'SENT' | 'FAIL' | 'UNCERTAIN', actorPersona?: Persona): { success: boolean; message?: string } => {
-    const effectivePersona = actorPersona || authoritativePersonaRef.current || persona;
-    if (effectivePersona === 'technician') {
-      showDemoNotification('DENIED: Technician cannot dispatch review invitations.', 'error');
-      return { success: false, message: 'Technicians cannot dispatch review requests.' };
+    if (authoritativePersonaRef.current === 'technician') {
+      showDemoNotification('DENIED: Technician cannot resolve review invitations.', 'error');
+      return { success: false, message: 'Technician persona lacks review resolution permission.' };
     }
 
     const currentJobs = authoritativeJobsRef.current;
@@ -1887,15 +1954,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`Review request dispatched to ${targetJob.siteContact} (${brand.name}).`, 'success');
     }
 
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j => (j.id === jobId ? resolvedJob : j));
-    setJobs([...authoritativeJobsRef.current]);
+    commitJobsState(current => current.map(j => (j.id === jobId ? resolvedJob : j)));
     pendingReviewDispatchRef.current.delete(jobId);
     return { success: true, message: `Review resolved to ${resolvedJob.reviewRequest.status}` };
   };
 
   const resolveAllPendingReviews = () => {
-    const effectivePersona = authoritativePersonaRef.current || persona;
-    if (effectivePersona === 'technician') {
+    if (authoritativePersonaRef.current === 'technician') {
       showDemoNotification('DENIED: Technician cannot dispatch review invitations.', 'error');
       return;
     }
@@ -1910,6 +1975,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const pendingReviewCount = jobs.filter(j => j.reviewRequest?.status === 'PENDING').length;
 
   const reconcileReviewRequest = (jobId: string, resolution: 'SENT' | 'FAILED' = 'SENT') => {
+    if (authoritativePersonaRef.current === 'technician') {
+      showDemoNotification('DENIED: Technician cannot reconcile review requests.', 'error');
+      return;
+    }
+
     const currentJobs = authoritativeJobsRef.current;
     const job = currentJobs.find(j => j.id === jobId);
     if (!job) return;
@@ -1919,34 +1989,40 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j =>
-      j.id === jobId
-        ? {
-            ...j,
-            reviewRequest: {
-              ...j.reviewRequest,
-              status: resolution,
-              uncertainReconciliationNeeded: false,
-              sentTimestamp: resolution === 'SENT' ? demoClock.slice(0, 16) : undefined,
-              history: [
-                ...j.reviewRequest.history,
-                {
-                  timestamp: demoClock.slice(0, 16),
-                  event: resolution === 'SENT'
-                    ? 'Reconciled manual check: delivery confirmed in gateway dispatch log.'
-                    : 'Reconciled manual check: delivery confirmed failed. Marked FAILED for retry.',
-                  status: resolution === 'SENT' ? 'RECONCILED_SENT' : 'RECONCILED_FAILED',
-                },
-              ],
-            },
-          }
-        : j
+    commitJobsState(current =>
+      current.map(j =>
+        j.id === jobId
+          ? {
+              ...j,
+              reviewRequest: {
+                ...j.reviewRequest,
+                status: resolution,
+                uncertainReconciliationNeeded: false,
+                sentTimestamp: resolution === 'SENT' ? demoClock.slice(0, 16) : undefined,
+                history: [
+                  ...j.reviewRequest.history,
+                  {
+                    timestamp: demoClock.slice(0, 16),
+                    event: resolution === 'SENT'
+                      ? 'Reconciled manual check: delivery confirmed in gateway dispatch log.'
+                      : 'Reconciled manual check: delivery confirmed failed. Marked FAILED for retry.',
+                    status: resolution === 'SENT' ? 'RECONCILED_SENT' : 'RECONCILED_FAILED',
+                  },
+                ],
+              },
+            }
+          : j
+      )
     );
-    setJobs([...authoritativeJobsRef.current]);
     showDemoNotification(`Review status for Job ${jobId} reconciled to ${resolution}.`, 'info');
   };
 
   const retryReviewRequest = (jobId: string) => {
+    if (authoritativePersonaRef.current === 'technician') {
+      showDemoNotification('DENIED: Technician cannot retry review requests.', 'error');
+      return { success: false, message: 'Technician persona lacks permission.' };
+    }
+
     const currentJobs = authoritativeJobsRef.current;
     const job = currentJobs.find(j => j.id === jobId);
     if (!job) return { success: false, message: 'Job not found' };
@@ -1954,29 +2030,30 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`Only FAILED review requests can be retried. Current status: ${job.reviewRequest.status}`, 'warning');
       return { success: false, message: 'Not in FAILED state' };
     }
-    authoritativeJobsRef.current = authoritativeJobsRef.current.map(j =>
-      j.id === jobId
-        ? {
-            ...j,
-            reviewRequest: {
-              ...j.reviewRequest,
-              status: 'SENT',
-              sentTimestamp: demoClock.slice(0, 16),
-              reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
-              uncertainReconciliationNeeded: false,
-              history: [
-                ...j.reviewRequest.history,
-                {
-                  timestamp: demoClock.slice(0, 16),
-                  event: 'Controlled retry successful: email dispatched and confirmed.',
-                  status: 'SENT',
-                },
-              ],
-            },
-          }
-        : j
+    commitJobsState(current =>
+      current.map(j =>
+        j.id === jobId
+          ? {
+              ...j,
+              reviewRequest: {
+                ...j.reviewRequest,
+                status: 'SENT',
+                sentTimestamp: demoClock.slice(0, 16),
+                reviewLink: brands[job.brandId]?.reviewUrlPlaceholder || '',
+                uncertainReconciliationNeeded: false,
+                history: [
+                  ...j.reviewRequest.history,
+                  {
+                    timestamp: demoClock.slice(0, 16),
+                    event: 'Controlled retry successful: email dispatched and confirmed.',
+                    status: 'SENT',
+                  },
+                ],
+              },
+            }
+          : j
+      )
     );
-    setJobs([...authoritativeJobsRef.current]);
     showDemoNotification(`Review request for Job ${jobId} retried successfully and sent.`, 'success');
     return { success: true, message: 'Review request retried and sent.' };
   };
@@ -2097,44 +2174,51 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let docTitle = '';
     let formSnapshot = '';
     let isSigned = false;
-    let fullDocSnapshot = '';
+    let rawSnapshot: string | undefined = undefined;
 
     if (formType === 'JSA') {
       const form = getOrCreateJsa(jobId);
       docTitle = `Job Safety Analysis (JSA) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
-      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
     } else if (formType === 'ELECTRICAL') {
       const form = getOrCreateElectrical(jobId);
       docTitle = `Certificate of Electrical Safety (Part A) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
-      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
     } else if (formType === 'SMOKE_ALARM') {
       const form = getOrCreateSmokeAlarm(jobId);
       docTitle = `Smoke Alarm Compliance Certificate — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
-      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
     } else if (formType === 'TCA1') {
       const form = getOrCreateTca1(jobId);
       docTitle = `Telecommunications Cabling Advice (TCA1) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
-      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
     } else if (formType === 'TCA2') {
       const form = getOrCreateTca2(jobId);
       docTitle = `Cabling Non-Compliance Notice (TCA2) — ${jobId}`;
       formSnapshot = form.frozenIssuerSnapshot || 'Unsigned';
-      fullDocSnapshot = form.fullSnapshot || JSON.stringify(form);
       isSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
     }
 
     if (!isSigned) {
       showDemoNotification(`CANNOT SEND: ${docTitle} is not signed off. Only finalized certificates can be dispatched.`, 'error');
       return { success: false, message: 'Document unsigned' };
     }
+
+    const valRes = validateSignedSnapshot(rawSnapshot, jobId, formType);
+    if (!valRes.valid) {
+      showDemoNotification(`CANNOT SEND: ${docTitle} snapshot is missing or corrupt: ${valRes.error}`, 'error');
+      return { success: false, message: valRes.error || 'Corrupt or missing signed document snapshot' };
+    }
+    const fullDocSnapshot = rawSnapshot!;
 
     seqCounters.reminder++;
     const deliveryId = `CERT-DELIV-${seqCounters.reminder}`;
@@ -2279,6 +2363,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const simulateSignIn = (role: Persona) => {
+    authoritativePersonaRef.current = role;
     setPersona(role);
     setIsSimulatedSignedIn(true);
     showDemoNotification(`Signed in as ${role.toUpperCase()} (Simulated Demo Session).`, 'info');

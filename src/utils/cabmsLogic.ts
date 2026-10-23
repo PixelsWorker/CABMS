@@ -667,3 +667,47 @@ export function processReviewDispatch(params: {
   };
 }
 
+export interface SnapshotValidationResult {
+  valid: boolean;
+  error?: string;
+  parsedSnapshot?: Record<string, any>;
+}
+
+export function validateSignedSnapshot(
+  snapshotRaw?: string,
+  expectedJobId?: string,
+  formType?: string
+): SnapshotValidationResult {
+  if (!snapshotRaw || typeof snapshotRaw !== 'string' || snapshotRaw.trim() === '') {
+    return { valid: false, error: 'Signed document snapshot is missing or empty.' };
+  }
+  try {
+    const parsed = JSON.parse(snapshotRaw);
+    if (!parsed || typeof parsed !== 'object') {
+      return { valid: false, error: 'Snapshot is not a valid JSON object.' };
+    }
+    if (parsed.signedOff !== true) {
+      return { valid: false, error: 'Snapshot does not record finalized signedOff: true status.' };
+    }
+    if (expectedJobId && parsed.jobReference && parsed.jobReference !== expectedJobId) {
+      return { valid: false, error: `Snapshot job reference (${parsed.jobReference}) mismatch with expected ${expectedJobId}.` };
+    }
+    if (!parsed.signedTimestamp && !parsed.signedAt && !parsed.signOffTimestamp) {
+      return { valid: false, error: 'Snapshot lacks mandatory signed timestamp.' };
+    }
+    if (!parsed.signer && !parsed.technicianName && !parsed.businessCablerPlaceholder && !parsed.testerName) {
+      return { valid: false, error: 'Snapshot lacks mandatory signer identity.' };
+    }
+    if (formType === 'TCA2' && !parsed.reportReference) {
+      return { valid: false, error: 'TCA2 snapshot lacks mandatory reportReference.' };
+    }
+    if (formType === 'ELECTRICAL' && !parsed.certificateNumber) {
+      return { valid: false, error: 'Electrical snapshot lacks mandatory certificateNumber.' };
+    }
+    return { valid: true, parsedSnapshot: parsed };
+  } catch (e: any) {
+    return { valid: false, error: `Snapshot JSON syntax error: ${e.message}` };
+  }
+}
+
+

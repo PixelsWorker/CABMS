@@ -66,7 +66,8 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
       }
     };
     const handleFocusOut = (e: FocusEvent) => {
-      if (brandDropdownRef.current && !brandDropdownRef.current.contains(e.relatedTarget as Node)) {
+      const next = e.relatedTarget as Node | null;
+      if (next && brandDropdownRef.current && !brandDropdownRef.current.contains(next)) {
         closeBrandDropdown(false);
       }
     };

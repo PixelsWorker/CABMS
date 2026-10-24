@@ -195,44 +195,68 @@
 }
 
 /* Light mode utility overrides for accessible contrast on light backgrounds */
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-sky-400, .text-sky-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-sky-400, .text-sky-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-sky-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-sky-950"]) {
   color: var(--cabms-accent-info);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-amber-400, .text-amber-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-amber-400, .text-amber-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-amber-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-amber-950"]) {
   color: var(--cabms-accent-warning);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-emerald-400, .text-emerald-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-emerald-400, .text-emerald-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-emerald-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-emerald-950"]) {
   color: var(--cabms-accent-success);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-red-400, .text-red-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-red-400, .text-red-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-red-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-red-950"]) {
   color: var(--cabms-accent-danger);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]) {
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-emerald-950, [class*="bg-emerald-950"]) {
   background-color: var(--cabms-badge-completed-bg);
   color: var(--cabms-badge-completed-text);
   border-color: var(--cabms-badge-completed-border);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]) {
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-amber-950, [class*="bg-amber-950"]) {
   background-color: var(--cabms-badge-warning-bg);
   color: var(--cabms-badge-warning-text);
   border-color: var(--cabms-badge-warning-border);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]) {
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-red-950, [class*="bg-red-950"]) {
   background-color: var(--cabms-badge-danger-bg);
   color: var(--cabms-badge-danger-text);
   border-color: var(--cabms-badge-danger-border);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]) {
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-sky-950, [class*="bg-sky-950"]) {
   background-color: var(--cabms-badge-info-bg);
   color: var(--cabms-badge-info-text);
   border-color: var(--cabms-badge-info-border);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]):is(.text-amber-400, .text-amber-300),
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]) :is(.text-amber-400, .text-amber-300) {
+  color: var(--cabms-badge-warning-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]):is(.text-emerald-400, .text-emerald-300),
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]) :is(.text-emerald-400, .text-emerald-300) {
+  color: var(--cabms-badge-completed-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]):is(.text-red-400, .text-red-300),
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]) :is(.text-red-400, .text-red-300) {
+  color: var(--cabms-badge-danger-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]):is(.text-sky-400, .text-sky-300),
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]) :is(.text-sky-400, .text-sky-300) {
+  color: var(--cabms-badge-info-text);
 }
 
 .cabms-shell {

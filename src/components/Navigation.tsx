@@ -6,7 +6,7 @@ import { Persona } from '../types/cabms.ts';
 import {
   LayoutDashboard, Users, Briefcase, Calendar, FileCheck2, FileText,
   MessageSquare, Inbox, Settings, Sliders, Menu, X, LogOut,
-  PanelLeftClose, PanelLeftOpen, type LucideIcon,
+  PanelLeftClose, PanelLeftOpen, type LucideIcon, ChevronDown, Check,
 } from 'lucide-react';
 
 type Destination = {
@@ -34,15 +34,41 @@ export function canAccessDestination(persona: Persona, destinationId: string): b
 }
 
 const personaLabels: Record<Persona, string> = {
-  super_admin: 'Super Admin', owner_admin: 'Owner / Admin',
+  super_admin: 'Super Admin', owner_admin: 'Admin',
   office_staff: 'Office Staff', technician: 'Technician (Dave Miller)',
 };
 
 export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
-  const { activeTab, setActiveTab, activeBrand, persona, websiteEnquiries,
-    demoNotification, clearDemoNotification, simulateSignOut } = useCabms();
+  const { activeTab, setActiveTab, activeBrand, activeBrandId, setActiveBrandId, brands, persona, websiteEnquiries,
+    demoNotification, clearDemoNotification, simulateSignOut, myobConnection } = useCabms();
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [brandDropdownOpen, setBrandDropdownOpen] = React.useState(false);
+  const brandDropdownRef = React.useRef<HTMLDivElement>(null);
+  const brandTriggerRef = React.useRef<HTMLButtonElement>(null);
+
+  const closeBrandDropdown = (restoreFocus: boolean) => {
+    setBrandDropdownOpen(false);
+    if (restoreFocus) brandTriggerRef.current?.focus();
+  };
+
+  React.useEffect(() => {
+    if (!brandDropdownOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeBrandDropdown(true);
+    };
+    const handleClickOutside = (e: MouseEvent) => {
+      if (brandDropdownRef.current && !brandDropdownRef.current.contains(e.target as Node)) {
+        closeBrandDropdown(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [brandDropdownOpen]);
   const [hint, setHint] = React.useState<{ label: string; top: number; left: number } | null>(null);
   const openerRef = React.useRef<HTMLButtonElement>(null);
   const collapseRef = React.useRef<HTMLButtonElement>(null);
@@ -132,7 +158,11 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
       <h2 className={`cabms-nav-section-title ${!isDrawer && collapsed ? 'cabms-sr-only' : ''}`}>{section}</h2>
       {items.map(item => <button
         key={item.id} type="button" className="cabms-nav-link"
-        aria-label={item.label} aria-current={activeTab === item.id ? 'page' : undefined}
+        aria-label={
+          item.id === 'website_inbox' && pendingEnquiries > 0
+            ? `${item.label} (${pendingEnquiries} pending ${pendingEnquiries === 1 ? 'enquiry' : 'enquiries'})`
+            : item.label
+        } aria-current={activeTab === item.id ? 'page' : undefined}
         title={item.label} onClick={() => selectDestination(item.id)}
         onFocus={event => { if (!isDrawer) showHint(event.currentTarget, item.label); }}
         onBlur={() => setHint(null)}
@@ -142,7 +172,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
         <item.icon aria-hidden="true" className="cabms-nav-icon" />
         <span className={!isDrawer && collapsed ? 'cabms-sr-only' : 'cabms-nav-label'}>{item.label}</span>
         {item.id === 'website_inbox' && pendingEnquiries > 0 &&
-          <span className="cabms-nav-badge" aria-label={`${pendingEnquiries} pending enquiries`}>{pendingEnquiries}</span>}
+          <span className="cabms-nav-badge" aria-hidden="true">{pendingEnquiries}</span>}
       </button>)}
     </section>;
   });
@@ -167,10 +197,73 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
         <button ref={openerRef} type="button" className="cabms-icon-button cabms-mobile-toggle"
           aria-label="Open navigation" aria-expanded={mobileOpen} aria-controls="cabms-mobile-drawer"
           onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></button>
-        <div className="cabms-brand-mark" style={{ backgroundColor: activeBrand.primaryColor }} aria-hidden="true">{activeBrand.name.charAt(0)}</div>
+        <div className="cabms-brand-switcher-wrapper" ref={brandDropdownRef}>
+          <button
+            ref={brandTriggerRef}
+            type="button"
+            className="cabms-brand-mark-btn"
+            aria-label={`Current business: ${activeBrand.name}. Switch business context`}
+            aria-expanded={brandDropdownOpen}
+            aria-controls="cabms-brand-dropdown-menu"
+            onClick={() => setBrandDropdownOpen(open => !open)}
+          >
+            <div className="cabms-brand-mark" style={{ backgroundColor: activeBrand.primaryColor }} aria-hidden="true">
+              {activeBrand.name.charAt(0)}
+            </div>
+            <ChevronDown className="cabms-brand-chevron" aria-hidden="true" />
+          </button>
+          {brandDropdownOpen && (
+            <div
+              id="cabms-brand-dropdown-menu"
+              className="cabms-brand-dropdown-menu"
+              role="group"
+              aria-label="Switch business"
+            >
+              <div className="cabms-brand-dropdown-header">Switch Business</div>
+              <div className="cabms-brand-dropdown-list">
+                {Object.values(brands).map(b => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    aria-pressed={activeBrandId === b.id}
+                    aria-label={`Switch business to ${b.name || 'unnamed business'}`}
+                    title={b.name || 'Unnamed business'}
+                    onClick={() => {
+                      setActiveBrandId(b.id);
+                      closeBrandDropdown(true);
+                    }}
+                    className={`cabms-brand-dropdown-option ${activeBrandId === b.id ? 'is-active' : ''}`}
+                  >
+                    <span className="cabms-brand-option-mark" style={{ backgroundColor: b.primaryColor }} aria-hidden="true">
+                      {b.name.charAt(0)}
+                    </span>
+                    <div className="cabms-brand-option-info">
+                      <span className="cabms-brand-option-name">
+                        {b.name || 'Unnamed business'}
+                      </span>
+                      <span className="cabms-brand-option-abn">{b.abnPlaceholder}</span>
+                    </div>
+                    {activeBrandId === b.id && <Check className="cabms-brand-option-check" aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="cabms-topbar-identity">
-          <span className="cabms-business-name">{activeBrand.name}</span>
-          <span className="cabms-active-area">{activeDestination?.label || 'Restricted destination'}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="cabms-business-name">{activeBrand.name}</h1>
+            <span className="cabms-topbar-abn">{activeBrand.abnPlaceholder}</span>
+            <span className="cabms-active-area">• {activeDestination?.label || 'Restricted destination'}</span>
+          </div>
+          <p className="cabms-topbar-tagline">{activeBrand.tagline}</p>
+          <div className="cabms-topbar-meta">
+            <span>Licence: <strong className="text-[var(--cabms-text-primary)]">{activeBrand.electricalLicencePlaceholder}</strong></span>
+            <span className="cabms-meta-sep">•</span>
+            <span>Cabler: <strong className="text-[var(--cabms-text-primary)]">{activeBrand.acmaCablerPlaceholder}</strong></span>
+            <span className="cabms-meta-sep">•</span>
+            <span>MYOB File: <strong className="cabms-myob-id">{myobConnection.companyId}</strong></span>
+          </div>
         </div>
         <span className="cabms-persona">{personaLabels[persona]}</span>
         <button type="button" className="cabms-icon-button" aria-label="Sign out"

@@ -245,16 +245,16 @@ export const ComplianceFormsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header & Job Switcher */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
               <FileCheck2 className="w-5 h-5 text-amber-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">
+              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Mobile Technician Compliance Forms & Documents
               </h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
               Field risk assessments, electrical safety test sheets, smoke alarm compliance schedules, and ACMA cabling certificates.
             </p>
           </div>
@@ -263,7 +263,7 @@ export const ComplianceFormsView: React.FC = () => {
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setShowPrintModal(true)}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold rounded-lg transition cursor-pointer"
+              className="flex items-center space-x-1.5 px-3.5 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer"
             >
               <Printer className="w-4 h-4 text-sky-400" />
               <span>Branded Print / PDF Preview</span>
@@ -274,7 +274,7 @@ export const ComplianceFormsView: React.FC = () => {
         {/* Selected Job Indicator */}
         <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-            <label htmlFor="compliance-work-order" className="shrink-0 text-xs text-slate-400">Current Work Order:</label>
+            <label htmlFor="compliance-work-order" className="shrink-0 text-xs text-[var(--cabms-text-secondary)]">Current Work Order:</label>
             <select
               id="compliance-work-order"
               title={`${currentJob.id} — ${currentJob.title}`}
@@ -292,8 +292,8 @@ export const ComplianceFormsView: React.FC = () => {
             </select>
           </div>
 
-          <div className="flex items-center space-x-2 text-slate-400">
-            <span>Site: <strong className="text-white">{currentJob.siteAddress}</strong></span>
+          <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)]">
+            <span>Site: <strong className="text-[var(--cabms-text-primary)]">{currentJob.siteAddress}</strong></span>
             <span className="text-slate-600">•</span>
             <span>Issuer: <strong className="text-sky-300">{jobBrand.legalIssuerName}</strong></span>
           </div>
@@ -307,7 +307,7 @@ export const ComplianceFormsView: React.FC = () => {
           className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeFormTab === 'JSA'
               ? 'bg-amber-600 text-slate-950 shadow-md'
-              : 'bg-slate-900 text-slate-400 hover:text-white'
+              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
           }`}
         >
           <span>JSA / Risk Assessment</span>
@@ -323,7 +323,7 @@ export const ComplianceFormsView: React.FC = () => {
           className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeFormTab === 'SMOKE_ALARM'
               ? 'bg-amber-600 text-slate-950 shadow-md'
-              : 'bg-slate-900 text-slate-400 hover:text-white'
+              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
           }`}
         >
           <span>Smoke Alarm Cert</span>
@@ -335,7 +335,7 @@ export const ComplianceFormsView: React.FC = () => {
           className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeFormTab === 'ELECTRICAL'
               ? 'bg-amber-600 text-slate-950 shadow-md'
-              : 'bg-slate-900 text-slate-400 hover:text-white'
+              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
           }`}
         >
           <span>Electrical Cert (Part A)</span>
@@ -347,7 +347,7 @@ export const ComplianceFormsView: React.FC = () => {
           className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeFormTab === 'TCA1'
               ? 'bg-amber-600 text-slate-950 shadow-md'
-              : 'bg-slate-900 text-slate-400 hover:text-white'
+              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
           }`}
         >
           <span>TCA1 Cabling</span>
@@ -359,7 +359,7 @@ export const ComplianceFormsView: React.FC = () => {
           className={`flex items-center space-x-1.5 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer ${
             activeFormTab === 'TCA2'
               ? 'bg-amber-600 text-slate-950 shadow-md'
-              : 'bg-slate-900 text-slate-400 hover:text-white'
+              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
           }`}
         >
           <span>TCA2 Defect Notice</span>
@@ -368,19 +368,19 @@ export const ComplianceFormsView: React.FC = () => {
       </div>
 
       {/* Main Active Form View */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+      <div className="cabms-card p-6 space-y-6">
         {/* ======================= FORM 1: JSA RISK ASSESSMENT ======================= */}
         {activeFormTab === 'JSA' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
               <div>
-                <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
+                <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
                   Sanitised Field Groups 1–9 • Work Health & Safety Matrix
                 </span>
-                <h2 className="text-lg font-bold text-white mt-0.5">
+                <h2 className="text-xl md:text-2xl font-bold text-[var(--cabms-text-primary)] mt-1">
                   Job Safety Analysis (JSA) / Safe Work Method Statement
                 </h2>
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs md:text-sm text-[var(--cabms-text-secondary)] font-mono mt-1 block">
                   Revision: {currentJsa.formRevision} • Issuer: {jobBrand.legalIssuerName}
                 </span>
               </div>
@@ -388,11 +388,11 @@ export const ComplianceFormsView: React.FC = () => {
               {/* Apply DEMO Sign-off Button */}
               <div>
                 {currentJsa.signedOff ? (
-                  <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2">
+                  <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-3.5 py-2.5 rounded-lg text-sm font-semibold flex items-center space-x-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <div>
                       <div>DEMO Sign-off Applied</div>
-                      <div className="text-[10px] text-slate-400 font-mono">
+                      <div className="text-xs text-[var(--cabms-text-secondary)] font-mono mt-0.5">
                         {currentJsa.signedByTechName || 'Dave Miller'} ({currentJsa.signedTimestamp})
                       </div>
                     </div>
@@ -400,7 +400,7 @@ export const ComplianceFormsView: React.FC = () => {
                 ) : (
                   <button
                     onClick={() => signOffJsa(currentJob.id)}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded-lg transition shadow-md cursor-pointer flex items-center space-x-1.5"
+                    className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-sm rounded-lg transition shadow-md cursor-pointer flex items-center space-x-2"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Apply Technician DEMO Sign-off</span>
@@ -410,76 +410,76 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
 
             {/* Field Groups 1 & 2: Site Details & Personnel (Interactive G00-002) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
-                <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="cabms-card-subtle p-5 space-y-4">
+                <h3 className="font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider text-xs md:text-sm">
                   1. Job & Site Details
                 </h3>
-                <div className="space-y-2 text-slate-300">
+                <div className="space-y-3.5 text-[var(--cabms-text-primary)]">
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Job Reference</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-xs md:text-sm font-medium mb-1.5">Job Reference</label>
                     <input
                       type="text"
                       readOnly
                       value={currentJsa.jobReference}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-white font-mono"
+                      className="w-full cabms-input rounded-lg px-3 py-2 text-[var(--cabms-text-primary)] font-mono text-sm"
                     />
                   </div>
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Customer Name</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-xs md:text-sm font-medium mb-1.5">Customer Name</label>
                     <input
                       type="text"
                       value={currentJsa.customerName}
                       onChange={e => updateJsaForm(currentJob.id, { customerName: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-white"
+                      className="w-full cabms-input rounded-lg px-3 py-2 text-[var(--cabms-text-primary)] text-sm"
                     />
                   </div>
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Site Contact Person</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-xs md:text-sm font-medium mb-1.5">Site Contact Person</label>
                     <input
                       type="text"
                       value={currentJsa.siteContactPlaceholder}
                       onChange={e => updateJsaForm(currentJob.id, { siteContactPlaceholder: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-white"
+                      className="w-full cabms-input rounded-lg px-3 py-2 text-[var(--cabms-text-primary)] text-sm"
                     />
                   </div>
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Identified Site Assets</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-xs md:text-sm font-medium mb-1.5">Identified Site Assets</label>
                     <input
                       type="text"
                       value={currentJsa.assetsIdentified}
                       onChange={e => updateJsaForm(currentJob.id, { assetsIdentified: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-sky-300"
+                      className="w-full cabms-input rounded-lg px-3 py-2 text-sky-400 text-sm"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
-                <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+              <div className="cabms-card-subtle p-5 space-y-4">
+                <h3 className="font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider text-xs md:text-sm">
                   2. Personnel & Competency
                 </h3>
-                <div className="space-y-2 text-slate-300">
+                <div className="space-y-3.5 text-[var(--cabms-text-primary)]">
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Lead Technician</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-xs md:text-sm font-medium mb-1.5">Lead Technician</label>
                     <input
                       type="text"
                       value={currentJsa.personnelName}
                       onChange={e => updateJsaForm(currentJob.id, { personnelName: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-white font-bold"
+                      className="w-full cabms-input rounded-lg px-3 py-2 text-[var(--cabms-text-primary)] font-bold text-sm"
                     />
                   </div>
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Licence / Accreditation</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-xs md:text-sm font-medium mb-1.5">Licence / Accreditation</label>
                     <input
                       type="text"
                       value={currentJsa.licencePlaceholder}
                       onChange={e => updateJsaForm(currentJob.id, { licencePlaceholder: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono"
+                      className="w-full cabms-input rounded-lg px-3 py-2 text-[var(--cabms-text-primary)] font-mono text-sm"
                     />
                   </div>
-                  <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px]">
-                    <label className="flex items-center space-x-2 cursor-pointer bg-slate-900 border border-slate-800 hover:border-slate-700 px-2.5 py-1.5 rounded transition">
+                  <div className="flex flex-wrap items-center gap-3 pt-2 text-xs md:text-sm">
+                    <label className="flex items-center space-x-2 cursor-pointer cabms-surface-subtle border cabms-border px-3 py-2 rounded-lg transition">
                       <input
                         type="checkbox"
                         checked={currentJsa.inductionCompleted}
@@ -487,12 +487,12 @@ export const ComplianceFormsView: React.FC = () => {
                         onChange={e => updateJsaForm(currentJob.id, { inductionCompleted: e.target.checked })}
                         className="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0 cursor-pointer"
                       />
-                      <span className={currentJsa.inductionCompleted ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                      <span className={currentJsa.inductionCompleted ? 'text-emerald-400 font-semibold' : 'text-[var(--cabms-text-secondary)]'}>
                         Site Induction Completed
                       </span>
                     </label>
 
-                    <label className="flex items-center space-x-2 cursor-pointer bg-slate-900 border border-slate-800 hover:border-slate-700 px-2.5 py-1.5 rounded transition">
+                    <label className="flex items-center space-x-2 cursor-pointer cabms-surface-subtle border cabms-border px-3 py-2 rounded-lg transition">
                       <input
                         type="checkbox"
                         checked={currentJsa.competencyVerified}
@@ -500,7 +500,7 @@ export const ComplianceFormsView: React.FC = () => {
                         onChange={e => updateJsaForm(currentJob.id, { competencyVerified: e.target.checked })}
                         className="rounded bg-slate-950 border-slate-700 text-amber-500 focus:ring-0 cursor-pointer"
                       />
-                      <span className={currentJsa.competencyVerified ? 'text-emerald-400 font-semibold' : 'text-slate-400'}>
+                      <span className={currentJsa.competencyVerified ? 'text-emerald-400 font-semibold' : 'text-[var(--cabms-text-secondary)]'}>
                         Competencies Verified
                       </span>
                     </label>
@@ -510,24 +510,24 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
 
             {/* Field Groups 3 & 4: Risk Matrix & Task Steps (Editable rows G00-002) */}
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                <h3 className="text-sm font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider">
                   3 & 4. Task Steps, Hazards & Controls Matrix (L/M/H/E)
                 </h3>
                 <button
                   onClick={handleAddJsaStep}
                   disabled={currentJsa.signedOff}
-                  className="flex items-center space-x-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded text-xs font-semibold cursor-pointer"
+                  className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-400 rounded-lg text-xs font-bold cursor-pointer"
                 >
-                  <Plus className="w-3 h-3" />
+                  <Plus className="w-3.5 h-3.5" />
                   <span>Add Task Step</span>
                 </button>
               </div>
 
               <div className="overflow-x-auto border border-slate-800 rounded-xl">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+                <table className="w-full text-left text-xs text-[var(--cabms-text-secondary)]">
+                  <thead className="cabms-surface-subtle text-[var(--cabms-text-secondary)] text-[11px] uppercase border-b cabms-border">
                     <tr>
                       <th className="p-3">Task Step</th>
                       <th className="p-3">Identified Hazard</th>
@@ -537,10 +537,10 @@ export const ComplianceFormsView: React.FC = () => {
                       <th className="p-3">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/50">
+                  <tbody className="divide-y cabms-border cabms-surface">
                     {currentJsa.steps.map((step, idx) => (
                       <tr key={step.id}>
-                        <td className="p-2.5 font-semibold text-white">
+                        <td className="p-2.5 font-semibold text-[var(--cabms-text-primary)]">
                           <input
                             disabled={currentJsa.signedOff}
                             type="text"
@@ -549,7 +549,7 @@ export const ComplianceFormsView: React.FC = () => {
                               const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, taskStep: e.target.value } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
-                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-white"
+                            className="cabms-input rounded px-2 py-1 text-xs w-full text-[var(--cabms-text-primary)]"
                           />
                         </td>
                         <td className="p-2.5 text-red-300">
@@ -561,7 +561,7 @@ export const ComplianceFormsView: React.FC = () => {
                               const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, hazards: e.target.value } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
-                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-red-200"
+                            className="cabms-input rounded px-2 py-1 text-xs w-full text-red-400"
                           />
                         </td>
                         <td className="p-2.5 text-center">
@@ -580,7 +580,7 @@ export const ComplianceFormsView: React.FC = () => {
                             <option value="E">E</option>
                           </select>
                         </td>
-                        <td className="p-2.5 text-slate-300">
+                        <td className="p-2.5 text-[var(--cabms-text-secondary)]">
                           <input
                             disabled={currentJsa.signedOff}
                             type="text"
@@ -589,7 +589,7 @@ export const ComplianceFormsView: React.FC = () => {
                               const updated = currentJsa.steps.map((row, rowIndex) => rowIndex === idx ? { ...row, controls: e.target.value } : row);
                               updateJsaForm(currentJob.id, { steps: updated });
                             }}
-                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-slate-200"
+                            className="cabms-input rounded px-2 py-1 text-xs w-full text-[var(--cabms-text-primary)]"
                           />
                         </td>
                         <td className="p-2.5 text-center">
@@ -628,8 +628,8 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
 
             {/* Field Groups 5: PPE Checklist (Interactive Toggles G00-002) */}
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
-              <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+            <div className="cabms-card-subtle p-4 space-y-3 text-xs">
+              <h3 className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px]">
                 5. Personal Protective Equipment (PPE) Checklist (Click to Toggle)
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-[11px]">
@@ -644,7 +644,7 @@ export const ComplianceFormsView: React.FC = () => {
                       className={`flex items-center space-x-2 p-2 rounded-lg border text-left transition cursor-pointer ${
                         isYes
                           ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-200'
-                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                          : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
                       }`}
                     >
                       <div
@@ -671,10 +671,10 @@ export const ComplianceFormsView: React.FC = () => {
                 <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
                   Queensland Electrical Safety Act • Certificate Part A
                 </span>
-                <h2 className="text-lg font-bold text-white mt-0.5">
+                <h2 className="text-lg font-bold text-[var(--cabms-text-primary)] mt-0.5">
                   Certificate of Electrical Safety & Verification Test Sheet
                 </h2>
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-[var(--cabms-text-secondary)] font-mono">
                   Issuer: {jobBrand.legalIssuerName} • Licence: {jobBrand.electricalLicencePlaceholder}
                 </span>
               </div>
@@ -685,7 +685,7 @@ export const ComplianceFormsView: React.FC = () => {
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <div>
                       <div>DEMO Sign-off Applied</div>
-                      <div className="text-[10px] text-slate-400 font-mono">
+                      <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">
                         {currentElec.signedByTechName || 'Dave Miller (Lic 88204)'} ({currentElec.signedTimestamp})
                       </div>
                     </div>
@@ -717,21 +717,21 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
 
             {/* Tested Work Items Table (G00-002) */}
-            <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4 text-xs">
-              <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+            <div className="cabms-card-subtle p-5 space-y-4 text-xs">
+              <h3 className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px]">
                 AS/NZS 3000 Verification Test Readings (Interactive Inputs)
               </h3>
               <div className="space-y-3">
                 {currentElec.testedWorkItems.map((item, idx) => (
-                  <div key={item.id} className="bg-slate-900 p-3.5 rounded-lg border border-slate-800 space-y-2">
+                  <div key={item.id} className="cabms-card-subtle p-3.5 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="font-bold text-white text-xs">{item.description}</span>
+                      <span className="font-bold text-[var(--cabms-text-primary)] text-xs">{item.description}</span>
                       <span className="text-sky-400 font-mono text-[11px]">Circuits: {item.circuitsTested}</span>
                     </div>
 
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
                       <div>
-                        <label className="text-slate-400 block mb-0.5">Insulation Res.</label>
+                        <label className="text-[var(--cabms-text-secondary)] block mb-0.5">Insulation Res.</label>
                         <input
                             disabled={currentElec.signedOff}
                           type="text"
@@ -740,12 +740,12 @@ export const ComplianceFormsView: React.FC = () => {
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, insulationResistanceResult: e.target.value } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono w-full"
+                          className="cabms-input rounded px-2 py-1 text-[var(--cabms-text-primary)] font-mono w-full"
                         />
                       </div>
 
                       <div>
-                        <label className="text-slate-400 block mb-0.5">RCD Trip Time</label>
+                        <label className="text-[var(--cabms-text-secondary)] block mb-0.5">RCD Trip Time</label>
                         <input
                             disabled={currentElec.signedOff}
                           type="text"
@@ -754,12 +754,12 @@ export const ComplianceFormsView: React.FC = () => {
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, rcdTripTimeMs: e.target.value } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono w-full"
+                          className="cabms-input rounded px-2 py-1 text-[var(--cabms-text-primary)] font-mono w-full"
                         />
                       </div>
 
                       <div>
-                        <label className="text-slate-400 block mb-0.5">Polarity</label>
+                        <label className="text-[var(--cabms-text-secondary)] block mb-0.5">Polarity</label>
                         <select
                             disabled={currentElec.signedOff}
                           value={item.polarityTest}
@@ -767,7 +767,7 @@ export const ComplianceFormsView: React.FC = () => {
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, polarityTest: e.target.value as any } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white w-full"
+                          className="cabms-input rounded px-2 py-1 text-[var(--cabms-text-primary)] w-full"
                         >
                           <option value="Pass">Pass</option>
                           <option value="Fail">Fail</option>
@@ -775,7 +775,7 @@ export const ComplianceFormsView: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="text-slate-400 block mb-0.5">Earth Continuity</label>
+                        <label className="text-[var(--cabms-text-secondary)] block mb-0.5">Earth Continuity</label>
                         <select
                             disabled={currentElec.signedOff}
                           value={item.earthContinuity}
@@ -783,7 +783,7 @@ export const ComplianceFormsView: React.FC = () => {
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, earthContinuity: e.target.value as any } : row);
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
-                          className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white w-full"
+                          className="cabms-input rounded px-2 py-1 text-[var(--cabms-text-primary)] w-full"
                         >
                           <option value="Pass">Pass</option>
                           <option value="Fail">Fail</option>
@@ -805,10 +805,10 @@ export const ComplianceFormsView: React.FC = () => {
                 <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
                   Queensland Smoke Alarm Legislation 2022 • Interconnected Compliance
                 </span>
-                <h2 className="text-lg font-bold text-white mt-0.5">
+                <h2 className="text-lg font-bold text-[var(--cabms-text-primary)] mt-0.5">
                   Smoke Alarm Compliance & Test Certificate
                 </h2>
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-[var(--cabms-text-secondary)] font-mono">
                   Ref: {currentSmoke.certReference} • Property: {currentSmoke.propertyType}
                 </span>
               </div>
@@ -819,7 +819,7 @@ export const ComplianceFormsView: React.FC = () => {
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <div>
                       <div>DEMO Sign-off Applied</div>
-                      <div className="text-[10px] text-slate-400 font-mono">
+                      <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">
                         {currentSmoke.signedByTechName || 'Dave Miller'} ({currentSmoke.signedTimestamp})
                       </div>
                     </div>
@@ -839,7 +839,7 @@ export const ComplianceFormsView: React.FC = () => {
             {/* Interactive Alarm Schedule Table (G00-002) */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                <h3 className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider">
                   Installed / Inspected Smoke Alarms Schedule ({currentSmoke.alarmSchedule.length} devices)
                 </h3>
                 <button
@@ -853,8 +853,8 @@ export const ComplianceFormsView: React.FC = () => {
               </div>
 
               <div className="overflow-x-auto border border-slate-800 rounded-xl">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+                <table className="w-full text-left text-xs text-[var(--cabms-text-secondary)]">
+                  <thead className="cabms-surface-subtle text-[var(--cabms-text-secondary)] text-[11px] uppercase border-b cabms-border">
                     <tr>
                       <th className="p-3">Room Location</th>
                       <th className="p-3">Power Source / Model</th>
@@ -864,10 +864,10 @@ export const ComplianceFormsView: React.FC = () => {
                       <th className="p-3 text-center">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60 bg-slate-950/50">
+                  <tbody className="divide-y cabms-border cabms-surface">
                     {currentSmoke.alarmSchedule.map((alarm, idx) => (
                       <tr key={alarm.id}>
-                        <td className="p-2.5 font-semibold text-white">
+                        <td className="p-2.5 font-semibold text-[var(--cabms-text-primary)]">
                           <input
                             disabled={currentSmoke.signedOff}
                             type="text"
@@ -876,10 +876,10 @@ export const ComplianceFormsView: React.FC = () => {
                               const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, roomLocation: e.target.value } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
-                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-full text-white"
+                            className="cabms-input rounded px-2 py-1 text-xs w-full text-[var(--cabms-text-primary)]"
                           />
                         </td>
-                        <td className="p-2.5 text-slate-300">
+                        <td className="p-2.5 text-[var(--cabms-text-secondary)]">
                           <select
                             disabled={currentSmoke.signedOff}
                             value={alarm.powerSource}
@@ -887,7 +887,7 @@ export const ComplianceFormsView: React.FC = () => {
                               const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, powerSource: e.target.value as any } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
-                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs text-slate-300"
+                            className="cabms-input rounded px-2 py-1 text-xs text-[var(--cabms-text-secondary)]"
                           >
                             <option value="240V Hardwired with Battery Backup">240V Hardwired with Battery Backup</option>
                             <option value="10-Year Sealed Lithium">10-Year Sealed Lithium</option>
@@ -920,7 +920,7 @@ export const ComplianceFormsView: React.FC = () => {
                               const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, manufactureDateOrExpiry: e.target.value } : row);
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
-                            className="bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs w-24 text-center text-white font-mono"
+                            className="cabms-input rounded px-2 py-1 text-xs w-24 text-center text-[var(--cabms-text-primary)] font-mono"
                           />
                         </td>
                         <td className="p-2.5 text-center">
@@ -970,10 +970,10 @@ export const ComplianceFormsView: React.FC = () => {
                 <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
                   ACMA Telecommunications Cabling Advice (TCA1)
                 </span>
-                <h2 className="text-lg font-bold text-white mt-0.5">
+                <h2 className="text-lg font-bold text-[var(--cabms-text-primary)] mt-0.5">
                   Telecommunications Cabling Advice (Form TCA1)
                 </h2>
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-[var(--cabms-text-secondary)] font-mono">
                   Registration: {currentTca1.cablerRegistrationNumberPlaceholder} • Cert: {currentTca1.certReference}
                 </span>
               </div>
@@ -984,7 +984,7 @@ export const ComplianceFormsView: React.FC = () => {
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <div>
                       <div>DEMO Sign-off Applied</div>
-                      <div className="text-[10px] text-slate-400 font-mono">
+                      <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">
                         {currentTca1.signedByTechName || currentTca1.registeredCablerPlaceholder} ({currentTca1.signedTimestamp})
                       </div>
                     </div>
@@ -1002,53 +1002,53 @@ export const ComplianceFormsView: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+              <div className="cabms-card-subtle p-4 space-y-3">
+                <h3 className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px]">
                   1. Work Description & Location
                 </h3>
                 <div className="space-y-2">
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Work Description</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-[11px] mb-0.5">Work Description</label>
                     <input
                       type="text"
                       value={currentTca1.workDescription}
                       onChange={e => updateTca1Form(currentJob.id, { workDescription: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-white"
+                      className="w-full cabms-input rounded px-2.5 py-1 text-[var(--cabms-text-primary)]"
                     />
                   </div>
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Location of Work</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-[11px] mb-0.5">Location of Work</label>
                     <input
                       type="text"
                       value={currentTca1.locationOfWork}
                       onChange={e => updateTca1Form(currentJob.id, { locationOfWork: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-sky-300"
+                      className="w-full cabms-input rounded px-2.5 py-1 text-sky-400"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                <h3 className="font-bold text-slate-300 uppercase tracking-wider text-[11px]">
+              <div className="cabms-card-subtle p-4 space-y-3">
+                <h3 className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px]">
                   2. Cabler Registration & Declaration
                 </h3>
                 <div className="space-y-2">
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">Registered Cabler Name</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-[11px] mb-0.5">Registered Cabler Name</label>
                     <input
                       type="text"
                       value={currentTca1.registeredCablerPlaceholder}
                       onChange={e => updateTca1Form(currentJob.id, { registeredCablerPlaceholder: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-white font-bold"
+                      className="w-full cabms-input rounded px-2.5 py-1 text-[var(--cabms-text-primary)] font-bold"
                     />
                   </div>
                   <div>
-                    <label className="text-slate-400 block text-[11px] mb-0.5">ACMA Cabler Registration No.</label>
+                    <label className="text-[var(--cabms-text-secondary)] block text-[11px] mb-0.5">ACMA Cabler Registration No.</label>
                     <input
                       type="text"
                       value={currentTca1.cablerRegistrationNumberPlaceholder}
                       onChange={e => updateTca1Form(currentJob.id, { cablerRegistrationNumberPlaceholder: e.target.value })}
-                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono"
+                      className="w-full cabms-input rounded px-2.5 py-1 text-[var(--cabms-text-secondary)] font-mono"
                     />
                   </div>
                 </div>
@@ -1065,10 +1065,10 @@ export const ComplianceFormsView: React.FC = () => {
                 <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">
                   ACMA Telecommunications Defect Notice (TCA2)
                 </span>
-                <h2 className="text-lg font-bold text-white mt-0.5">
+                <h2 className="text-lg font-bold text-[var(--cabms-text-primary)] mt-0.5">
                   Notice of Defective Customer Cabling (Form TCA2)
                 </h2>
-                <span className="text-xs text-slate-400 font-mono">
+                <span className="text-xs text-[var(--cabms-text-secondary)] font-mono">
                   Defect Ref: {currentTca2.reportReference} • Severity: {currentTca2.riskCategory}
                 </span>
               </div>
@@ -1079,7 +1079,7 @@ export const ComplianceFormsView: React.FC = () => {
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     <div>
                       <div>Technician Notified</div>
-                      <div className="text-[10px] text-slate-400 font-mono">
+                      <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">
                         {currentTca2.signedByTechName || currentTca2.businessCablerPlaceholder} ({currentTca2.signedTimestamp})
                       </div>
                     </div>
@@ -1096,38 +1096,38 @@ export const ComplianceFormsView: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
-              <label className="font-bold text-slate-300 uppercase tracking-wider text-[11px] block">
+            <div className="cabms-card-subtle p-4 space-y-3 text-xs">
+              <label className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px] block">
                 Identified Defect & Recommended Remedial Action
               </label>
               <textarea
                 rows={3}
                 value={currentTca2.nonComplianceDescription}
                 onChange={e => updateTca2Form(currentJob.id, { nonComplianceDescription: e.target.value })}
-                className="w-full bg-slate-900 border border-slate-800 rounded p-2.5 text-white"
+                className="w-full cabms-input rounded p-2.5 text-[var(--cabms-text-primary)]"
               />
             </div>
 
             {/* Workflow 3-Way Status: Technician Issued, Customer Ack, Office Review (Separated Audit Trail) */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">1. Field Notice</span>
-                <div className="font-semibold text-white">
+              <div className="cabms-card-subtle p-3.5 space-y-2">
+                <span className="font-bold text-[var(--cabms-text-secondary)] uppercase text-[10px] block">1. Field Notice</span>
+                <div className="font-semibold text-[var(--cabms-text-primary)]">
                   {currentTca2.signedOff ? '✓ Issued & Frozen by Cabler' : 'Pending Field Issue'}
                 </div>
                 {currentTca2.signedOff && (
-                  <div className="text-[10px] text-slate-400 font-mono">
+                  <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">
                     {currentTca2.signedByTechName} ({currentTca2.signedTimestamp})
                   </div>
                 )}
               </div>
 
-              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">2. Customer Acknowledgment</span>
+              <div className="cabms-card-subtle p-3.5 space-y-2">
+                <span className="font-bold text-[var(--cabms-text-secondary)] uppercase text-[10px] block">2. Customer Acknowledgment</span>
                 {currentTca2Audit.customerAcknowledged ? (
                   <div>
                     <div className="font-semibold text-emerald-400">✓ Customer Signed</div>
-                    <div className="text-[10px] text-slate-400 font-mono">{currentTca2Audit.customerAckTimestamp}</div>
+                    <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">{currentTca2Audit.customerAckTimestamp}</div>
                   </div>
                 ) : !currentTca2.signedOff ? (
                   <div className="text-[11px] text-slate-500 italic">
@@ -1143,12 +1143,12 @@ export const ComplianceFormsView: React.FC = () => {
                 )}
               </div>
 
-              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
-                <span className="font-bold text-slate-400 uppercase text-[10px] block">3. Office Safety Review</span>
+              <div className="cabms-card-subtle p-3.5 space-y-2">
+                <span className="font-bold text-[var(--cabms-text-secondary)] uppercase text-[10px] block">3. Office Safety Review</span>
                 {currentTca2Audit.officeReviewCompleted ? (
                   <div>
                     <div className="font-semibold text-emerald-400">✓ Office Reviewed</div>
-                    <div className="text-[10px] text-slate-400 font-mono">
+                    <div className="text-[10px] text-[var(--cabms-text-secondary)] font-mono">
                       {currentTca2Audit.rectificationFollowupJobId ? `Follow-up: #${currentTca2Audit.rectificationFollowupJobId}` : 'Logged'}
                     </div>
                   </div>
@@ -1170,7 +1170,7 @@ export const ComplianceFormsView: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Camera className="w-4 h-4 text-sky-400" />
-              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              <h3 className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider">
                 Field Evidence Photos & Attachments Library
               </h3>
             </div>
@@ -1180,7 +1180,7 @@ export const ComplianceFormsView: React.FC = () => {
               className={`flex items-center space-x-1.5 px-3 py-1 text-xs font-semibold rounded ${
                 isCurrentFormSigned
                   ? 'bg-slate-900 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 cursor-pointer'
+                  : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] cursor-pointer'
               }`}
               title={isCurrentFormSigned ? 'Attachments cannot be added to signed and finalized compliance documents.' : undefined}
             >
@@ -1191,8 +1191,8 @@ export const ComplianceFormsView: React.FC = () => {
 
           {/* Photo Picker Drawer */}
           {showPhotoPicker && !isCurrentFormSigned && (
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-              <span className="text-[11px] text-slate-400 block">
+            <div className="cabms-card-subtle p-4 space-y-3">
+              <span className="text-[11px] text-[var(--cabms-text-secondary)] block">
                 Select high-resolution synthetic site evidence to link to this {activeFormTab} record:
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1207,7 +1207,7 @@ export const ComplianceFormsView: React.FC = () => {
                         alt={sample.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition"
                       />
-                      <span className="absolute bottom-1 right-1 text-[9px] bg-slate-950/80 px-1 rounded text-slate-300">
+                      <span className="absolute bottom-1 right-1 text-[9px] bg-slate-950/80 px-1 rounded text-[var(--cabms-text-secondary)]">
                         {sample.category}
                       </span>
                     </div>
@@ -1253,7 +1253,7 @@ export const ComplianceFormsView: React.FC = () => {
             return (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {linkedSamples.map(item => (
-                  <div key={item.id} className="bg-slate-950 border border-slate-800 rounded-lg overflow-hidden group">
+                  <div key={item.id} className="cabms-card-subtle overflow-hidden group">
                     <div className="h-24 bg-slate-800 relative">
                       <img src={item.thumbnailUrl} alt={item.title} className="w-full h-full object-cover" />
                       <span className="absolute top-1 left-1 text-[9px] bg-emerald-950/90 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-mono font-bold">
@@ -1261,7 +1261,7 @@ export const ComplianceFormsView: React.FC = () => {
                       </span>
                     </div>
                     <div className="p-2 flex items-center justify-between text-[11px]">
-                      <span className="text-slate-300 font-medium truncate">{item.title}</span>
+                      <span className="text-[var(--cabms-text-secondary)] font-medium truncate">{item.title}</span>
                       {!isCurrentFormSigned && (
                         <button
                           onClick={() => removeSampleFromJobForm(currentJob.id, activeFormTab, item.id)}
@@ -1300,7 +1300,7 @@ export const ComplianceFormsView: React.FC = () => {
               </div>
               <button
                 onClick={() => setShowPrintModal(false)}
-                className="text-slate-400 hover:text-slate-800 text-xl font-bold cursor-pointer"
+                className="text-slate-600 hover:text-slate-800 text-xl font-bold cursor-pointer"
               >
                 ✕
               </button>

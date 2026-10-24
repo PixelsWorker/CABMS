@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Area J: Existing-Website Handoff
  * Internal website submission simulation, pending review inbox,
  * duplicate/customer matching, and explicit office conversion to draft work orders.
@@ -51,7 +51,7 @@ export const WebsiteInboxView: React.FC = () => {
     return (
       <AccessDeniedView
         resourceName="Website Lead Inbox & Conversion"
-        requiredRoleDescription="Super Admin, Owner / Admin, or Office Staff"
+        requiredRoleDescription="Super Admin, Admin, or Office Staff"
         customExplanation="Technicians do not triage incoming website leads, perform customer record linkage, or generate initial job types."
       />
     );
@@ -67,27 +67,27 @@ export const WebsiteInboxView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
               <Inbox className="w-5 h-5 text-purple-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">
+              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Existing-Website Handoff Inbox (Office Review)
               </h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
               Synthetic incoming web leads. Enquiries remain in pending review until office staff match or convert them into operational work orders.
             </p>
           </div>
 
           {/* Trigger Simulation Button */}
-          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center bg-slate-950 p-1.5 rounded-lg border border-slate-800">
+          <div className="flex w-full min-w-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center cabms-card-subtle p-1.5">
             <select
               aria-label="Website submission business"
               value={selectedBrandForSim}
               onChange={e => setSelectedBrandForSim(e.target.value as BrandId)}
-              className="w-full min-w-0 max-w-full bg-slate-900 text-white text-xs font-semibold px-2 py-1.5 rounded focus:outline-none cursor-pointer"
+              className="w-full min-w-0 max-w-full cabms-input text-[var(--cabms-text-primary)] text-xs font-semibold px-2 py-1.5 rounded focus:outline-none cursor-pointer"
             >
               {Object.values(brands).map(b => (
                 <option key={b.id} value={b.id}>
@@ -106,7 +106,7 @@ export const WebsiteInboxView: React.FC = () => {
         </div>
 
         {/* Isolation Boundary Disclosure */}
-        <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center space-x-2">
+        <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-[var(--cabms-text-secondary)] flex items-center space-x-2">
           <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
             Strict boundary: No live webhooks, external forms, or website rebuilds. Synthetic entries test the office triage and matching flow.
@@ -117,7 +117,7 @@ export const WebsiteInboxView: React.FC = () => {
       {/* Pending Review Queue */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
+          <h2 className="text-sm font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider flex items-center space-x-2">
             <span>Pending Enquiries Awaiting Office Action</span>
             <span className="bg-purple-950 text-purple-300 border border-purple-800 text-xs px-2 py-0.5 rounded-full font-bold">
               {pendingEnquiries.length} Pending
@@ -126,7 +126,7 @@ export const WebsiteInboxView: React.FC = () => {
         </div>
 
         {pendingEnquiries.length === 0 ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center text-slate-400 text-xs">
+          <div className="cabms-card p-8 text-center text-[var(--cabms-text-secondary)] text-xs">
             Inbox is clean. Click &quot;Simulate Web Submission&quot; above to create a synthetic enquiry.
           </div>
         ) : (
@@ -137,13 +137,13 @@ export const WebsiteInboxView: React.FC = () => {
               return (
                 <div
                   key={enq.id}
-                  className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4 hover:border-slate-700 transition"
+                  className="cabms-card p-5 space-y-4 hover:border-[var(--cabms-border-focus)] transition"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                     <div>
                       <div className="flex items-center space-x-2">
                         <span className="font-mono text-xs font-bold text-purple-400">{enq.id}</span>
-                        <span className="text-white font-bold text-base">{enq.customerName}</span>
+                        <span className="text-[var(--cabms-text-primary)] font-bold text-base">{enq.customerName}</span>
                         <span
                           className="text-[10px] font-bold px-2 py-0.5 rounded text-white"
                           style={{ backgroundColor: brands[enq.brandId]?.primaryColor }}
@@ -152,13 +152,13 @@ export const WebsiteInboxView: React.FC = () => {
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-3">
+                      <div className="text-xs text-[var(--cabms-text-secondary)] mt-1 flex flex-wrap items-center gap-3">
                         <span className="flex items-center gap-1">
                           <Clock className="w-3.5 h-3.5 text-slate-500" />
                           Received: {enq.submissionDate}
                         </span>
                         <span>•</span>
-                        <span>Source: <strong className="text-slate-300">{enq.sourceWebsite}</strong></span>
+                        <span>Source: <strong className="text-[var(--cabms-text-secondary)]">{enq.sourceWebsite}</strong></span>
                       </div>
                     </div>
 
@@ -170,7 +170,7 @@ export const WebsiteInboxView: React.FC = () => {
                           <span>Matched: {matchedCust.name} ({matchedCust.myobCustomerId})</span>
                         </div>
                       ) : (
-                        <div className="bg-slate-950 border border-slate-800 text-slate-400 px-3 py-1 rounded-lg text-xs">
+                        <div className="cabms-card-subtle text-[var(--cabms-text-secondary)] px-3 py-1 rounded-lg text-xs">
                           New Customer Lead
                         </div>
                       )}
@@ -178,15 +178,15 @@ export const WebsiteInboxView: React.FC = () => {
                   </div>
 
                   {/* Enquiry Body */}
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs space-y-2">
-                    <div className="font-bold text-white text-sm">
+                  <div className="cabms-card-subtle p-4 text-xs space-y-2">
+                    <div className="font-bold text-[var(--cabms-text-primary)] text-sm">
                       Requested Service: {enq.serviceRequested}
                     </div>
-                    <p className="text-slate-300 leading-relaxed italic bg-slate-900/50 p-2.5 rounded border border-slate-800/80">
+                    <p className="text-[var(--cabms-text-secondary)] leading-relaxed italic cabms-surface-subtle p-2.5 rounded border cabms-border">
                       &quot;{enq.notes}&quot;
                     </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-400 text-[11px] pt-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[var(--cabms-text-secondary)] text-[11px] pt-1">
                       <div className="flex items-center space-x-1.5 truncate">
                         <Mail className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                         <span>{enq.email}</span>
@@ -206,7 +206,7 @@ export const WebsiteInboxView: React.FC = () => {
                   <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
                     <button
                       onClick={() => dismissEnquiry(enq.id)}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition cursor-pointer"
+                      className="px-3 py-1.5 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] text-xs font-semibold rounded-lg transition cursor-pointer"
                     >
                       Dismiss Lead
                     </button>
@@ -225,7 +225,7 @@ export const WebsiteInboxView: React.FC = () => {
                     </button>
                   </div>
                 </div>
-              );
+            );
             })}
           </div>
         )}
@@ -233,18 +233,18 @@ export const WebsiteInboxView: React.FC = () => {
 
       {/* Processed Enquiries Log */}
       {processedEnquiries.length > 0 && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+        <div className="cabms-card p-5 space-y-3">
+          <h3 className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider">
             Processed Enquiries Archive
           </h3>
           <div className="space-y-2 text-xs">
             {processedEnquiries.map(enq => (
               <div
                 key={enq.id}
-                className="bg-slate-950 p-3 rounded-lg border border-slate-800 flex items-center justify-between text-slate-400"
+                className="cabms-card-subtle p-3 flex items-center justify-between text-[var(--cabms-text-secondary)]"
               >
                 <div>
-                  <span className="font-mono text-slate-300 font-bold">{enq.id}</span> • {enq.customerName} ({brands[enq.brandId]?.name})
+                  <span className="font-mono text-[var(--cabms-text-secondary)] font-bold">{enq.id}</span> • {enq.customerName} ({brands[enq.brandId]?.name})
                   {enq.convertedJobId && (
                     <span className="text-emerald-400 ml-2 font-mono">
                       ↳ Converted to Job: {enq.convertedJobId}
@@ -254,7 +254,7 @@ export const WebsiteInboxView: React.FC = () => {
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
                   enq.status === 'CONVERTED_TO_JOB'
                     ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                    : 'bg-slate-800 text-slate-400'
+                    : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
                 }`}>
                   {enq.status}
                 </span>
@@ -267,41 +267,41 @@ export const WebsiteInboxView: React.FC = () => {
       {/* CONVERSION MODAL: Customer Matching & Job Type Picker */}
       {conversionModalEnquiry && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+          <div className="cabms-card rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2">
                 <FileCheck2 className="w-5 h-5 text-purple-400" />
-                <h3 className="text-base font-bold text-white">Convert Web Lead to Work Order</h3>
+                <h3 className="text-base font-bold text-[var(--cabms-text-primary)]">Convert Web Lead to Work Order</h3>
               </div>
               <button
                 onClick={() => setConversionModalEnquiry(null)}
-                className="text-slate-400 hover:text-white font-bold text-sm cursor-pointer"
+                className="text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)] font-bold text-sm cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 text-xs space-y-1.5">
-              <div className="font-bold text-white text-sm">{conversionModalEnquiry.customerName}</div>
-              <div className="text-slate-400 flex items-center space-x-3">
+            <div className="cabms-card-subtle p-3.5 text-xs space-y-1.5">
+              <div className="font-bold text-[var(--cabms-text-primary)] text-sm">{conversionModalEnquiry.customerName}</div>
+              <div className="text-[var(--cabms-text-secondary)] flex items-center space-x-3">
                 <span>{conversionModalEnquiry.phone}</span>
                 <span>•</span>
                 <span>{conversionModalEnquiry.email}</span>
               </div>
-              <div className="text-slate-300 pt-1 border-t border-slate-800/80">
+              <div className="text-[var(--cabms-text-secondary)] pt-1 border-t border-slate-800/80">
                 Service: <strong>{conversionModalEnquiry.serviceRequested}</strong>
               </div>
             </div>
 
             {/* 1. Customer Linkage Selection */}
             <div className="space-y-2 text-xs">
-              <label className="text-slate-300 font-bold block uppercase tracking-wider text-[10px]">
+              <label className="text-[var(--cabms-text-secondary)] font-bold block uppercase tracking-wider text-[10px]">
                 1. Customer Resolution & MYOB Card Linkage
               </label>
 
-              <div className="space-y-2 bg-slate-950 p-3 rounded-xl border border-slate-800">
+              <div className="space-y-2 cabms-card-subtle p-3">
                 {conversionModalEnquiry.matchedExistingCustomerId && (
-                  <label className="flex items-start space-x-2 cursor-pointer text-slate-300">
+                  <label className="flex items-start space-x-2 cursor-pointer text-[var(--cabms-text-secondary)]">
                     <input
                       type="radio"
                       name="custMatch"
@@ -310,7 +310,7 @@ export const WebsiteInboxView: React.FC = () => {
                       className="mt-0.5 text-purple-600 focus:ring-0"
                     />
                     <div>
-                      <span className="font-bold text-white">Use Matched Existing Customer</span>
+                      <span className="font-bold text-[var(--cabms-text-primary)]">Use Matched Existing Customer</span>
                       <span className="block text-[11px] text-sky-400 font-mono">
                         {customers.find(c => c.id === conversionModalEnquiry.matchedExistingCustomerId)?.name} ({conversionModalEnquiry.matchedExistingCustomerId})
                       </span>
@@ -318,7 +318,7 @@ export const WebsiteInboxView: React.FC = () => {
                   </label>
                 )}
 
-                <label className="flex items-start space-x-2 cursor-pointer text-slate-300">
+                <label className="flex items-start space-x-2 cursor-pointer text-[var(--cabms-text-secondary)]">
                   <input
                     type="radio"
                     name="custMatch"
@@ -327,12 +327,12 @@ export const WebsiteInboxView: React.FC = () => {
                     className="mt-0.5 text-purple-600 focus:ring-0"
                   />
                   <div className="flex-1">
-                    <span className="font-bold text-white">Select from Existing Customer Master</span>
+                    <span className="font-bold text-[var(--cabms-text-primary)]">Select from Existing Customer Master</span>
                     {selectedCustMatchMode === 'existing_picker' && (
                       <select
                         value={selectedExistingCustId}
                         onChange={e => setSelectedExistingCustId(e.target.value)}
-                        className="w-full mt-1.5 bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-white"
+                        className="w-full mt-1.5 cabms-input rounded p-1.5 text-xs text-[var(--cabms-text-primary)]"
                       >
                         {customers.map(c => (
                           <option key={c.id} value={c.id}>
@@ -344,7 +344,7 @@ export const WebsiteInboxView: React.FC = () => {
                   </div>
                 </label>
 
-                <label className="flex items-start space-x-2 cursor-pointer text-slate-300">
+                <label className="flex items-start space-x-2 cursor-pointer text-[var(--cabms-text-secondary)]">
                   <input
                     type="radio"
                     name="custMatch"
@@ -353,8 +353,8 @@ export const WebsiteInboxView: React.FC = () => {
                     className="mt-0.5 text-purple-600 focus:ring-0"
                   />
                   <div>
-                    <span className="font-bold text-white">Create New MYOB Customer Card</span>
-                    <span className="block text-[11px] text-slate-400">
+                    <span className="font-bold text-[var(--cabms-text-primary)]">Create New MYOB Customer Card</span>
+                    <span className="block text-[11px] text-[var(--cabms-text-secondary)]">
                       Write-through new customer entry to MYOB Business master file.
                     </span>
                   </div>
@@ -373,14 +373,14 @@ export const WebsiteInboxView: React.FC = () => {
 
             {/* 2. Job Type Picker */}
             <div className="space-y-2 text-xs">
-              <label className="text-slate-300 font-bold block uppercase tracking-wider text-[10px]">
+              <label className="text-[var(--cabms-text-secondary)] font-bold block uppercase tracking-wider text-[10px]">
                 2. Operational Job Type & Compliance Matrix
               </label>
 
               <select
                 value={selectedConversionJobType?.id || ''}
                 onChange={e => setSelectedJobTypeId(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-white font-medium cursor-pointer"
+                className="w-full cabms-input rounded-lg p-2 text-[var(--cabms-text-primary)] font-medium cursor-pointer"
               >
                 {conversionJobTypes.map(jt => (
                   <option key={jt.id} value={jt.id}>
@@ -393,11 +393,11 @@ export const WebsiteInboxView: React.FC = () => {
                 const jt = selectedConversionJobType;
                 if (!jt) return <div role="alert" className="text-red-300">No job type is configured for this enquiry business.</div>;
                 return (
-                  <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
-                    <div className="text-slate-400">
-                      Policy Rule: <strong className="text-white">{jt.isDirectToInvoice ? 'Direct-to-invoice service (no mandatory safety forms)' : 'Multi-form compliance check enforced'}</strong>
+                  <div className="cabms-card-subtle p-2.5 text-[11px] space-y-1">
+                    <div className="text-[var(--cabms-text-secondary)]">
+                      Policy Rule: <strong className="text-[var(--cabms-text-primary)]">{jt.isDirectToInvoice ? 'Direct-to-invoice service (no mandatory safety forms)' : 'Multi-form compliance check enforced'}</strong>
                     </div>
-                    <div className="text-slate-400">
+                    <div className="text-[var(--cabms-text-secondary)]">
                       Enforced Documents: <span className="font-mono text-sky-400">{jt.formsRequired.length > 0 ? jt.formsRequired.join(' + ') : 'None'}</span>
                     </div>
                   </div>
@@ -410,7 +410,7 @@ export const WebsiteInboxView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setConversionModalEnquiry(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition cursor-pointer"
+                className="px-4 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] rounded font-semibold transition cursor-pointer"
               >
                 Cancel
               </button>

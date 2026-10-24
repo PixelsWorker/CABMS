@@ -6,7 +6,7 @@
 import React from 'react';
 import { formatBusinessTime } from '../utils/businessTime.ts';
 import { useCabms, DemoScenario } from '../context/CabmsContext.tsx';
-import { Persona, BrandId } from '../types/cabms.ts';
+import { Persona, BrandId, AppearanceMode } from '../types/cabms.ts';
 import {
   Clock,
   RotateCcw,
@@ -16,6 +16,7 @@ import {
   FastForward,
   HelpCircle,
   Send,
+  Palette,
 } from 'lucide-react';
 
 export const DemoControlsBar: React.FC = () => {
@@ -26,6 +27,8 @@ export const DemoControlsBar: React.FC = () => {
     activeBrandId,
     setActiveBrandId,
     brands,
+    appearance,
+    setAppearance,
     demoClock,
     advanceClock,
     resetDemo,
@@ -65,7 +68,7 @@ export const DemoControlsBar: React.FC = () => {
               aria-label="Demo Persona Selector"
             >
               <option value="super_admin" className="bg-slate-900 text-white">Super Admin</option>
-              <option value="owner_admin" className="bg-slate-900 text-white">Owner / Admin</option>
+              <option value="owner_admin" className="bg-slate-900 text-white">Admin</option>
               <option value="office_staff" className="bg-slate-900 text-white">Office Staff</option>
               <option value="technician" className="bg-slate-900 text-white">Technician (Dave M.)</option>
             </select>
@@ -108,6 +111,22 @@ export const DemoControlsBar: React.FC = () => {
               <option value="cabling_revisit" className="bg-slate-900 text-white">4. Cabling Revisit (TCA1/TCA2 Defect)</option>
               <option value="unassigned_denied" className="bg-slate-900 text-white">5. Tech Denied Access (Unassigned)</option>
               <option value="myob_failed" className="bg-slate-900 text-white">6. MYOB Write-Through Failure</option>
+            </select>
+          </div>
+
+          {/* Appearance Mode Selector */}
+          <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+            <Palette className="w-3.5 h-3.5 text-purple-400" />
+            <span className="text-slate-400 text-xs hidden sm:inline">Theme:</span>
+            <select
+              value={appearance}
+              onChange={e => setAppearance(e.target.value as AppearanceMode)}
+              className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
+              aria-label="Appearance Mode Selector"
+            >
+              <option value="default_dark" className="bg-slate-900 text-white">Default Dark</option>
+              <option value="high_visibility_light" className="bg-slate-900 text-white">High Visibility Light</option>
+              <option value="high_visibility_dark" className="bg-slate-900 text-white">High Visibility Dark</option>
             </select>
           </div>
         </div>

@@ -47,7 +47,7 @@ export const TemplatesSettingsView: React.FC = () => {
     return (
       <AccessDeniedView
         resourceName="Compliance Templates & Terms Management"
-        requiredRoleDescription="Owner / Admin or Super Admin"
+        requiredRoleDescription="Admin or Super Admin"
         customExplanation="Technicians cannot alter master compliance forms or standard Terms of Service."
       />
     );
@@ -65,48 +65,48 @@ export const TemplatesSettingsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
               <Sliders className="w-5 h-5 text-amber-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">
-                Owner / Admin Content & Template Settings
+              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
+                Admin Content & Template Settings
               </h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
               Bounded form field configuration, draft-to-published versioning, and required-forms job matrix.
             </p>
           </div>
 
-          <div className="bg-slate-950 border border-slate-800 text-xs px-3 py-1.5 rounded-lg text-slate-300">
+          <div className="cabms-card-subtle text-xs px-3 py-1.5 rounded-lg text-[var(--cabms-text-secondary)]">
             Role: <strong className="text-sky-400">{persona.toUpperCase()}</strong>
           </div>
         </div>
       </div>
 
       {/* SECTION 1: REQUIRED FORMS BY JOB TYPE MATRIX (Section C - Dynamic Matrix) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+      <div className="cabms-card p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
               Compliance Gating Policy (Dynamically Linked Matrix)
             </span>
-            <h2 className="text-base font-bold text-white mt-0.5">
+            <h2 className="text-base font-bold text-[var(--cabms-text-primary)] mt-0.5">
               Required Compliance Documents by Demo Job Type
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-[var(--cabms-text-secondary)]">
               Rules governing operational completion requirements. Connected directly to work order creation and form validation.
             </p>
           </div>
-          <span className="text-xs bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-400 font-mono">
+          <span className="text-xs cabms-surface-subtle px-3 py-1.5 rounded-lg border cabms-border text-[var(--cabms-text-secondary)] font-mono">
             {jobTypes.length} Active Job Type Policies
           </span>
         </div>
 
         <div className="overflow-x-auto border border-slate-800 rounded-xl">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="bg-slate-950 text-slate-400 text-[11px] uppercase border-b border-slate-800">
+          <table className="w-full text-left text-xs text-[var(--cabms-text-secondary)]">
+            <thead className="cabms-surface-subtle text-[var(--cabms-text-secondary)] text-[11px] uppercase border-b cabms-border">
               <tr>
                 <th className="p-3">Job Type Category</th>
                 <th className="p-3">Brand Affiliation</th>
@@ -116,13 +116,13 @@ export const TemplatesSettingsView: React.FC = () => {
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/60 bg-slate-950/40">
+            <tbody className="divide-y cabms-border bg-transparent">
               {jobTypes.map(jt => (
                 <tr key={jt.id} className={jt.isDirectToInvoice ? 'bg-slate-900/40' : ''}>
-                  <td className="p-3 font-semibold text-white">
+                  <td className="p-3 font-semibold text-[var(--cabms-text-primary)]">
                     {jt.name}
                     {jt.isDirectToInvoice && (
-                      <span className="ml-2 text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                      <span className="ml-2 text-[10px] cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] px-1.5 py-0.5 rounded font-mono">
                         Direct-to-Invoice
                       </span>
                     )}
@@ -143,7 +143,7 @@ export const TemplatesSettingsView: React.FC = () => {
                       <span className="text-slate-500 italic">None (Direct-to-invoice service)</span>
                     )}
                   </td>
-                  <td className="p-3 text-slate-400 font-mono">{jt.version}</td>
+                  <td className="p-3 text-[var(--cabms-text-secondary)] font-mono">{jt.version}</td>
                   <td className="p-3 font-semibold">
                     {jt.isDirectToInvoice ? (
                       <span className="text-sky-400">Direct Completion (No Forms)</span>
@@ -154,7 +154,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   <td className="p-3 text-right">
                     <button
                       onClick={() => setConfiguringJobType(jt.id)}
-                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold transition cursor-pointer"
+                      className="px-2.5 py-1 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] rounded text-[11px] font-semibold transition cursor-pointer"
                     >
                       Configure
                     </button>
@@ -169,11 +169,11 @@ export const TemplatesSettingsView: React.FC = () => {
       {/* SECTION 2: TEMPLATE LIBRARY & VERSIONING WORKFLOW (Draft -> Review -> Published) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left: Template Catalog (5 cols) */}
-        <div className="lg:col-span-5 bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-          <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+        <div className="lg:col-span-5 cabms-card p-5 space-y-3">
+          <h3 className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider">
             Template Library & Sample Selection
           </h3>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-[var(--cabms-text-secondary)]">
             Select built-in synthetic templates to inspect content snapshots and version states.
           </p>
 
@@ -197,9 +197,9 @@ export const TemplatesSettingsView: React.FC = () => {
                     <div>
                       <div className="flex items-center space-x-1.5">
                         <FileText className="w-4 h-4 text-amber-400" />
-                        <span className="font-bold text-white text-xs">{tpl.name}</span>
+                        <span className="font-bold text-[var(--cabms-text-primary)] text-xs">{tpl.name}</span>
                       </div>
-                      <div className="font-mono text-[11px] text-slate-400 mt-1">
+                      <div className="font-mono text-[11px] text-[var(--cabms-text-secondary)] mt-1">
                         Version: <strong className="text-sky-400">{tpl.currentVersion}</strong>
                       </div>
                     </div>
@@ -217,7 +217,7 @@ export const TemplatesSettingsView: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-[var(--cabms-text-secondary)]">
                     <span>File: {tpl.sampleFileName}</span>
                     <span className="text-sky-400 font-medium">{tpl.mappingStatus}</span>
                   </div>
@@ -228,7 +228,7 @@ export const TemplatesSettingsView: React.FC = () => {
         </div>
 
         {/* Right: Selected Template Editor & Versioning Actions (7 cols) */}
-        <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+        <div className="lg:col-span-7 cabms-card p-6 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
             <div>
               <div className="flex items-center space-x-2">
@@ -236,10 +236,10 @@ export const TemplatesSettingsView: React.FC = () => {
                   Version Lifecycle: Draft → Review → Published
                 </span>
               </div>
-              <h3 className="text-base font-bold text-white mt-0.5">
+              <h3 className="text-base font-bold text-[var(--cabms-text-primary)] mt-0.5">
                 {currentTemplate.name} ({currentTemplate.currentVersion})
               </h3>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-[var(--cabms-text-secondary)]">
                 Active Status: <strong className="text-sky-400">{currentTemplate.activeStatus}</strong> • Revisions: {currentTemplate.revisions?.length || 1}
               </span>
             </div>
@@ -247,7 +247,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => setPreviewModalDoc(currentTemplate)}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
+                className="px-3 py-1.5 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
               >
                 <Eye className="w-3.5 h-3.5" />
                 <span>Preview Document</span>
@@ -257,14 +257,14 @@ export const TemplatesSettingsView: React.FC = () => {
 
           {/* Bounded Text Content Editor */}
           <div className="space-y-2 text-xs">
-            <label className="block text-slate-300 font-semibold">
+            <label className="block text-[var(--cabms-text-secondary)] font-semibold">
               Supported Standard Wording & Form Clauses (Non-legal demonstration text):
             </label>
             <textarea
               rows={5}
               value={editingContent || currentTemplate.content}
               onChange={e => setEditingContent(e.target.value)}
-              className="w-full p-3 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-xs focus:outline-none focus:border-amber-500 font-sans leading-relaxed"
+              className="w-full p-3 cabms-card-subtle text-[var(--cabms-text-primary)] text-xs focus:outline-none focus:border-amber-500 font-sans leading-relaxed"
             />
             <p className="text-[11px] text-slate-500 italic">
               Notice: Editing template text creates a new Draft revision. Historical signed documents and accepted quotations will continue to render their original frozen version snapshot.
@@ -276,7 +276,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleStartDraft}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg transition cursor-pointer"
+                className="px-3 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] font-semibold rounded-lg transition cursor-pointer"
               >
                 Save Draft Revision
               </button>
@@ -324,17 +324,17 @@ export const TemplatesSettingsView: React.FC = () => {
           {/* Revision History Log */}
           {currentTemplate.revisions && currentTemplate.revisions.length > 0 && (
             <div className="pt-4 border-t border-slate-800 space-y-2 text-xs">
-              <span className="font-bold text-slate-400 uppercase tracking-wider text-[10px] block">
+              <span className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[10px] block">
                 Revision Audit History (Immutable Snapshots)
               </span>
               <div className="space-y-1.5 max-h-36 overflow-y-auto">
                 {currentTemplate.revisions.map((rev, idx) => (
-                  <div key={idx} className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between text-[11px]">
+                  <div key={idx} className="cabms-card-subtle p-2.5 flex items-center justify-between text-[11px]">
                     <div>
-                      <span className="font-mono font-bold text-sky-400">{rev.version}</span> • Status: <strong className="text-white">{rev.status}</strong>
+                      <span className="font-mono font-bold text-sky-400">{rev.version}</span> • Status: <strong className="text-[var(--cabms-text-primary)]">{rev.status}</strong>
                       <span className="text-slate-500 ml-2">by {rev.updatedBy} ({rev.updatedAt})</span>
                     </div>
-                    <span className="text-slate-400 italic truncate max-w-xs">{rev.content.slice(0, 40)}...</span>
+                    <span className="text-[var(--cabms-text-secondary)] italic truncate max-w-xs">{rev.content.slice(0, 40)}...</span>
                   </div>
                 ))}
               </div>
@@ -346,27 +346,27 @@ export const TemplatesSettingsView: React.FC = () => {
       {/* Synthetic Document Preview Modal */}
       {previewModalDoc && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+          <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
-                <h3 className="text-base font-bold text-white">{previewModalDoc.name}</h3>
+                <h3 className="text-base font-bold text-[var(--cabms-text-primary)]">{previewModalDoc.name}</h3>
                 <span className="text-xs text-sky-400 font-mono">
                   Version: {previewModalDoc.currentVersion} ({previewModalDoc.activeStatus})
                 </span>
               </div>
               <button
                 onClick={() => setPreviewModalDoc(null)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
+                className="text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)] text-lg font-bold"
               >
                 ✕
               </button>
             </div>
 
-            <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-slate-300 space-y-3 font-sans leading-relaxed">
+            <div className="cabms-card-subtle p-4 text-xs text-[var(--cabms-text-secondary)] space-y-3 font-sans leading-relaxed">
               <div className="text-[11px] font-mono text-slate-500 uppercase">
                 Sample File: {previewModalDoc.sampleFileName} • Mapping: {previewModalDoc.mappingStatus}
               </div>
-              <p className="bg-slate-900/60 p-3 rounded border border-slate-800/80">
+              <p className="cabms-surface-subtle p-3 rounded border cabms-border">
                 {previewModalDoc.content}
               </p>
               <div className="text-[10px] text-amber-300/80 bg-amber-950/30 p-2 rounded border border-amber-800/40">
@@ -377,7 +377,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="flex justify-end pt-2">
               <button
                 onClick={() => setPreviewModalDoc(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition cursor-pointer"
+                className="px-4 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer"
               >
                 Close Preview
               </button>
@@ -393,12 +393,12 @@ export const TemplatesSettingsView: React.FC = () => {
 
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+            <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <h3 className="text-base font-bold text-white">Configure {targetJt.name}</h3>
+                <h3 className="text-base font-bold text-[var(--cabms-text-primary)]">Configure {targetJt.name}</h3>
                 <button
                   onClick={() => setConfiguringJobType(null)}
-                  className="text-slate-400 hover:text-white font-bold"
+                  className="text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)] font-bold"
                 >
                   ✕
                 </button>
@@ -406,8 +406,8 @@ export const TemplatesSettingsView: React.FC = () => {
 
               <div className="space-y-3">
                 <div>
-                  <label className="text-slate-400 block font-semibold mb-1">Service Classification</label>
-                  <label className="flex items-center space-x-2 cursor-pointer bg-slate-950 p-3 rounded-lg border border-slate-800">
+                  <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Service Classification</label>
+                  <label className="flex items-center space-x-2 cursor-pointer cabms-card-subtle p-3">
                     <input
                       type="checkbox"
                       checked={targetJt.isDirectToInvoice}
@@ -421,8 +421,8 @@ export const TemplatesSettingsView: React.FC = () => {
                       className="rounded bg-slate-900 border-slate-700 text-sky-600 focus:ring-0"
                     />
                     <div>
-                      <span className="font-bold text-white">Direct-to-Invoice Service Exception</span>
-                      <span className="block text-[11px] text-slate-400">
+                      <span className="font-bold text-[var(--cabms-text-primary)]">Direct-to-Invoice Service Exception</span>
+                      <span className="block text-[11px] text-[var(--cabms-text-secondary)]">
                         When enabled, no compliance documentation is required for job sign-off.
                       </span>
                     </div>
@@ -431,14 +431,14 @@ export const TemplatesSettingsView: React.FC = () => {
 
                 {!targetJt.isDirectToInvoice && (
                   <div>
-                    <label className="text-slate-400 block font-semibold mb-1.5">
+                    <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1.5">
                       Required Compliance Forms (Multi-form Gating)
                     </label>
-                    <div className="space-y-1.5 bg-slate-950 p-3 rounded-lg border border-slate-800">
+                    <div className="space-y-1.5 cabms-card-subtle p-3">
                       {(['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'] as const).map(formKey => {
                         const isChecked = targetJt.formsRequired.includes(formKey);
                         return (
-                          <label key={formKey} className="flex items-center space-x-2 cursor-pointer text-slate-300">
+                          <label key={formKey} className="flex items-center space-x-2 cursor-pointer text-[var(--cabms-text-secondary)]">
                             <input
                               type="checkbox"
                               checked={isChecked}
@@ -460,12 +460,12 @@ export const TemplatesSettingsView: React.FC = () => {
 
                 {targetJt.revisionHistory && targetJt.revisionHistory.length > 0 && (
                   <div className="pt-2 border-t border-slate-800 space-y-1.5">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    <span className="text-[10px] uppercase font-bold text-[var(--cabms-text-secondary)] block">
                       Policy Version {targetJt.version} — Audit History
                     </span>
                     <div className="max-h-24 overflow-y-auto space-y-1">
                       {targetJt.revisionHistory.map((rev, idx) => (
-                        <div key={idx} className="bg-slate-950 p-2 rounded text-[11px] text-slate-400 flex items-center justify-between border border-slate-800">
+                        <div key={idx} className="cabms-surface-subtle p-2 rounded text-[11px] text-[var(--cabms-text-secondary)] flex items-center justify-between border cabms-border">
                           <span className="font-mono text-sky-400 font-bold">{rev.version}</span>
                           <span className="text-slate-500">by {rev.updatedBy} ({rev.updatedAt.slice(0, 10)})</span>
                         </div>

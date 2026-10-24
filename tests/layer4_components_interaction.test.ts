@@ -17,12 +17,21 @@ import { QuotesAcceptanceView } from '../src/views/QuotesAcceptanceView.tsx';
 import { ScheduleView } from '../src/views/ScheduleView.tsx';
 import { CommunicationsView } from '../src/views/CommunicationsView.tsx';
 import { TemplatesSettingsView } from '../src/views/TemplatesSettingsView.tsx';
+import { INITIAL_TEMPLATES } from '../src/data/seedData.ts';
 
 test('LAYER 4: Components — DashboardView renders KPI metrics and workflow queues', () => {
   const html = renderToString(
     React.createElement(CabmsProvider, null, React.createElement(DashboardView))
   );
   assert.ok(html.includes('In-Progress Jobs') || html.includes('Solarcell'));
+  assert.ok(html.includes('Operational Jobs') || html.includes('Website Enquiries'));
+});
+
+test('LAYER 4: Components — Navigation topbar renders brand identity, credentials, and MYOB connection', () => {
+  const html = renderToString(
+    React.createElement(CabmsProvider, null, React.createElement(Navigation))
+  );
+  assert.ok(html.includes('Solarcell'));
   assert.ok(html.includes('Licence:') || html.includes('MYOB File:'));
 });
 
@@ -95,7 +104,7 @@ test('LAYER 4: Components — TemplatesSettingsView renders template lifecycle (
   const html = renderToString(
     React.createElement(CabmsProvider, null, React.createElement(TemplatesSettingsView))
   );
-  assert.ok(html.includes('Owner / Admin Content &amp; Template Settings') || html.includes('Template Settings'));
+  assert.ok(html.includes('Admin Content &amp; Template Settings') || html.includes('Template Settings'));
   assert.ok(html.includes('Required Compliance Documents by Demo Job Type'));
 });
 
@@ -158,15 +167,18 @@ test('LAYER 4: CP-01 — Website Inbox submission control creates an enquiry for
 });
 
 test('LAYER 4: CP-01 — distinct business switches change the header and Brisbane weekly completion count', async () => {
-  await mountView(React.createElement(DashboardView), async (ctx, container, window) => {
+  await mountView(React.createElement(React.Fragment, null, React.createElement(Navigation), React.createElement(DashboardView)), async (ctx, container, window) => {
     const expected = { solarcell: 'Solarcell', smart_home: 'Smart Home', cctv: 'CCTV' };
+    const opener = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
     for (const brand of ['solarcell', 'smart_home', 'cctv'] as const) {
+      if (!container.querySelector('.cabms-brand-dropdown-menu')) {
+        await act(async () => { opener.click(); });
+      }
       const button = container.querySelector<HTMLButtonElement>(`button[aria-label="Switch business to ${ctx.brands[brand].name}"]`)!;
-      assert.equal(button.textContent?.trim(), expected[brand]);
+      assert.ok(button.textContent?.includes(expected[brand]));
       await act(async () => { button.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); });
       assert.equal(ctx.activeBrandId, brand);
       assert.equal(container.querySelector('h1')?.textContent, ctx.brands[brand].name);
-      assert.equal(button.getAttribute('aria-pressed'), 'true');
     }
     await act(async () => {
       ctx.setActiveBrandId('smart_home');
@@ -283,7 +295,7 @@ test('LAYER 4: Gate S — mobile drawer traps/restores focus, isolates backgroun
 test('LAYER 4: Gate S — desktop resize dismisses the drawer and restores focus to the sidebar control', async () => {
   let desktop = false;
   const listeners = new Set<() => void>();
-  await mountView(React.createElement(Navigation), async (_ctx, container, window) => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
     const opener = container.querySelector<HTMLButtonElement>('button[aria-label="Open navigation"]')!;
     await act(async () => { opener.click(); });
     assert.ok(window.document.querySelector('[role="dialog"]'));
@@ -323,5 +335,256 @@ test('LAYER 4: Gate S — mobile demo disclosure retains controls and clock, and
     assert.equal(container.querySelector('[role="status"]'), null);
   }, window => {
     Object.defineProperty(window, 'matchMedia', { value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
+  });
+});
+
+test('LAYER 4: FC-10 — ScheduleView suppresses reschedule and cancel controls for terminal jobs while allowing active visit rebooking', async () => {
+  const origSetTimeout = globalThis.setTimeout;
+  // Intercept notification timeout to prevent lingering background timers during test
+  globalThis.setTimeout = ((fn: any) => {
+    if (typeof fn === 'function') fn();
+    return 0 as any;
+  }) as any;
+
+  try {
+    await mountView(React.createElement(ScheduleView), async (ctx, container) => {
+      // Find the card element for JOB-2026-101
+      const findJobCard = () => {
+        const idSpans = Array.from(container.querySelectorAll('span')).filter(s => s.textContent?.trim() === 'JOB-2026-101');
+        return idSpans[0]?.closest('div.cabms-card, div.bg-slate-900') as HTMLDivElement | null;
+      };
+
+      // 1. Initial active job JOB-2026-101 displays Reschedule and Cancel Visit buttons
+      const cardInitial = findJobCard();
+      assert.ok(cardInitial, 'JOB-2026-101 card is rendered');
+      const activeReschedule = Array.from(cardInitial.querySelectorAll('button')).find(b => b.textContent?.includes('Reschedule'));
+      assert.ok(activeReschedule, 'Active scheduled job displays Reschedule button');
+
+      // 2. Cancel visit only (job remains active): displays Re-book Visit or Reschedule Now
+      await act(async () => {
+        ctx.cancelJobAppointment('JOB-2026-101', 'Customer requested later time');
+      });
+      const cardAfterVisitCancel = findJobCard()!;
+      const rebookBtn = Array.from(cardAfterVisitCancel.querySelectorAll('button')).find(b => b.textContent?.includes('Re-book Visit') || b.textContent?.includes('Reschedule Now'));
+      assert.ok(rebookBtn, 'Active job with cancelled appointment displays Re-book Visit / Reschedule Now control');
+
+      // 3. Cancel the whole job (terminal state): controls are replaced with Closed (CANCELLED) badge
+      await act(async () => {
+        ctx.cancelWholeJob('JOB-2026-101', 'Project completely cancelled by owner');
+      });
+      const cardAfterTerminal = findJobCard()!;
+      const terminalBadge = Array.from(cardAfterTerminal.querySelectorAll('span')).find(s => s.textContent?.includes('Closed (CANCELLED)'));
+      assert.ok(terminalBadge, 'Terminal cancelled job displays Closed (CANCELLED) badge');
+      const terminalControls = Array.from(cardAfterTerminal.querySelectorAll('button')).filter(b => b.textContent?.includes('Reschedule') || b.textContent?.includes('Re-book Visit') || b.textContent?.includes('Cancel Visit'));
+      assert.equal(terminalControls.length, 0, 'No reschedule or cancel controls remain on terminal job card');
+    });
+  } finally {
+    globalThis.setTimeout = origSetTimeout;
+  }
+});
+test('LAYER 4: FC-01 — CommunicationsView synchronizes certificate selection across work orders and suppresses dispatch for direct-to-invoice jobs', async () => {
+  await mountView(React.createElement(CommunicationsView), async (ctx, container, window) => {
+    // Navigate to Certificate Delivery Previews tab
+    const certTabButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      btn => btn.textContent?.includes('Certificate Delivery Previews')
+    );
+    assert.ok(certTabButton, 'Certificate Delivery Previews tab button exists');
+    await act(async () => {
+      certTabButton.click();
+    });
+
+    // 1. Initial selection: JOB-2026-101 requires ['JSA', 'SMOKE_ALARM']
+    const workOrderSelect = container.querySelector<HTMLSelectElement>('#communications-work-order')!;
+    assert.ok(workOrderSelect, 'Work order dropdown is rendered');
+
+    // Find send button and verify disabled state for unsigned certificate
+    const sendBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      b => b.textContent?.includes('Send Certificate Email')
+    );
+    assert.ok(sendBtn, 'Send Certificate Email button is rendered for job with compliance requirements');
+    assert.equal(sendBtn.disabled, true, 'Send button is disabled until certificate is signed');
+
+    // Sign off JSA and verify button becomes enabled
+    await act(async () => {
+      ctx.signOffJsa('JOB-2026-101');
+    });
+    assert.equal(sendBtn.disabled, false, 'Send button becomes enabled once required certificate is signed');
+
+    // 2. Switch to direct-to-invoice job (JOB-2026-102 which has formsRequired: [])
+    await act(async () => {
+      workOrderSelect.value = 'JOB-2026-102';
+      workOrderSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+
+    // Verify direct-to-invoice notice and dispatch suppression
+    assert.ok(
+      container.textContent?.includes('No compliance forms required for direct-to-invoice service.'),
+      'Notice rendered for direct-to-invoice service'
+    );
+    const dtiSendBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      b => b.textContent?.includes('Send Certificate Email')
+    );
+    assert.equal(dtiSendBtn, undefined, 'Send Certificate Email button is suppressed for direct-to-invoice jobs');
+  });
+});
+
+test('LAYER 4: FC-14 — QuotesAcceptanceView reconciles quote expiry option copy to 14 days', async () => {
+  await mountView(React.createElement(QuotesAcceptanceView), async (_ctx, container) => {
+    const expiredOptions = Array.from(container.querySelectorAll<HTMLOptionElement>('option')).filter(
+      opt => opt.value === 'expired'
+    );
+    assert.ok(expiredOptions.length > 0, 'Found simulated expiry options');
+    for (const opt of expiredOptions) {
+      assert.ok(
+        opt.textContent?.includes('14 Days Old'),
+        `Option copy "${opt.textContent}" must specify 14 Days Old`
+      );
+      assert.equal(
+        opt.textContent?.includes('30 Days Old'),
+        false,
+        `Option copy "${opt.textContent}" must not state 30 Days Old`
+      );
+    }
+  });
+});
+
+test('LAYER 4: WIN-CR-02 — Navigation topbar renders operational brand pill fallback label while preserving draft business isolation', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container) => {
+    // Open brand switcher dropdown
+    const opener = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    await act(async () => { opener.click(); });
+
+    // 1. Inspect rendered brand switcher options in dropdown
+    const brandPills = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter(
+      b => b.getAttribute('aria-label')?.startsWith('Switch business to ')
+    );
+    assert.ok(brandPills.length >= 3, 'Renders active operational brand pills');
+
+    // Verify each pill has non-empty text
+    for (const pill of brandPills) {
+      const text = pill.textContent?.trim();
+      assert.ok(text && text.length > 0, 'Brand pill button has non-empty label text');
+    }
+
+    // 2. Draft business isolation: Verify draftBusinesses do not appear in brand switcher pills
+    const draftNames = ctx.draftBusinesses.map(d => d.name);
+    for (const pill of brandPills) {
+      const label = pill.getAttribute('aria-label') || '';
+      for (const draftName of draftNames) {
+        assert.equal(
+          label.includes(draftName),
+          false,
+          `Incubating draft business "${draftName}" must not appear in operational brand switcher`
+        );
+      }
+    }
+
+    // 3. Fallback verification: Add an operational brand without a predefined label mapping
+    await act(async () => {
+      ctx.addNewBrandProfile({
+        id: 'custom_av' as any,
+        name: 'Brisbane Audio Visual',
+        tagline: 'Custom Sound & Vision',
+        primaryColor: '#3b82f6',
+        accentColor: '#60a5fa',
+        logoGlyph: 'AV',
+        legalIssuerName: 'Brisbane Audio Visual Pty Ltd',
+        abnPlaceholder: '12 345 678 999',
+        electricalLicencePlaceholder: 'REC 99999',
+        acmaCablerPlaceholder: 'T99999',
+        qbccLicencePlaceholder: 'QBCC 99999',
+        contactEmail: 'info@bav.example.invalid',
+        contactPhone: '07 5555 1234',
+        reviewUrlPlaceholder: 'https://g.page/r/example/review',
+        calendarMappingName: 'bav_primary',
+        quoteTemplateName: 'bav_quote_v1',
+        invoiceTemplateName: 'bav_invoice_v1',
+      });
+    });
+
+    if (!container.querySelector('.cabms-brand-dropdown-menu')) {
+      await act(async () => { opener.click(); });
+    }
+    const customPill = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      b => b.getAttribute('aria-label') === 'Switch business to Brisbane Audio Visual'
+    );
+    assert.ok(customPill, 'Operational brand without predefined label renders in switcher');
+    assert.equal(
+      customPill.querySelector('.cabms-brand-option-name')?.textContent?.trim() || customPill.textContent?.trim(),
+      'Brisbane Audio Visual',
+      'Fallback renders operational brand b.name'
+    );
+  });
+});
+
+test('LAYER 4: FC-04 — TemplatesSettingsView and template mutations operate on isolated context state without polluting INITIAL_TEMPLATES', async () => {
+  await mountView(React.createElement(TemplatesSettingsView), async (ctx, _container) => {
+    const termsSeed = INITIAL_TEMPLATES.find(t => t.type === 'TERMS')!;
+    const originalVersion = termsSeed.currentVersion;
+    const originalRevisionsCount = termsSeed.revisions.length;
+    const originalStatus = termsSeed.activeStatus;
+    const originalContent = termsSeed.content;
+
+    // Verify context initialized with matching template count and content
+    const contextInitialTerms = ctx.templates.find(t => t.id === termsSeed.id);
+    assert.ok(contextInitialTerms, 'Context template found for seed TERMS');
+    assert.equal(contextInitialTerms.currentVersion, originalVersion);
+    assert.equal(contextInitialTerms.activeStatus, originalStatus);
+
+    // Perform template draft revision within mounted context
+    const draftContent = termsSeed.content + '\nClause 99: Isolated test clause.';
+    await act(async () => {
+      ctx.createTemplateDraftRevision(termsSeed.id, draftContent);
+    });
+
+    const updatedTerms = ctx.templates.find(t => t.id === termsSeed.id);
+    assert.ok(updatedTerms, 'Updated context template found');
+    assert.equal(updatedTerms.activeStatus, 'DRAFT', 'Context template transitioned to DRAFT');
+    assert.equal(updatedTerms.content, draftContent, 'Context template content updated');
+    assert.equal(updatedTerms.revisions.length, originalRevisionsCount + 1, 'Context template revision added');
+    assert.equal(updatedTerms.revisions[0].status, 'DRAFT', 'Top revision has status DRAFT');
+    assert.equal(updatedTerms.revisions[0].version, `${originalVersion}-draft`, 'Draft revision version tagged');
+
+    // FC-04: Verify shared seed fixture remained completely unpolluted
+    assert.equal(termsSeed.currentVersion, originalVersion, 'Shared seed currentVersion unpolluted');
+    assert.equal(termsSeed.activeStatus, originalStatus, 'Shared seed activeStatus unpolluted');
+    assert.equal(termsSeed.content, originalContent, 'Shared seed content unpolluted');
+    assert.equal(termsSeed.revisions.length, originalRevisionsCount, 'Shared seed revisions array unpolluted');
+    assert.ok(!termsSeed.revisions.some((r: any) => r.version.includes('draft')), 'Shared seed has no draft revisions');
+  });
+});
+
+test('LAYER 4: Gate T — Appearance mode switcher updates context state and synchronizes data-appearance attribute on DOM', async () => {
+  await mountView(React.createElement(DemoControlsBar), async (ctx, container, window) => {
+    // Initial state check
+    assert.equal(ctx.appearance, 'default_dark', 'Initial appearance mode is default_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark', 'DOM data-appearance synced to default_dark');
+
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Appearance Mode Selector"]');
+    assert.ok(select, 'Appearance Mode Selector select dropdown found in DemoControlsBar');
+    assert.equal(select.value, 'default_dark');
+
+    // Switch to High Visibility Light
+    await act(async () => {
+      select.value = 'high_visibility_light';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(ctx.appearance, 'high_visibility_light', 'Context appearance switched to high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light', 'DOM data-appearance synced to high_visibility_light');
+
+    // Switch to High Visibility Dark
+    await act(async () => {
+      select.value = 'high_visibility_dark';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(ctx.appearance, 'high_visibility_dark', 'Context appearance switched to high_visibility_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_dark', 'DOM data-appearance synced to high_visibility_dark');
+
+    // Reset Demo restores default_dark
+    await act(async () => {
+      ctx.resetDemo();
+    });
+    assert.equal(ctx.appearance, 'default_dark', 'Reset demo restores default_dark appearance');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark', 'DOM data-appearance restored to default_dark');
   });
 });

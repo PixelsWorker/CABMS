@@ -35,13 +35,13 @@ export const AppContent: React.FC = () => {
 
   if (!isSimulatedSignedIn) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
+      <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950">
         <DemoBanner />
         <DemoControlsBar />
         <main id="cabms-main-content" tabIndex={-1} className="cabms-main flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <SignInScreen />
         </main>
-        <footer className="bg-slate-900 border-t border-slate-800 py-4 px-4 text-center text-xs text-slate-500">
+        <footer className="cabms-footer py-4 px-4 text-center text-xs">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>
               CABMS G00 Prototype Demo • Solarcell • GC Smart Home Solutions • GC CCTV
@@ -56,7 +56,7 @@ export const AppContent: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-amber-500 selection:text-slate-950">
+    <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950">
       {/* 1. Mandatory Persistent Demo Banner */}
       <DemoBanner />
 
@@ -81,7 +81,7 @@ export const AppContent: React.FC = () => {
         </main>
 
         {/* 5. Footer with Persistent Isolation Disclosure */}
-        <footer className="bg-slate-900 border-t border-slate-800 py-4 px-4 text-center text-xs text-slate-500">
+        <footer className="cabms-footer py-4 px-4 text-center text-xs">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>
               CABMS G00 Prototype Demo • Solarcell • GC Smart Home Solutions • GC CCTV

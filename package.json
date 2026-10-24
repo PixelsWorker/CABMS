@@ -17,6 +17,7 @@
     "test:layer5": "tsx --test tests/layer5_static_types.test.ts",
     "test:layer6": "tsx --test tests/layer6_workflow_integration.test.ts",
     "test:layer7": "tsx --test tests/layer7_visual_regression.test.ts",
+    "pretest:layer8": "npm run build",
     "test:layer8": "tsx --test tests/layer8_browser_e2e.test.ts"
   },
   "dependencies": {

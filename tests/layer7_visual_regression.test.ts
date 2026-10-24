@@ -12,8 +12,9 @@ import { DashboardView } from '../src/views/DashboardView.tsx';
 import { JobsView } from '../src/views/JobsView.tsx';
 import { ComplianceFormsView } from '../src/views/ComplianceFormsView.tsx';
 import { QuotesAcceptanceView } from '../src/views/QuotesAcceptanceView.tsx';
+import { ScheduleView } from '../src/views/ScheduleView.tsx';
 import { AccessDeniedView } from '../src/components/AccessDeniedView.tsx';
-import { Persona, BrandId } from '../src/types/cabms.ts';
+import { Persona, BrandId, AppearanceMode } from '../src/types/cabms.ts';
 // These SSR wrappers label markup fixtures; they do not execute responsive CSS.
 // Fixed Viewport Representation Wrappers
 const DesktopViewport: React.FC<{ children: React.ReactNode }> = ({ children }) => (
@@ -126,7 +127,7 @@ test('LAYER 7: Mounted persona matrix exercises four actual roles and denied vie
 });
 
 test('LAYER 7: Mounted brand matrix changes identity and filters operational jobs for all three businesses', async () => {
-  await mountView(React.createElement(DashboardView), async (ctx, container) => {
+  await mountView(React.createElement(React.Fragment, null, React.createElement(Navigation), React.createElement(DashboardView)), async (ctx, container) => {
     const states = new Set<string>();
     for (const brand of ['solarcell', 'smart_home', 'cctv'] as BrandId[]) {
       await act(async () => { ctx.setActiveBrandId(brand); });
@@ -134,8 +135,7 @@ test('LAYER 7: Mounted brand matrix changes identity and filters operational job
       for (const job of ctx.jobs) {
         assert.equal(container.textContent?.includes(job.id), job.brandId === brand, `job ${job.id} belongs to ${brand}`);
       }
-      const active = container.querySelector('button[aria-pressed="true"]');
-      assert.equal(active?.getAttribute('aria-label'), `Switch business to ${ctx.brands[brand].name}`);
+      assert.equal(container.querySelector('.cabms-brand-mark')?.textContent?.trim(), ctx.brands[brand].name.charAt(0));
       states.add(container.innerHTML);
     }
     assert.equal(states.size, 3, 'three different rendered business states');
@@ -158,6 +158,76 @@ test('LAYER 7: SSR markup — explicit access-denied resource and explanation', 
   assert.ok(htmlDenied.includes('Technical Credentials'));
 });
 
+
+
+test('LAYER 7: SSR markup — Gate T structural theme rendering verifies semantic classes', () => {
+  const html = renderToString(
+    React.createElement(
+      CabmsProvider,
+      null,
+      React.createElement(DashboardView)
+    )
+  );
+  assert.ok(html.includes('cabms-card'), 'SSR markup includes semantic cabms-card');
+  assert.ok(html.includes('cabms-badge-warning'), 'SSR markup includes semantic cabms-badge-warning');
+});
+
+test('LAYER 7: Mounted appearance matrix exercises all three appearance modes on DOM root', async () => {
+  await mountView(React.createElement(DemoControlsBar), async (ctx, _container, window) => {
+    for (const mode of ['default_dark', 'high_visibility_light', 'high_visibility_dark'] as AppearanceMode[]) {
+      await act(async () => {
+        ctx.setAppearance(mode);
+      });
+      assert.equal(ctx.appearance, mode, `context appearance is ${mode}`);
+      assert.equal(
+        window.document.documentElement.getAttribute('data-appearance'),
+        mode,
+        `DOM root attribute data-appearance is synchronized to ${mode}`
+      );
+    }
+  });
+});
+
+test('LAYER 7: Mounted light mode test verifies representative inputs, panels and headings remain accessible in high_visibility_light', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+    await act(async () => {
+      ctx.setAppearance('high_visibility_light');
+    });
+    assert.equal(ctx.appearance, 'high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light');
+
+    // Verify representative headings do not contain hardcoded text-white on light cards
+    const heading = container.querySelector('h1');
+    assert.ok(heading, 'Representative h1 heading found');
+    assert.ok(!heading.classList.contains('text-white'), 'h1 does not use hardcoded text-white');
+
+    // Verify representative inputs use cabms-input and do not use fixed dark backgrounds
+    const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="text"]'));
+    assert.ok(inputs.length > 0, 'Representative text inputs found');
+    for (const input of inputs) {
+      assert.ok(
+        input.classList.contains('cabms-input'),
+        `Input with value "${input.value}" uses semantic cabms-input class`
+      );
+      assert.ok(
+        !input.classList.contains('bg-slate-900') && !input.classList.contains('bg-slate-950') && !input.classList.contains('bg-slate-800'),
+        `Input with value "${input.value}" does not use fixed dark Tailwind background`
+      );
+    }
+  });
+
+  await mountView(React.createElement(ScheduleView), async (ctx, container) => {
+    await act(async () => {
+      ctx.setAppearance('high_visibility_light');
+    });
+    // Verify schedule cards use semantic cabms-card and not hardcoded dark backgrounds
+    const cards = Array.from(container.querySelectorAll('div.cabms-card'));
+    assert.ok(cards.length > 0, 'Schedule view renders semantic cabms-card elements');
+    for (const card of cards) {
+      assert.ok(!card.classList.contains('bg-slate-900'), 'Card does not use hardcoded bg-slate-900');
+    }
+  });
+});
 
 // Mounted state assertions supplement SSR structure; JSDOM does not measure CSS layout.
 async function mountView(view: React.ReactNode, run: (ctx: ReturnType<typeof useCabms>, container: HTMLDivElement, window: JSDOM['window']) => Promise<void>) {

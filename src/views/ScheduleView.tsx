@@ -5,7 +5,7 @@
  */
 
 import React, { useState } from 'react';
-import { formatBusinessTime } from '../utils/businessTime.ts';
+import { formatBusinessTime, formatBusinessCalendarDate } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import {
   Calendar as CalendarIcon,
@@ -63,6 +63,11 @@ export const ScheduleView: React.FC = () => {
   const handleRescheduleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!rescheduleTarget) return;
+    // FC-10: Guard terminal jobs from rescheduling in UI
+    if (rescheduleTarget.status === 'COMPLETED' || rescheduleTarget.status === 'CANCELLED') {
+      setRescheduleTarget(null);
+      return;
+    }
     rescheduleJobAppointment(rescheduleTarget.id, newDate, newTime);
     setRescheduleTarget(null);
   };
@@ -70,6 +75,11 @@ export const ScheduleView: React.FC = () => {
   const handleCancelSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cancelTarget) return;
+    // FC-10: Guard terminal jobs from cancellation in UI
+    if (cancelTarget.status === 'COMPLETED' || cancelTarget.status === 'CANCELLED') {
+      setCancelTarget(null);
+      return;
+    }
     cancelJobAppointment(cancelTarget.id, cancelReason);
     setCancelTarget(null);
   };
@@ -77,37 +87,37 @@ export const ScheduleView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
               <CalendarIcon className="w-5 h-5 text-indigo-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">
+              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Field Service Dispatch & Calendar Scheduling
               </h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
               Primary and fleet calendar synchronization with automated email confirmations and reminder suppression.
             </p>
           </div>
 
           {/* Demo Clock Advance Control (G00-020) */}
-          <div className="flex flex-wrap items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800 text-xs">
-            <div className="flex items-center space-x-1.5 text-slate-400">
+          <div className="flex flex-wrap items-center gap-2 cabms-card-subtle p-2 text-xs">
+            <div className="flex items-center space-x-1.5 text-[var(--cabms-text-secondary)]">
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-mono text-white font-bold">{formatBusinessTime(demoClock)}</span>
+              <span className="font-mono text-[var(--cabms-text-primary)] font-bold">{formatBusinessTime(demoClock)}</span>
             </div>
             <div className="flex items-center space-x-1 pl-2 border-l border-slate-800">
               <button
                 onClick={() => advanceClock(1)}
-                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold transition cursor-pointer"
+                className="px-2 py-1 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] rounded text-[11px] font-semibold transition cursor-pointer"
                 title="Advance clock by 1 hour"
               >
                 +1h
               </button>
               <button
                 onClick={() => advanceClock(2)}
-                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold transition cursor-pointer"
+                className="px-2 py-1 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] rounded text-[11px] font-semibold transition cursor-pointer"
                 title="Advance clock by 2 hours (triggers 2hr reminders)"
               >
                 +2h
@@ -125,38 +135,38 @@ export const ScheduleView: React.FC = () => {
 
         {/* Date Selector Pills */}
         <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
-          <div className="flex items-center space-x-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800">
+          <div className="flex items-center space-x-1.5 cabms-card-subtle p-1">
             {['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'].map(dateStr => (
               <button
                 key={dateStr}
                 onClick={() => setSelectedDay(dateStr)}
                 className={`px-3 py-1.5 font-semibold rounded-md transition cursor-pointer ${
                   selectedDay === dateStr
-                    ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
+                    ? 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] shadow-sm'
+                    : 'text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
                 }`}
               >
-                {new Date(dateStr).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+                {formatBusinessCalendarDate(dateStr, { weekday: 'short', day: 'numeric', month: 'short' })}
               </button>
             ))}
           </div>
-          <span className="text-slate-400 text-xs">
-            Viewing appointments for: <strong className="text-white font-mono">{selectedDay}</strong>
+          <span className="text-[var(--cabms-text-secondary)] text-xs">
+            Viewing appointments for: <strong className="text-[var(--cabms-text-primary)] font-mono">{selectedDay}</strong>
           </span>
         </div>
 
         {/* Calendar Mappings Status & Simulated Error Recovery */}
         <div className="mt-4 pt-4 border-t border-slate-800 space-y-3 text-xs">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <div className="cabms-card-subtle p-2.5">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
-              <span className="text-white font-semibold">CABMS Operations Hub</span>
+              <span className="text-[var(--cabms-text-primary)] font-semibold">CABMS Operations Hub</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
                 <CheckCircle2 className="w-3 h-3" /> Synced (Simulated)
               </div>
             </div>
 
-            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <div className="cabms-card-subtle p-2.5">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #1</span>
               <span className="text-amber-400 font-semibold">{brands.solarcell?.calendarMappingName}</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
@@ -164,7 +174,7 @@ export const ScheduleView: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <div className="cabms-card-subtle p-2.5">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #2</span>
               <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName || brands.smarthome?.calendarMappingName}</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
@@ -172,7 +182,7 @@ export const ScheduleView: React.FC = () => {
               </div>
             </div>
 
-            <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <div className="cabms-card-subtle p-2.5">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #3</span>
               <span className="text-emerald-400 font-semibold">{brands.cctv?.calendarMappingName}</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
@@ -186,19 +196,19 @@ export const ScheduleView: React.FC = () => {
       {/* Daily Dispatch Agenda View */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
+          <h2 className="text-sm font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider flex items-center space-x-2">
             <CalendarDays className="w-4 h-4 text-amber-400" />
             <span>
-              Agenda for {new Date(selectedDay).toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              Agenda for {formatBusinessCalendarDate(selectedDay, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </span>
           </h2>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-[var(--cabms-text-secondary)]">
             {scheduledJobs.length} work order(s) scheduled
           </span>
         </div>
 
         {scheduledJobs.length === 0 ? (
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center text-slate-400 text-xs">
+          <div className="cabms-card p-8 text-center text-[var(--cabms-text-secondary)] text-xs">
             No technician appointments scheduled for this day. Switch dates above or advance the demo clock.
           </div>
         ) : (
@@ -206,14 +216,14 @@ export const ScheduleView: React.FC = () => {
             {scheduledJobs.map(job => (
               <div
                 key={job.id}
-                className={`bg-slate-900 border rounded-xl p-5 space-y-4 hover:border-slate-700 transition ${
+                className={`cabms-card p-5 space-y-4 hover:border-[var(--cabms-border-focus)] transition ${
                   job.appointmentStatus === 'CANCELLED'
-                    ? 'border-red-900/60 bg-red-950/10'
-                    : 'border-slate-800'
+                    ? 'border-red-800/80 bg-red-950/10'
+                    : ''
                 }`}
               >
-                {/* Cancelled Appointment Alert Banner */}
-                {job.appointmentStatus === 'CANCELLED' && (
+                {/* Cancelled Appointment Alert Banner (Active Jobs Only) */}
+                {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && job.appointmentStatus === 'CANCELLED' && (
                   <div className="bg-red-950/40 border border-red-800/80 rounded-lg p-3 text-xs text-red-200 flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                       <XCircle className="w-4 h-4 text-red-400 shrink-0" />
@@ -236,9 +246,9 @@ export const ScheduleView: React.FC = () => {
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-start space-x-3">
-                    <div className="bg-slate-950 border border-slate-800 p-2.5 rounded-lg text-center shrink-0">
+                    <div className="cabms-card-subtle p-2.5 rounded-lg text-center shrink-0">
                       <Clock className="w-4 h-4 text-amber-400 mx-auto" />
-                      <span className="font-mono text-xs font-bold text-white block mt-1">
+                      <span className="font-mono text-xs font-bold text-[var(--cabms-text-primary)] block mt-1">
                         {job.scheduledTime}
                       </span>
                       <span className="text-[10px] text-slate-500">{job.estimatedDurationHours}h duration</span>
@@ -247,7 +257,7 @@ export const ScheduleView: React.FC = () => {
                     <div>
                       <div className="flex items-center space-x-2">
                         <span className="font-mono text-xs font-bold text-amber-400">{job.id}</span>
-                        <span className="text-white font-bold text-sm md:text-base">{job.title}</span>
+                        <span className="text-[var(--cabms-text-primary)] font-bold text-sm md:text-base">{job.title}</span>
                         <span
                           className="text-[10px] font-bold px-1.5 py-0.5 rounded text-white"
                           style={{ backgroundColor: brands[job.brandId]?.primaryColor }}
@@ -266,7 +276,7 @@ export const ScheduleView: React.FC = () => {
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-400 mt-1 flex flex-wrap items-center gap-3">
+                      <div className="text-xs text-[var(--cabms-text-secondary)] mt-1 flex flex-wrap items-center gap-3">
                         <span className="flex items-center gap-1">
                           <User className="w-3.5 h-3.5 text-slate-500" />
                           {job.siteContact} ({job.sitePhone})
@@ -285,26 +295,35 @@ export const ScheduleView: React.FC = () => {
 
                   {/* Actions: Reschedule, Cancel, Open Job */}
                   <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-                    <button
-                      onClick={() => {
-                        setRescheduleTarget(job);
-                        setNewDate(job.scheduledDate || '2026-11-03');
-                        setNewTime(job.scheduledTime || '09:00');
-                      }}
-                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
-                      <span>{job.appointmentStatus === 'CANCELLED' ? 'Re-book Visit' : 'Reschedule'}</span>
-                    </button>
+                    {/* FC-10: Hide reschedule / re-book controls for terminal jobs (COMPLETED or CANCELLED) */}
+                    {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setRescheduleTarget(job);
+                            setNewDate(job.scheduledDate || '2026-11-03');
+                            setNewTime(job.scheduledTime || '09:00');
+                          }}
+                          className="px-2.5 py-1.5 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
+                          <span>{job.appointmentStatus === 'CANCELLED' ? 'Re-book Visit' : 'Reschedule'}</span>
+                        </button>
 
-                    {job.appointmentStatus !== 'CANCELLED' && (
-                      <button
-                        onClick={() => setCancelTarget(job)}
-                        className="px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        <span>Cancel Visit</span>
-                      </button>
+                        {job.appointmentStatus !== 'CANCELLED' && (
+                          <button
+                            onClick={() => setCancelTarget(job)}
+                            className="px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
+                          >
+                            <XCircle className="w-3.5 h-3.5" />
+                            <span>Cancel Visit</span>
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded text-[11px] font-mono font-semibold cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]">
+                        Closed ({job.status})
+                      </span>
                     )}
 
                     <button
@@ -320,12 +339,12 @@ export const ScheduleView: React.FC = () => {
                 </div>
 
                 {/* Site Address & Safe Google Maps Demonstration Link (G00-023) */}
-                <div className="bg-slate-950 rounded-lg p-3 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                  <div className="flex items-center space-x-2 text-slate-300">
+                <div className="cabms-card-subtle p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)]">
                     <MapPin className="w-4 h-4 text-red-400 shrink-0" />
                     <div>
-                      <span className="text-slate-400 text-[11px] block">Job Installation Site:</span>
-                      <span className="text-white font-medium">{job.siteAddress}</span>
+                      <span className="text-[var(--cabms-text-secondary)] text-[11px] block">Job Installation Site:</span>
+                      <span className="text-[var(--cabms-text-primary)] font-medium">{job.siteAddress}</span>
                     </div>
                   </div>
 
@@ -345,7 +364,7 @@ export const ScheduleView: React.FC = () => {
                 {/* Scheduled Reminders & Suppression Log (G00-019, G00-041) */}
                 {job.reminders.length > 0 && (
                   <div className="pt-2 border-t border-slate-800/80 text-xs space-y-1.5">
-                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center space-x-1">
+                    <span className="text-[11px] font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider flex items-center space-x-1">
                       <Bell className="w-3 h-3 text-amber-400" />
                       <span>Automated Email Reminders & Suppression History</span>
                     </span>
@@ -358,7 +377,7 @@ export const ScheduleView: React.FC = () => {
                               ? 'bg-red-950/30 text-red-300 border border-red-900/40 line-through'
                               : rem.delivered
                               ? 'bg-emerald-950/30 text-emerald-300 border border-emerald-900/40'
-                              : 'bg-slate-950 text-slate-300 border border-slate-800'
+                              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
                           }`}
                         >
                           <div>
@@ -375,7 +394,7 @@ export const ScheduleView: React.FC = () => {
                             ) : rem.delivered ? (
                               <span className="text-emerald-400 font-bold">SENT</span>
                             ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]">
                                 QUEUED
                               </span>
                             )}
@@ -394,36 +413,36 @@ export const ScheduleView: React.FC = () => {
       {/* Reschedule Modal */}
       {rescheduleTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center space-x-2">
+          <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
               <RotateCcw className="w-5 h-5 text-sky-400" />
               <span>Reschedule Appointment ({rescheduleTarget.id})</span>
             </h3>
 
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-[var(--cabms-text-secondary)]">
               Rescheduling recalculates reminder lead times (2h & 24h prior) and marks earlier scheduled reminders as suppressed.
             </p>
 
             <form onSubmit={handleRescheduleSubmit} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">New Appointment Date</label>
+                <label className="block text-[var(--cabms-text-secondary)] font-semibold mb-1">New Appointment Date</label>
                 <input
                   type="date"
                   required
                   value={newDate}
                   onChange={e => setNewDate(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-sky-500"
+                  className="w-full p-2 cabms-input rounded text-[var(--cabms-text-primary)] focus:outline-none focus:border-sky-500"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">New Scheduled Time</label>
+                <label className="block text-[var(--cabms-text-secondary)] font-semibold mb-1">New Scheduled Time</label>
                 <input
                   type="time"
                   required
                   value={newTime}
                   onChange={e => setNewTime(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-sky-500"
+                  className="w-full p-2 cabms-input rounded text-[var(--cabms-text-primary)] focus:outline-none focus:border-sky-500"
                 />
               </div>
 
@@ -431,7 +450,7 @@ export const ScheduleView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setRescheduleTarget(null)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition cursor-pointer"
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] rounded font-semibold transition cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -450,25 +469,25 @@ export const ScheduleView: React.FC = () => {
       {/* Cancel Modal */}
       {cancelTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-red-900/60 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-white flex items-center space-x-2">
+          <div className="cabms-card border-red-900/60 max-w-md w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
               <XCircle className="w-5 h-5 text-red-400" />
               <span>Cancel Appointment ({cancelTarget.id})</span>
             </h3>
 
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-[var(--cabms-text-secondary)]">
               Cancelling appointment marks the visit as cancelled and invalidates all queued reminders with clear suppression notices.
             </p>
 
             <form onSubmit={handleCancelSubmit} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Reason for Cancellation</label>
+                <label className="block text-[var(--cabms-text-secondary)] font-semibold mb-1">Reason for Cancellation</label>
                 <textarea
                   required
                   rows={3}
                   value={cancelReason}
                   onChange={e => setCancelReason(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-red-500"
+                  className="w-full p-2 cabms-input rounded text-[var(--cabms-text-primary)] focus:outline-none focus:border-red-500"
                 />
               </div>
 
@@ -476,7 +495,7 @@ export const ScheduleView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setCancelTarget(null)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition cursor-pointer"
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] rounded font-semibold transition cursor-pointer"
                 >
                   Go Back
                 </button>

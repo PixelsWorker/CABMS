@@ -7,6 +7,7 @@
 
 import React, { useState } from 'react';
 import { formatBusinessTime } from '../utils/businessTime.ts';
+import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import {
@@ -57,7 +58,7 @@ export const CommunicationsView: React.FC = () => {
     return (
       <AccessDeniedView
         resourceName="Customer Communications & Review Automation"
-        requiredRoleDescription="Super Admin, Owner / Admin, or Office Staff"
+        requiredRoleDescription="Super Admin, Admin, or Office Staff"
         customExplanation="Technicians do not dispatch automated customer communications, Google review requests, or customer certificate delivery packages."
       />
     );
@@ -65,6 +66,48 @@ export const CommunicationsView: React.FC = () => {
 
   // Selected job
   const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
+
+  // FC-01 & Certificate Policy A: Synchronize active certificate selection with current job requirements
+  const effectiveCertType = currentJob.formsRequired.includes(selectedCertType)
+    ? selectedCertType
+    : ((currentJob.formsRequired[0] as typeof selectedCertType) || null);
+
+  let isEffectiveCertSigned = false;
+  let isEffectiveCertValid = false;
+  if (effectiveCertType) {
+    let rawSnapshot: string | undefined = undefined;
+    if (effectiveCertType === 'JSA') {
+      const form = getOrCreateJsa(currentJob.id);
+      isEffectiveCertSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
+    } else if (effectiveCertType === 'ELECTRICAL') {
+      const form = getOrCreateElectrical(currentJob.id);
+      isEffectiveCertSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
+    } else if (effectiveCertType === 'SMOKE_ALARM') {
+      const form = getOrCreateSmokeAlarm(currentJob.id);
+      isEffectiveCertSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
+    } else if (effectiveCertType === 'TCA1') {
+      const form = getOrCreateTca1(currentJob.id);
+      isEffectiveCertSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
+    } else if (effectiveCertType === 'TCA2') {
+      const form = getOrCreateTca2(currentJob.id);
+      isEffectiveCertSigned = form.signedOff;
+      rawSnapshot = form.fullSnapshot;
+    }
+    if (isEffectiveCertSigned) {
+      isEffectiveCertValid = validateSignedSnapshot(rawSnapshot, currentJob.id, effectiveCertType).valid;
+    }
+  }
+
+  const canDispatchEffectiveCert = Boolean(
+    effectiveCertType &&
+    currentJob.formsRequired.includes(effectiveCertType) &&
+    isEffectiveCertSigned &&
+    isEffectiveCertValid
+  );
 
   const handleSendReview = (outcomeType?: 'FAIL' | 'UNCERTAIN') => {
     const outcome = triggerReviewRequest(currentJob.id, outcomeType);
@@ -93,28 +136,28 @@ export const CommunicationsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
               <MessageSquare className="w-5 h-5 text-emerald-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">
+              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Automated Communications & Google Review Requests
               </h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
               Deterministic simulation of email appointment reminders, certificate delivery, and deduplicated Google review dispatches.
             </p>
           </div>
 
           <div className="flex w-full min-w-0 flex-wrap items-center gap-3 sm:w-auto">
             {/* Clock Advance Widget (G00-020) */}
-            <div className="flex max-w-full flex-wrap items-center gap-2 bg-slate-950 px-2.5 py-1.5 rounded-lg border border-slate-800 text-xs">
+            <div className="flex max-w-full flex-wrap items-center gap-2 cabms-card-subtle px-2.5 py-1.5 text-xs">
               <Clock className="w-3.5 h-3.5 text-amber-400" />
-              <span className="font-mono text-white font-bold">{formatBusinessTime(demoClock)}</span>
+              <span className="font-mono text-[var(--cabms-text-primary)] font-bold">{formatBusinessTime(demoClock)}</span>
               <button
                 onClick={() => advanceClock(2)}
-                className="ml-2 px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[10px] font-semibold cursor-pointer"
+                className="ml-2 px-1.5 py-0.5 cabms-surface hover:bg-[var(--cabms-surface-subtle)] border cabms-border text-[var(--cabms-text-primary)] rounded text-[10px] font-semibold cursor-pointer"
                 title="Advance clock by 2 hours to trigger reminders"
               >
                 +2h
@@ -122,7 +165,7 @@ export const CommunicationsView: React.FC = () => {
             </div>
 
             <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-              <label htmlFor="communications-work-order" className="shrink-0 text-xs text-slate-400">Target Work Order:</label>
+              <label htmlFor="communications-work-order" className="shrink-0 text-xs text-[var(--cabms-text-secondary)]">Target Work Order:</label>
               <select
                 id="communications-work-order"
                 title={`${currentJob.id} — ${currentJob.title}`}
@@ -131,7 +174,7 @@ export const CommunicationsView: React.FC = () => {
                   setSelectedJobId(e.target.value);
                   setReviewFeedback(null);
                 }}
-                className="w-full min-w-0 max-w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1 text-white font-mono text-xs font-bold cursor-pointer"
+                className="w-full min-w-0 max-w-full cabms-card-subtle rounded px-2.5 py-1 text-[var(--cabms-text-primary)] font-mono text-xs font-bold cursor-pointer"
               >
                 {jobs.map(j => (
                   <option key={j.id} value={j.id}>
@@ -150,7 +193,7 @@ export const CommunicationsView: React.FC = () => {
             className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'reviews'
                 ? 'bg-emerald-600 text-slate-950 shadow-sm'
-                : 'bg-slate-950 text-slate-400 hover:text-white'
+                : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
             }`}
           >
             <Star className="w-3.5 h-3.5" />
@@ -162,7 +205,7 @@ export const CommunicationsView: React.FC = () => {
             className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'reminders'
                 ? 'bg-emerald-600 text-slate-950 shadow-sm'
-                : 'bg-slate-950 text-slate-400 hover:text-white'
+                : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
             }`}
           >
             <Bell className="w-3.5 h-3.5" />
@@ -174,7 +217,7 @@ export const CommunicationsView: React.FC = () => {
             className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
               activeTab === 'certificates'
                 ? 'bg-emerald-600 text-slate-950 shadow-sm'
-                : 'bg-slate-950 text-slate-400 hover:text-white'
+                : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
             }`}
           >
             <Mail className="w-3.5 h-3.5" />
@@ -187,23 +230,23 @@ export const CommunicationsView: React.FC = () => {
       {activeTab === 'reviews' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left: Review Automation Simulator (6 cols) */}
-          <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+          <div className="lg:col-span-6 cabms-card p-6 space-y-5">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
                 Single Logical Request per Job Guard
               </span>
-              <h2 className="text-base font-bold text-white mt-0.5">
+              <h2 className="text-base font-bold text-[var(--cabms-text-primary)] mt-0.5">
                 Google Review Dispatch Control ({currentJob.id})
               </h2>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
                 Automated or manual review triggers are strictly deduplicated. If a request is already sent, pending, or uncertain, duplicate dispatches are prevented.
               </p>
             </div>
 
             {/* Current Review Request Status Card */}
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-xs">
+            <div className="cabms-card-subtle p-4 space-y-3 text-xs">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-300">Dispatch Status:</span>
+                <span className="font-bold text-[var(--cabms-text-secondary)]">Dispatch Status:</span>
                 <span
                   className={`px-2.5 py-0.5 rounded font-bold ${
                     currentJob.reviewRequest.status === 'SENT'
@@ -214,15 +257,15 @@ export const CommunicationsView: React.FC = () => {
                       ? 'bg-red-950 text-red-400 border border-red-800'
                       : currentJob.reviewRequest.status === 'PENDING'
                       ? 'bg-sky-950 text-sky-400 border border-sky-800'
-                      : 'bg-slate-900 text-slate-400 border border-slate-800'
+                      : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
                   }`}
                 >
                   {currentJob.reviewRequest.status}
                 </span>
               </div>
 
-              <div className="space-y-1 text-slate-300">
-                <div>Recipient: <strong className="text-white">{currentJob.siteContact}</strong> ({currentJob.sitePhone})</div>
+              <div className="space-y-1 text-[var(--cabms-text-secondary)]">
+                <div>Recipient: <strong className="text-[var(--cabms-text-primary)]">{currentJob.siteContact}</strong> ({currentJob.sitePhone})</div>
                 <div>Target Brand: <strong className="text-sky-400">{brands[currentJob.brandId]?.name}</strong></div>
                 <div>
                   Brand Review Link (Synthetic Preview):
@@ -235,7 +278,7 @@ export const CommunicationsView: React.FC = () => {
 
             {/* Interactive Dispatch Triggers */}
             <div className="space-y-2 pt-2 border-t border-slate-800">
-              <span className="text-xs font-bold text-slate-300 block">Simulate Dispatch Action:</span>
+              <span className="text-xs font-bold text-[var(--cabms-text-secondary)] block">Simulate Dispatch Action:</span>
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => handleSendReview()}
@@ -247,7 +290,7 @@ export const CommunicationsView: React.FC = () => {
 
                 <button
                   onClick={() => handleSendReview('UNCERTAIN')}
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold rounded-lg transition cursor-pointer"
+                  className="px-3 py-2 cabms-surface hover:bg-[var(--cabms-surface-subtle)] border cabms-border text-amber-300 text-xs font-semibold rounded-lg transition cursor-pointer"
                   title="Simulate 504 Gateway Timeout resulting in an UNCERTAIN state"
                 >
                   Simulate 504 Timeout (Uncertain)
@@ -255,7 +298,7 @@ export const CommunicationsView: React.FC = () => {
 
                 <button
                   onClick={() => handleSendReview('FAIL')}
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-red-300 text-xs font-semibold rounded-lg transition cursor-pointer"
+                  className="px-3 py-2 cabms-surface hover:bg-[var(--cabms-surface-subtle)] border cabms-border text-red-300 text-xs font-semibold rounded-lg transition cursor-pointer"
                   title="Simulate SMTP 550 Mailbox Unavailable resulting in FAILED state"
                 >
                   Simulate SMTP 550 (Failed)
@@ -323,22 +366,22 @@ export const CommunicationsView: React.FC = () => {
           </div>
 
           {/* Right: Review Request Email Preview (6 cols) */}
-          <div className="lg:col-span-6 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          <div className="lg:col-span-6 cabms-card p-6 space-y-4">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--cabms-text-secondary)]">
               Customer Experience Preview
             </span>
-            <h3 className="text-base font-bold text-white">
+            <h3 className="text-base font-bold text-[var(--cabms-text-primary)]">
               Branded Review Request Email
             </h3>
 
-            <div className="bg-slate-950 p-5 rounded-xl border border-slate-800 text-xs space-y-4">
-              <div className="border-b border-slate-800 pb-2 text-slate-400 text-[11px]">
+            <div className="cabms-card-subtle p-5 text-xs space-y-4">
+              <div className="border-b border-slate-800 pb-2 text-[var(--cabms-text-secondary)] text-[11px]">
                 <div>From: <strong>{brands[currentJob.brandId]?.name}</strong> &lt;feedback@cabms-demo.invalid&gt;</div>
                 <div>To: {currentJob.siteContact}</div>
                 <div>Subject: How was your experience with {brands[currentJob.brandId]?.name}?</div>
               </div>
 
-              <div className="space-y-3 text-slate-300 leading-relaxed">
+              <div className="space-y-3 text-[var(--cabms-text-secondary)] leading-relaxed">
                 <p>Hi {currentJob.siteContact},</p>
                 <p>
                   Thank you for trusting <strong>{brands[currentJob.brandId]?.name}</strong> with your service at <strong>{currentJob.siteAddress}</strong>.
@@ -371,11 +414,11 @@ export const CommunicationsView: React.FC = () => {
 
       {/* Reminders Tab */}
       {activeTab === 'reminders' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+        <div className="cabms-card p-6 space-y-4">
+          <h2 className="text-sm font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider">
             Automated Appointment Reminders & Suppression Audit
           </h2>
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-[var(--cabms-text-secondary)]">
             When an appointment is rescheduled or cancelled, the old reminder is invalidated and retained in the audit history with the suppression cause.
           </p>
 
@@ -388,16 +431,16 @@ export const CommunicationsView: React.FC = () => {
                     ? 'bg-red-950/20 border-red-900/40 text-red-300'
                     : rem.delivered
                     ? 'bg-emerald-950/20 border-emerald-900/40 text-emerald-300'
-                    : 'bg-slate-950 border-slate-800 text-slate-300'
+                    : 'cabms-card-subtle text-[var(--cabms-text-secondary)]'
                 }`}
               >
                 <div>
-                  <div className="font-bold text-white text-xs">
+                  <div className="font-bold text-[var(--cabms-text-primary)] text-xs">
                     {rem.type === 'CONFIRMATION' && 'Initial Appointment Email Confirmation'}
                     {rem.type === 'REMINDER_24HR' && '24-Hour Prior Email Reminder'}
                     {rem.type === 'REMINDER_2HR' && '2-Hour Prior Email En Route Reminder'}
                   </div>
-                  <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                  <div className="text-[11px] text-[var(--cabms-text-secondary)] font-mono mt-0.5">
                     Target Time: {rem.scheduledFor} (Channel: Email)
                   </div>
                   {rem.suppressionReason && (
@@ -417,7 +460,7 @@ export const CommunicationsView: React.FC = () => {
                       Delivered
                     </span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]">
                       Scheduled
                     </span>
                   )}
@@ -430,23 +473,23 @@ export const CommunicationsView: React.FC = () => {
 
       {/* Certificates Delivery Tab (G00-022: Selection -> Preview -> Mock Send -> Recovery) */}
       {activeTab === 'certificates' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+        <div className="cabms-card p-6 space-y-6">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
               Finalized Document Dispatch Workflow
             </span>
-            <h2 className="text-base font-bold text-white mt-0.5">
+            <h2 className="text-base font-bold text-[var(--cabms-text-primary)] mt-0.5">
               Completed Compliance Certificate Email Dispatch ({currentJob.id})
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-[var(--cabms-text-secondary)]">
               Only signed compliance certificates with preserved immutable snapshots are eligible for simulated dispatch to property owners.
             </p>
           </div>
 
           {/* Form Selection & Dispatch Triggers */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <div className="lg:col-span-6 bg-slate-950 p-5 rounded-xl border border-slate-800 space-y-4 text-xs">
-              <span className="font-bold text-slate-300 uppercase tracking-wider text-[11px] block">
+            <div className="lg:col-span-6 cabms-card-subtle p-5 space-y-4 text-xs">
+              <span className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px] block">
                 1. Select Finalized Certificate
               </span>
 
@@ -466,9 +509,9 @@ export const CommunicationsView: React.FC = () => {
                           key={fType}
                           onClick={() => setSelectedCertType(fType)}
                           className={`px-3 py-1.5 rounded-lg font-bold text-xs transition cursor-pointer flex items-center space-x-1.5 ${
-                            selectedCertType === fType
+                            effectiveCertType === fType
                               ? 'bg-emerald-600 text-slate-950 shadow-sm'
-                              : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
+                              : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
                           }`}
                         >
                           <span>{fType}</span>
@@ -482,47 +525,70 @@ export const CommunicationsView: React.FC = () => {
                     })}
                   </div>
 
-                  <div className="pt-3 border-t border-slate-800 text-slate-400">
-                    Recipient: <strong className="text-white">{currentJob.siteContact}</strong> ({currentJob.siteContact.toLowerCase().replace(/[^a-z0-9]/g, '.')}@example.invalid)
+                  <div className="pt-3 border-t border-slate-800 text-[var(--cabms-text-secondary)]">
+                    Recipient: <strong className="text-[var(--cabms-text-primary)]">{currentJob.siteContact}</strong> ({currentJob.siteContact.toLowerCase().replace(/[^a-z0-9]/g, '.')}@example.invalid)
                   </div>
                 </div>
               ) : (
                 <p className="text-slate-500">No compliance forms required for direct-to-invoice service.</p>
               )}
 
-              {/* Action Buttons */}
-              <div className="pt-3 border-t border-slate-800 flex flex-wrap gap-2">
-                <button
-                  onClick={() => sendCertificateEmail(currentJob.id, selectedCertType, false)}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded-lg transition shadow-md cursor-pointer flex items-center space-x-1.5"
-                >
-                  <Send className="w-3.5 h-3.5" />
-                  <span>Send Certificate Email (Normal)</span>
-                </button>
-                <button
-                  onClick={() => sendCertificateEmail(currentJob.id, selectedCertType, true)}
-                  className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-red-300 border border-red-800/80 font-semibold rounded-lg transition cursor-pointer"
-                  title="Simulate network failure resulting in a FAILED delivery record with retry option"
-                >
-                  Simulate SMTP 504 Failure
-                </button>
-              </div>
+              {/* Action Buttons: Only rendered when compliance forms are contractually required */}
+              {currentJob.formsRequired.length > 0 && effectiveCertType && (
+                <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center gap-2">
+                  <button
+                    disabled={!canDispatchEffectiveCert}
+                    onClick={() => canDispatchEffectiveCert && sendCertificateEmail(currentJob.id, effectiveCertType, false)}
+                    className={`px-4 py-2 font-bold rounded-lg transition shadow-md flex items-center space-x-1.5 ${
+                      canDispatchEffectiveCert
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 cursor-pointer'
+                        : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
+                    }`}
+                  >
+                    <Send className="w-3.5 h-3.5" />
+                    <span>Send Certificate Email (Normal)</span>
+                  </button>
+                  <button
+                    disabled={!canDispatchEffectiveCert}
+                    onClick={() => canDispatchEffectiveCert && sendCertificateEmail(currentJob.id, effectiveCertType, true)}
+                    className={`px-3 py-2 font-semibold rounded-lg transition ${
+                      canDispatchEffectiveCert
+                        ? 'bg-slate-900 hover:bg-slate-800 text-red-300 border border-red-800/80 cursor-pointer'
+                        : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] cursor-not-allowed opacity-60'
+                    }`}
+                    title={
+                      canDispatchEffectiveCert
+                        ? 'Simulate network failure resulting in a FAILED delivery record with retry option'
+                        : 'Cannot send unsigned or invalid certificate'
+                    }
+                  >
+                    Simulate SMTP 504 Failure
+                  </button>
+                  {!canDispatchEffectiveCert && (
+                    <span className="text-[11px] text-amber-400">
+                      {!isEffectiveCertSigned
+                        ? 'Certificate must be signed before delivery.'
+                        : 'Certificate snapshot is invalid.'}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Email Preview Card */}
-            <div className="lg:col-span-6 bg-slate-950 rounded-xl p-5 border border-slate-800 space-y-3 text-xs">
-              <span className="font-bold text-slate-300 uppercase tracking-wider text-[11px] block">
+            <div className="lg:col-span-6 cabms-card-subtle p-5 space-y-3 text-xs">
+              <span className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px] block">
                 2. Customer Email Delivery Package Preview
               </span>
-              <div className="text-slate-400 text-[11px] pb-2 border-b border-slate-800">
+              <div className="text-[var(--cabms-text-secondary)] text-[11px] pb-2 border-b border-slate-800">
                 Subject: Verified Compliance Certificates for Work Order #{currentJob.id} — {brands[currentJob.brandId]?.name}
               </div>
-              <p className="text-slate-200">Dear {currentJob.siteContact},</p>
-              <p className="text-slate-300 leading-relaxed">
+              <p className="text-[var(--cabms-text-primary)]">Dear {currentJob.siteContact},</p>
+              <p className="text-[var(--cabms-text-secondary)] leading-relaxed">
                 Please find attached your verified compliance records for the works carried out at <strong>{currentJob.siteAddress}</strong> on {currentJob.scheduledDate}.
               </p>
-              <div className="bg-slate-900 p-3 rounded border border-slate-800 space-y-2">
-                <span className="font-bold text-slate-300 block text-[11px]">
+              <div className="cabms-card-subtle p-3 space-y-2">
+                <span className="font-bold text-[var(--cabms-text-secondary)] block text-[11px]">
                   Enclosed Verified Documents ({signedCerts.length} signed of {currentJob.formsRequired.length} required):
                 </span>
                 {signedCerts.length > 0 ? (
@@ -540,7 +606,7 @@ export const CommunicationsView: React.FC = () => {
                   </div>
                 )}
               </div>
-              <p className="text-slate-400 text-[11px]">
+              <p className="text-[var(--cabms-text-secondary)] text-[11px]">
                 Legal Issuer: {brands[currentJob.brandId]?.legalIssuerName} • {brands[currentJob.brandId]?.abnPlaceholder}
               </p>
             </div>
@@ -548,12 +614,12 @@ export const CommunicationsView: React.FC = () => {
 
           {/* Delivery Audit History & Recovery Log */}
           <div className="space-y-3">
-            <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+            <h3 className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider">
               3. Simulated Dispatch Audit History & Delivery Recovery
             </h3>
 
             {certificateDeliveries.filter(d => d.jobId === currentJob.id).length === 0 ? (
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs text-slate-500 text-center">
+              <div className="cabms-card-subtle p-4 text-xs text-slate-500 text-center">
                 No certificate delivery simulations recorded for this work order yet. Use the dispatch buttons above.
               </div>
             ) : (
@@ -575,7 +641,7 @@ export const CommunicationsView: React.FC = () => {
                           <span>•</span>
                           <span className="font-semibold">{deliv.documentTitle}</span>
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
+                        <div className="text-[11px] text-[var(--cabms-text-secondary)] mt-0.5">
                           Recipient: {deliv.recipientEmail} • Dispatched: {deliv.sentAt}
                         </div>
                       </div>

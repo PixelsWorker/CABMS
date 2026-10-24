@@ -27,8 +27,13 @@
   --cabms-badge-info-text: #ffffff;
   --cabms-badge-info-border: #0284c7;
 
+  --cabms-badge-purple-bg: #3b0764;
+  --cabms-badge-purple-text: #e9d5ff;
+  --cabms-badge-purple-border: #9333ea;
+
   --cabms-accent-danger: #f87171;
   --cabms-accent-info: #7dd3fc;
+  --cabms-accent-purple: #c084fc;
   --cabms-accent-success: #34d399;
   --cabms-accent-warning: #fbbf24;
 }
@@ -58,8 +63,13 @@
   --cabms-badge-info-text: #0369a1;
   --cabms-badge-info-border: #0369a1;
 
+  --cabms-badge-purple-bg: #f3e8ff;
+  --cabms-badge-purple-text: #581c87;
+  --cabms-badge-purple-border: #a855f7;
+
   --cabms-accent-danger: #b91c1c;
   --cabms-accent-info: #0369a1;
+  --cabms-accent-purple: #7e22ce;
   --cabms-accent-success: #047857;
   --cabms-accent-warning: #b45309;
 }
@@ -89,8 +99,13 @@
   --cabms-badge-info-text: #ffffff;
   --cabms-badge-info-border: #38bdf8;
 
+  --cabms-badge-purple-bg: #581c87;
+  --cabms-badge-purple-text: #ffffff;
+  --cabms-badge-purple-border: #c084fc;
+
   --cabms-accent-danger: #f87171;
   --cabms-accent-info: #38bdf8;
+  --cabms-accent-purple: #d8b4fe;
   --cabms-accent-success: #34d399;
   --cabms-accent-warning: #fbbf24;
 }
@@ -190,25 +205,34 @@
   /* Semantic Accents */
   .cabms-accent-danger { color: var(--cabms-accent-danger); }
   .cabms-accent-info { color: var(--cabms-accent-info); }
+  .cabms-accent-purple { color: var(--cabms-accent-purple); }
   .cabms-accent-success { color: var(--cabms-accent-success); }
   .cabms-accent-warning { color: var(--cabms-accent-warning); }
 }
 
 /* Light mode utility overrides for accessible contrast on light backgrounds */
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-sky-400, .text-sky-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-sky-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-sky-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-sky-400, .text-sky-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-sky-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-sky-950"]) {
   color: var(--cabms-accent-info);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-amber-400, .text-amber-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-amber-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-amber-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-amber-400, .text-amber-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-amber-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-amber-950"]) {
   color: var(--cabms-accent-warning);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-emerald-400, .text-emerald-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-emerald-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-emerald-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-emerald-400, .text-emerald-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-emerald-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-emerald-950"]) {
   color: var(--cabms-accent-success);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.text-red-400, .text-red-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-red-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-red-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-red-400, .text-red-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-red-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-red-950"]) {
   color: var(--cabms-accent-danger);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-purple-400, .text-purple-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-purple-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-purple-950"]) {
+  color: var(--cabms-accent-purple);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-slate-400, .text-slate-500):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]) {
+  color: var(--cabms-text-secondary);
 }
 
 [data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]),
@@ -239,24 +263,48 @@
   border-color: var(--cabms-badge-info-border);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]):is(.text-amber-400, .text-amber-300),
-[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]) :is(.text-amber-400, .text-amber-300) {
+[data-appearance="high_visibility_light"] :is(.bg-purple-950, [class*="bg-purple-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-purple-950, [class*="bg-purple-950"]) {
+  background-color: var(--cabms-badge-purple-bg);
+  color: var(--cabms-badge-purple-text);
+  border-color: var(--cabms-badge-purple-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-sky-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-info-bg);
+  color: var(--cabms-badge-info-text);
+  border-color: var(--cabms-badge-info-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-purple-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-purple-bg);
+  color: var(--cabms-badge-purple-text);
+  border-color: var(--cabms-badge-purple-border);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]):is(.text-amber-400, .text-amber-300, .text-amber-200, .text-amber-100),
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]) :is(.text-amber-400, .text-amber-300, .text-amber-200, .text-amber-100) {
   color: var(--cabms-badge-warning-text);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]):is(.text-emerald-400, .text-emerald-300),
-[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]) :is(.text-emerald-400, .text-emerald-300) {
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]):is(.text-emerald-400, .text-emerald-300, .text-emerald-200, .text-emerald-100),
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]) :is(.text-emerald-400, .text-emerald-300, .text-emerald-200, .text-emerald-100) {
   color: var(--cabms-badge-completed-text);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]):is(.text-red-400, .text-red-300),
-[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]) :is(.text-red-400, .text-red-300) {
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]):is(.text-red-400, .text-red-300, .text-red-200, .text-red-100),
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]) :is(.text-red-400, .text-red-300, .text-red-200, .text-red-100) {
   color: var(--cabms-badge-danger-text);
 }
 
-[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]):is(.text-sky-400, .text-sky-300),
-[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]) :is(.text-sky-400, .text-sky-300) {
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]):is(.text-sky-400, .text-sky-300, .text-sky-200, .text-sky-100),
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]) :is(.text-sky-400, .text-sky-300, .text-sky-200, .text-sky-100) {
   color: var(--cabms-badge-info-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-purple-950, [class*="bg-purple-950"]):is(.text-purple-400, .text-purple-300, .text-purple-200, .text-purple-100),
+[data-appearance="high_visibility_light"] :is(.bg-purple-950, [class*="bg-purple-950"]) :is(.text-purple-400, .text-purple-300, .text-purple-200, .text-purple-100) {
+  color: var(--cabms-badge-purple-text);
 }
 
 .cabms-shell {

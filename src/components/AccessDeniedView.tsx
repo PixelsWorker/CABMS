@@ -52,15 +52,15 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
 
       <div className="cabms-card-subtle p-4 text-left text-xs text-[var(--cabms-text-secondary)] space-y-2 mb-6">
         <div>
-          <span className="text-slate-400 font-semibold">Protected Resource:</span>{' '}
+          <span className="text-[var(--cabms-text-secondary)] font-semibold">Protected Resource:</span>{' '}
           <span className="text-[var(--cabms-text-primary)] font-mono">{resourceName}</span>
         </div>
         <div>
-          <span className="text-slate-400 font-semibold">Required Authorization:</span>{' '}
+          <span className="text-[var(--cabms-text-secondary)] font-semibold">Required Authorization:</span>{' '}
           <span className="text-amber-300">{requiredRoleDescription}</span>
         </div>
         {customExplanation && (
-          <div className="border-t border-slate-800/80 pt-2 text-slate-400">
+          <div className="border-t border-[var(--cabms-border-base)] pt-2 text-[var(--cabms-text-secondary)]">
             {customExplanation}
           </div>
         )}
@@ -76,7 +76,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
         </button>
 
         <div className="flex items-center space-x-2">
-          <span className="text-xs text-slate-400">Or switch persona:</span>
+          <span className="text-xs text-[var(--cabms-text-secondary)]">Or switch persona:</span>
           <button
             onClick={() => setPersona('owner_admin')}
             className="px-3 py-2 bg-sky-900/40 hover:bg-sky-800/60 text-sky-200 border border-sky-700 text-xs font-semibold rounded-lg transition cursor-pointer"

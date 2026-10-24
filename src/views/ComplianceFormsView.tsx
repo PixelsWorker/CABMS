@@ -1207,7 +1207,7 @@ export const ComplianceFormsView: React.FC = () => {
                         alt={sample.title}
                         className="w-full h-full object-cover group-hover:scale-105 transition"
                       />
-                      <span className="absolute bottom-1 right-1 text-[9px] bg-slate-950/80 px-1 rounded text-[var(--cabms-text-secondary)]">
+                      <span className="absolute bottom-1 right-1 text-[9px] bg-slate-950/80 px-1 rounded text-slate-200">
                         {sample.category}
                       </span>
                     </div>

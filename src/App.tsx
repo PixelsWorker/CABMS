@@ -46,7 +46,7 @@ export const AppContent: React.FC = () => {
             <span>
               CABMS G00 Prototype Demo • Solarcell • GC Smart Home Solutions • GC CCTV
             </span>
-            <span className="font-mono text-[11px] text-slate-400">
+            <span className="font-mono text-[11px] text-[var(--cabms-text-secondary)]">
               DEMO — NO LIVE INTEGRATIONS • Resettable Seed State
             </span>
           </div>
@@ -86,7 +86,7 @@ export const AppContent: React.FC = () => {
             <span>
               CABMS G00 Prototype Demo • Solarcell • GC Smart Home Solutions • GC CCTV
             </span>
-            <span className="font-mono text-[11px] text-slate-400">
+            <span className="font-mono text-[11px] text-[var(--cabms-text-secondary)]">
               DEMO — NO LIVE INTEGRATIONS • Resettable Seed State
             </span>
           </div>

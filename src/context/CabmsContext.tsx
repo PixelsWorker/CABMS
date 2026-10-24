@@ -5,6 +5,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
+  AppearanceMode,
   BrandConfig,
   BrandId,
   Customer,
@@ -79,6 +80,8 @@ interface CabmsContextType {
   setActiveBrandId: (b: BrandId) => void;
   activeBrand: BrandConfig;
   brands: Record<string, BrandConfig>;
+  appearance: AppearanceMode;
+  setAppearance: (mode: AppearanceMode) => void;
   technicians: typeof INITIAL_TECHNICIANS;
   updateBrandConfig: (brand: BrandConfig) => void;
   addNewBrandProfile: (brand: BrandConfig) => void;
@@ -225,6 +228,11 @@ interface CabmsContextType {
     jobs: Job[];
     tca2AuditRecords: Record<string, Tca2AuditRecord>;
     draftBusinesses: DraftBusinessProfile[];
+    jsaForms?: Record<string, JsaFormData>;
+    electricalCerts?: Record<string, ElectricalCertData>;
+    smokeAlarmCerts?: Record<string, SmokeAlarmCertData>;
+    tca1Certs?: Record<string, Tca1CertData>;
+    tca2Certs?: Record<string, Tca2CertData>;
   };
 
   // UI Toast / Feedback Banner
@@ -255,6 +263,22 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [selectedJobId, setSelectedJobId] = useState<string | null>('JOB-2026-101');
   const [activeScenario, setActiveScenario] = useState<DemoScenario>('default');
   const [isSimulatedSignedIn, setIsSimulatedSignedIn] = useState(true);
+
+  // Appearance Mode (In-memory, defaults to default_dark)
+  const [appearance, setAppearanceState] = useState<AppearanceMode>('default_dark');
+  const setAppearance = (mode: AppearanceMode) => {
+    if (mode === 'default_dark' || mode === 'high_visibility_light' || mode === 'high_visibility_dark') {
+      setAppearanceState(mode);
+    } else {
+      setAppearanceState('default_dark');
+    }
+  };
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-appearance', appearance);
+    }
+  }, [appearance]);
 
   // Clock
   const [demoClock, setDemoClock] = useState<string>(INITIAL_DEMO_CLOCK);
@@ -443,6 +467,34 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const authoritativeDraftBusinessesRef = React.useRef<DraftBusinessProfile[]>([]);
   const authoritativePersonaRef = React.useRef<Persona>('owner_admin');
   const authoritativeSessionRef = React.useRef(true);
+  const [authoritativeJsaFormsRef] = React.useState(() => ({
+    current: {
+      'JOB-2026-101': { ...INITIAL_JSA_FORM },
+      'JOB-2026-103': createSignedJsaSeed('JOB-2026-103'),
+      'JOB-2026-104': createSignedJsaSeed('JOB-2026-104'),
+    } as Record<string, JsaFormData>,
+  }));
+  const [authoritativeElectricalCertsRef] = React.useState(() => ({
+    current: {
+      'JOB-2026-103': { ...INITIAL_ELECTRICAL_CERT },
+    } as Record<string, ElectricalCertData>,
+  }));
+  const [authoritativeSmokeAlarmCertsRef] = React.useState(() => ({
+    current: {
+      'JOB-2026-101': { ...INITIAL_SMOKE_ALARM_CERT },
+    } as Record<string, SmokeAlarmCertData>,
+  }));
+  const [authoritativeTca1CertsRef] = React.useState(() => ({
+    current: {
+      'JOB-2026-104': { ...INITIAL_TCA1_CERT },
+    } as Record<string, Tca1CertData>,
+  }));
+  const [authoritativeTca2CertsRef] = React.useState(() => ({
+    current: {
+      'JOB-2026-104': createSignedTca2Seed(),
+    } as Record<string, Tca2CertData>,
+  }));
+  const authoritativeCertificateDeliveriesRef = React.useRef<CertificateDeliveryRecord[]>([]);
 
   const canManageReviews = () => authoritativeSessionRef.current
     && (['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(authoritativePersonaRef.current);
@@ -544,6 +596,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDraftBusinesses([]);
     setPersona('owner_admin');
     setActiveBrandId('solarcell');
+    setAppearance('default_dark');
     setBrands(INITIAL_BRANDS);
     setJobTypes(INITIAL_JOB_TYPES);
     setDemoClock(INITIAL_DEMO_CLOCK);
@@ -558,12 +611,22 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setJobs(INITIAL_JOBS);
     setTemplates(INITIAL_TEMPLATES);
     setWebsiteEnquiries(INITIAL_WEBSITE_ENQUIRIES);
+    authoritativeCertificateDeliveriesRef.current = [];
     setCertificateDeliveries([]);
     setJsaForms({
       'JOB-2026-101': { ...INITIAL_JSA_FORM },
       'JOB-2026-103': createSignedJsaSeed('JOB-2026-103'),
       'JOB-2026-104': createSignedJsaSeed('JOB-2026-104'),
     });
+    authoritativeJsaFormsRef.current = {
+      'JOB-2026-101': { ...INITIAL_JSA_FORM },
+      'JOB-2026-103': createSignedJsaSeed('JOB-2026-103'),
+      'JOB-2026-104': createSignedJsaSeed('JOB-2026-104'),
+    };
+    authoritativeElectricalCertsRef.current = { 'JOB-2026-103': { ...INITIAL_ELECTRICAL_CERT } };
+    authoritativeSmokeAlarmCertsRef.current = { 'JOB-2026-101': { ...INITIAL_SMOKE_ALARM_CERT } };
+    authoritativeTca1CertsRef.current = { 'JOB-2026-104': { ...INITIAL_TCA1_CERT } };
+    authoritativeTca2CertsRef.current = { 'JOB-2026-104': createSignedTca2Seed() };
     setElectricalCerts({ 'JOB-2026-103': { ...INITIAL_ELECTRICAL_CERT } });
     setSmokeAlarmCerts({ 'JOB-2026-101': { ...INITIAL_SMOKE_ALARM_CERT } });
     setTca1Certs({ 'JOB-2026-104': { ...INITIAL_TCA1_CERT } });
@@ -665,11 +728,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } else if (activeScenario === 'doc_missing_signoff') {
       setSelectedJobId('JOB-2026-101');
       setActiveTab('jobs');
-      setJsaForms(prev => ({
-        ...prev,
-        'JOB-2026-101': { ...prev['JOB-2026-101'], signedOff: false },
-      }));
-      showDemoNotification('Scenario: Documentation Job with JSA missing sign-off loaded.', 'info');
+      const currentAuthoritativeJsa = authoritativeJsaFormsRef.current['JOB-2026-101'];
+      if (currentAuthoritativeJsa?.signedOff) {
+        showDemoNotification(
+          'Scenario: Job JOB-2026-101 already has a finalized signed JSA snapshot. Immutability preserved — use Reset Demo to restore initial unsigned scenario state.',
+          'warning'
+        );
+      } else {
+        const resetJsa = { ...(currentAuthoritativeJsa || INITIAL_JSA_FORM), signedOff: false };
+        authoritativeJsaFormsRef.current = {
+          ...authoritativeJsaFormsRef.current,
+          'JOB-2026-101': resetJsa,
+        };
+        setJsaForms(prev => ({
+          ...prev,
+          'JOB-2026-101': resetJsa,
+        }));
+        showDemoNotification('Scenario: Documentation Job with JSA missing sign-off loaded.', 'info');
+      }
     } else if (activeScenario === 'direct_to_invoice') {
       setSelectedJobId('JOB-2026-102');
       setActiveTab('jobs');
@@ -975,13 +1051,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { canComplete: false, missingRequirements: ['Job not found'], warnings: [], isDirectToInvoice: false };
     }
 
-    // Pass the job's own form instances and authoritative audit record
+    // Pass the job's own form instances and authoritative audit record (reading latest authoritative refs)
     const forms = {
-      jsa: jsaForms[jobId],
-      electrical: electricalCerts[jobId],
-      smokeAlarm: smokeAlarmCerts[jobId],
-      tca1: tca1Certs[jobId],
-      tca2: tca2Certs[jobId],
+      jsa: authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId],
+      electrical: authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId],
+      smokeAlarm: authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId],
+      tca1: authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId],
+      tca2: authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId],
     };
 
     const auditRecord = authoritativeAuditRecordsRef.current[jobId] || tca2AuditRecords[jobId];
@@ -1014,9 +1090,27 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const rescheduleJobAppointment = (jobId: string, newDate: string, newTime: string) => {
+    // FC-10: Read authoritative synchronous state to guard against same-render race conditions
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    if (!targetJob) return;
+
+    // FC-10: Reject rescheduling on terminal jobs (COMPLETED or CANCELLED)
+    if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
+      showDemoNotification(
+        `RESCHEDULE BLOCKED: Cannot reschedule a ${targetJob.status.toLowerCase()} job.`,
+        'error'
+      );
+      return;
+    }
+
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId) {
+          // Preserve terminal state invariant during mutation
+          if (j.status === 'COMPLETED' || j.status === 'CANCELLED') {
+            return j;
+          }
+
           const updatedReminders = suppressOldReminders(
             j,
             `Rescheduled from ${j.scheduledDate} ${j.scheduledTime} to ${newDate} ${newTime}`,
@@ -1040,7 +1134,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ...j,
             scheduledDate: newDate,
             scheduledTime: newTime,
-            status: 'SCHEDULED' as JobStatus,
+            status: (j.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'SCHEDULED') as JobStatus,
             appointmentStatus: 'RESCHEDULED',
             calendarSyncStatus: 'SYNCED',
             reminders: [...updatedReminders, newReminder],
@@ -1060,9 +1154,26 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const cancelJobAppointment = (jobId: string, reason: string) => {
+    // FC-10: Guard appointment cancellation against terminal jobs using authoritative synchronous state
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    if (!targetJob) return;
+
+    if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
+      showDemoNotification(
+        `APPOINTMENT CANCELLATION BLOCKED: Cannot cancel appointment for a ${targetJob.status.toLowerCase()} job.`,
+        'error'
+      );
+      return;
+    }
+
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId) {
+          // Preserve terminal state invariant during mutation
+          if (j.status === 'COMPLETED' || j.status === 'CANCELLED') {
+            return j;
+          }
+
           const updatedReminders = suppressOldReminders(
             j,
             `Visit cancelled: ${reason}`,
@@ -1141,7 +1252,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Pure default form builders (avoids render-phase state mutations)
   const buildDefaultJsa = (jobId: string): JsaFormData => {
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     return {
       jobReference: jobId,
       date: job?.scheduledDate || businessCalendarDate(demoClock),
@@ -1189,9 +1300,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const buildDefaultElectrical = (jobId: string): ElectricalCertData => {
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    const baseSuffix = jobId.replace(/^JOB-/, '');
+    let candidate = `ELEC-CERT-${baseSuffix}`;
+
+    // FC-20: Ensure candidate does not collide with historical signed certificates or other jobs
+    const existingRefs = new Set<string>();
+    for (const [key, cert] of Object.entries(authoritativeElectricalCertsRef.current)) {
+      if (key !== jobId && cert.certReference) existingRefs.add(cert.certReference);
+    }
+    if (INITIAL_ELECTRICAL_CERT.jobReference !== jobId && INITIAL_ELECTRICAL_CERT.certReference) {
+      existingRefs.add(INITIAL_ELECTRICAL_CERT.certReference);
+    }
+
+    if (existingRefs.has(candidate)) {
+      let counter = 1;
+      while (existingRefs.has(`${candidate}-${counter}`)) {
+        counter++;
+      }
+      candidate = `${candidate}-${counter}`;
+    }
+
     return {
-      certReference: `ELEC-CERT-2026-${seqCounters.job}`,
+      certReference: candidate,
       jobReference: jobId,
       dateOfTest: job?.scheduledDate || businessCalendarDate(demoClock),
       customerName: job?.siteContact || 'Customer',
@@ -1223,9 +1354,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const buildDefaultSmokeAlarm = (jobId: string): SmokeAlarmCertData => {
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    const baseSuffix = jobId.replace(/^JOB-/, '');
+    let candidate = `SMOKE-${baseSuffix}`;
+
+    // FC-20: Ensure candidate does not collide with historical signed certificates or other jobs
+    const existingRefs = new Set<string>();
+    for (const [key, cert] of Object.entries(authoritativeSmokeAlarmCertsRef.current)) {
+      if (key !== jobId && cert.certReference) existingRefs.add(cert.certReference);
+    }
+    if (INITIAL_SMOKE_ALARM_CERT.jobReference !== jobId && INITIAL_SMOKE_ALARM_CERT.certReference) {
+      existingRefs.add(INITIAL_SMOKE_ALARM_CERT.certReference);
+    }
+
+    if (existingRefs.has(candidate)) {
+      let counter = 1;
+      while (existingRefs.has(`${candidate}-${counter}`)) {
+        counter++;
+      }
+      candidate = `${candidate}-${counter}`;
+    }
+
     return {
-      certReference: `SMOKE-2026-${seqCounters.job}`,
+      certReference: candidate,
       jobReference: jobId,
       dateOfInspection: job?.scheduledDate || businessCalendarDate(demoClock),
       issuedByPlaceholder: brands[job?.brandId || activeBrandId]?.legalIssuerName || 'Smart Home Solutions Safety',
@@ -1266,9 +1417,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const buildDefaultTca1 = (jobId: string): Tca1CertData => {
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    const baseSuffix = jobId.replace(/^JOB-/, '');
+    let candidate = `TCA1-${baseSuffix}`;
+
+    // FC-20: Ensure candidate does not collide with historical signed certificates or other jobs
+    const existingRefs = new Set<string>();
+    for (const [key, cert] of Object.entries(authoritativeTca1CertsRef.current)) {
+      if (key !== jobId && cert.certReference) existingRefs.add(cert.certReference);
+    }
+    if (INITIAL_TCA1_CERT.jobReference !== jobId && INITIAL_TCA1_CERT.certReference) {
+      existingRefs.add(INITIAL_TCA1_CERT.certReference);
+    }
+
+    if (existingRefs.has(candidate)) {
+      let counter = 1;
+      while (existingRefs.has(`${candidate}-${counter}`)) {
+        counter++;
+      }
+      candidate = `${candidate}-${counter}`;
+    }
+
     return {
-      certReference: `TCA1-2026-${seqCounters.job}`,
+      certReference: candidate,
       jobReference: jobId,
       registeredCablerPlaceholder: job?.assignedTechName || 'Alex Taylor',
       cablerRegistrationNumberPlaceholder: 'ACMA-REG-44210-DEMO',
@@ -1287,9 +1458,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const buildDefaultTca2 = (jobId: string): Tca2CertData => {
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    const baseSuffix = jobId.replace(/^JOB-/, '');
+    let candidate = `TCA2-DEFECT-${baseSuffix}`;
+
+    // FC-20: Ensure candidate does not collide with historical signed certificates or other jobs
+    const existingRefs = new Set<string>();
+    for (const [key, cert] of Object.entries(authoritativeTca2CertsRef.current)) {
+      if (key !== jobId && cert.reportReference) existingRefs.add(cert.reportReference);
+    }
+    if (INITIAL_TCA2_CERT.jobReference !== jobId && INITIAL_TCA2_CERT.reportReference) {
+      existingRefs.add(INITIAL_TCA2_CERT.reportReference);
+    }
+
+    if (existingRefs.has(candidate)) {
+      let counter = 1;
+      while (existingRefs.has(`${candidate}-${counter}`)) {
+        counter++;
+      }
+      candidate = `${candidate}-${counter}`;
+    }
+
     return {
-      reportReference: `TCA2-DEFECT-2026-${seqCounters.job}`,
+      reportReference: candidate,
       jobReference: jobId,
       inspectionDate: job?.scheduledDate || businessCalendarDate(demoClock),
       businessCablerPlaceholder: job?.assignedTechName || 'Alex Taylor',
@@ -1315,91 +1506,102 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   };
 
-  // Pure Form Getters (No render-phase state mutations)
+  // Pure Read-Only Form Getters (zero render-phase mutations, state writes, or ref writes)
   const getOrCreateJsa = (jobId: string): JsaFormData => {
-    return jsaForms[jobId] || buildDefaultJsa(jobId);
+    return authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId] || buildDefaultJsa(jobId);
   };
 
   const getOrCreateElectrical = (jobId: string): ElectricalCertData => {
-    return electricalCerts[jobId] || buildDefaultElectrical(jobId);
+    return authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId] || buildDefaultElectrical(jobId);
   };
 
   const getOrCreateSmokeAlarm = (jobId: string): SmokeAlarmCertData => {
-    return smokeAlarmCerts[jobId] || buildDefaultSmokeAlarm(jobId);
+    return authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId] || buildDefaultSmokeAlarm(jobId);
   };
 
   const getOrCreateTca1 = (jobId: string): Tca1CertData => {
-    return tca1Certs[jobId] || buildDefaultTca1(jobId);
+    return authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId] || buildDefaultTca1(jobId);
   };
 
   const getOrCreateTca2 = (jobId: string): Tca2CertData => {
-    return tca2Certs[jobId] || buildDefaultTca2(jobId);
+    return authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId] || buildDefaultTca2(jobId);
   };
 
   // Form Field Updates with Immutability Guards for Signed Documents
   const updateJsaForm = (jobId: string, data: Partial<JsaFormData>) => {
-    const existing = jsaForms[jobId] || buildDefaultJsa(jobId);
+    const existing = authoritativeJsaFormsRef.current[jobId] || buildDefaultJsa(jobId);
     if (existing.signedOff) {
       showDemoNotification(`IMMUTABLE: JSA for Job ${jobId} is finalized and signed off. Edits are refused.`, 'error');
       return;
     }
+    const updated = { ...existing, ...data };
+    authoritativeJsaFormsRef.current[jobId] = updated;
     setJsaForms(prev => ({
       ...prev,
-      [jobId]: { ...(prev[jobId] || buildDefaultJsa(jobId)), ...data },
+      [jobId]: updated,
     }));
   };
 
   const updateElectricalForm = (jobId: string, data: Partial<ElectricalCertData>) => {
-    const existing = electricalCerts[jobId] || buildDefaultElectrical(jobId);
+    const existing = authoritativeElectricalCertsRef.current[jobId] || buildDefaultElectrical(jobId);
     if (existing.signedOff) {
       showDemoNotification(`IMMUTABLE: Electrical Certificate for Job ${jobId} is signed off. Edits are refused.`, 'error');
       return;
     }
+    const updated = { ...existing, ...data };
+    authoritativeElectricalCertsRef.current[jobId] = updated;
     setElectricalCerts(prev => ({
       ...prev,
-      [jobId]: { ...(prev[jobId] || buildDefaultElectrical(jobId)), ...data },
+      [jobId]: updated,
     }));
   };
 
   const updateSmokeAlarmForm = (jobId: string, data: Partial<SmokeAlarmCertData>) => {
-    const existing = smokeAlarmCerts[jobId] || buildDefaultSmokeAlarm(jobId);
+    const existing = authoritativeSmokeAlarmCertsRef.current[jobId] || buildDefaultSmokeAlarm(jobId);
     if (existing.signedOff) {
       showDemoNotification(`IMMUTABLE: Smoke Alarm Certificate for Job ${jobId} is signed off. Edits are refused.`, 'error');
       return;
     }
+    const updated = { ...existing, ...data };
+    authoritativeSmokeAlarmCertsRef.current[jobId] = updated;
     setSmokeAlarmCerts(prev => ({
       ...prev,
-      [jobId]: { ...(prev[jobId] || buildDefaultSmokeAlarm(jobId)), ...data },
+      [jobId]: updated,
     }));
   };
 
   const updateTca1Form = (jobId: string, data: Partial<Tca1CertData>) => {
-    const existing = tca1Certs[jobId] || buildDefaultTca1(jobId);
+    const existing = authoritativeTca1CertsRef.current[jobId] || buildDefaultTca1(jobId);
     if (existing.signedOff) {
       showDemoNotification(`IMMUTABLE: TCA1 Certificate for Job ${jobId} is signed off. Edits are refused.`, 'error');
       return;
     }
+    const updated = { ...existing, ...data };
+    authoritativeTca1CertsRef.current[jobId] = updated;
     setTca1Certs(prev => ({
       ...prev,
-      [jobId]: { ...(prev[jobId] || buildDefaultTca1(jobId)), ...data },
+      [jobId]: updated,
     }));
   };
 
   const updateTca2Form = (jobId: string, data: Partial<Tca2CertData>) => {
-    const existing = tca2Certs[jobId] || buildDefaultTca2(jobId);
+    const existing = authoritativeTca2CertsRef.current[jobId] || buildDefaultTca2(jobId);
     if (existing.signedOff) {
       showDemoNotification(`IMMUTABLE: TCA2 Report for Job ${jobId} is signed off. Edits are refused.`, 'error');
       return;
     }
+    const updated = { ...existing, ...data };
+    authoritativeTca2CertsRef.current[jobId] = updated;
     setTca2Certs(prev => ({
       ...prev,
-      [jobId]: { ...(prev[jobId] || buildDefaultTca2(jobId)), ...data },
+      [jobId]: updated,
     }));
   };
 
   // Finalization with Frozen Issuer Snapshot and Full Document Snapshot
   const signOffJsa = (jobId: string) => {
-    const current = jsaForms[jobId] || buildDefaultJsa(jobId);
+    // Read latest authoritative state to guard against same-render stale closures
+    const current = authoritativeJsaFormsRef.current[jobId] || buildDefaultJsa(jobId);
     if (current.signedOff) {
       showDemoNotification('JSA is already finalized and signed off.', 'warning');
       return;
@@ -1408,7 +1610,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('SIGN-OFF BLOCKED: Both Site Induction and Competencies Verified must be confirmed before sign-off.', 'error');
       return;
     }
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.solarcell;
     const signer = job?.assignedTechName || 'Dave Miller';
     const timestamp = serializeBusinessInstant(demoClock);
@@ -1422,18 +1624,25 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       frozenIssuerSnapshot: frozenIssuer,
     };
     finalized.fullSnapshot = JSON.stringify(finalized);
+    const validation = validateSignedSnapshot(finalized.fullSnapshot, jobId, 'JSA');
+    if (!validation.valid) {
+      showDemoNotification(`SIGN-OFF BLOCKED: ${validation.error}`, 'error');
+      return;
+    }
 
+    authoritativeJsaFormsRef.current[jobId] = finalized;
     setJsaForms(prev => ({ ...prev, [jobId]: finalized }));
     showDemoNotification(`JSA signed off with DEMO mark for Job ${jobId}. Full document snapshot frozen.`, 'success');
   };
 
   const signOffSmokeAlarm = (jobId: string) => {
-    const current = smokeAlarmCerts[jobId] || buildDefaultSmokeAlarm(jobId);
+    // Read latest authoritative state to guard against same-render stale closures
+    const current = authoritativeSmokeAlarmCertsRef.current[jobId] || buildDefaultSmokeAlarm(jobId);
     if (current.signedOff) {
       showDemoNotification('Smoke Alarm Certificate is already signed off.', 'warning');
       return;
     }
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.smart_home;
     const signer = job?.assignedTechName || 'Dave Miller';
     const timestamp = serializeBusinessInstant(demoClock);
@@ -1447,18 +1656,25 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       frozenIssuerSnapshot: frozenIssuer,
     };
     finalized.fullSnapshot = JSON.stringify(finalized);
+    const validation = validateSignedSnapshot(finalized.fullSnapshot, jobId, 'SMOKE_ALARM');
+    if (!validation.valid) {
+      showDemoNotification(`SIGN-OFF BLOCKED: ${validation.error}`, 'error');
+      return;
+    }
 
+    authoritativeSmokeAlarmCertsRef.current[jobId] = finalized;
     setSmokeAlarmCerts(prev => ({ ...prev, [jobId]: finalized }));
     showDemoNotification(`Smoke Alarm Certificate signed off for Job ${jobId}. Snapshot frozen.`, 'success');
   };
 
   const signOffElectrical = (jobId: string) => {
-    const current = electricalCerts[jobId] || buildDefaultElectrical(jobId);
+    // Read latest authoritative state to guard against same-render stale closures
+    const current = authoritativeElectricalCertsRef.current[jobId] || buildDefaultElectrical(jobId);
     if (current.signedOff) {
       showDemoNotification('Electrical Certificate Part A is already signed off.', 'warning');
       return;
     }
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.solarcell;
     const signer = job?.assignedTechName || 'Dave Miller';
     const timestamp = serializeBusinessInstant(demoClock);
@@ -1472,18 +1688,25 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       frozenIssuerSnapshot: frozenIssuer,
     };
     finalized.fullSnapshot = JSON.stringify(finalized);
+    const validation = validateSignedSnapshot(finalized.fullSnapshot, jobId, 'ELECTRICAL');
+    if (!validation.valid) {
+      showDemoNotification(`SIGN-OFF BLOCKED: ${validation.error}`, 'error');
+      return;
+    }
 
+    authoritativeElectricalCertsRef.current[jobId] = finalized;
     setElectricalCerts(prev => ({ ...prev, [jobId]: finalized }));
     showDemoNotification(`Electrical Certificate Part A signed off for Job ${jobId}. Snapshot frozen.`, 'warning');
   };
 
   const signOffTca1 = (jobId: string) => {
-    const current = tca1Certs[jobId] || buildDefaultTca1(jobId);
+    // Read latest authoritative state to guard against same-render stale closures
+    const current = authoritativeTca1CertsRef.current[jobId] || buildDefaultTca1(jobId);
     if (current.signedOff) {
       showDemoNotification('TCA1 Cabling Compliance Certificate is already signed off.', 'warning');
       return;
     }
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.cctv;
     const signer = job?.assignedTechName || 'Alex Taylor';
     const timestamp = serializeBusinessInstant(demoClock);
@@ -1497,18 +1720,25 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       frozenIssuerSnapshot: frozenIssuer,
     };
     finalized.fullSnapshot = JSON.stringify(finalized);
+    const validation = validateSignedSnapshot(finalized.fullSnapshot, jobId, 'TCA1');
+    if (!validation.valid) {
+      showDemoNotification(`SIGN-OFF BLOCKED: ${validation.error}`, 'error');
+      return;
+    }
 
+    authoritativeTca1CertsRef.current[jobId] = finalized;
     setTca1Certs(prev => ({ ...prev, [jobId]: finalized }));
     showDemoNotification(`TCA1 Cabling Compliance signed off for Job ${jobId}. Snapshot frozen.`, 'success');
   };
 
   const signOffTca2 = (jobId: string) => {
-    const current = tca2Certs[jobId] || buildDefaultTca2(jobId);
+    // Read latest authoritative state to guard against same-render stale closures
+    const current = authoritativeTca2CertsRef.current[jobId] || buildDefaultTca2(jobId);
     if (current.signedOff) {
       showDemoNotification('TCA2 Defect Report is already signed off.', 'warning');
       return;
     }
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     const brand = brands[job?.brandId || activeBrandId] || brands.cctv;
     const signer = job?.assignedTechName || 'Alex Taylor';
     const timestamp = serializeBusinessInstant(demoClock);
@@ -1522,7 +1752,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       frozenIssuerSnapshot: frozenIssuer,
     };
     finalized.fullSnapshot = JSON.stringify(finalized);
+    const validation = validateSignedSnapshot(finalized.fullSnapshot, jobId, 'TCA2');
+    if (!validation.valid) {
+      showDemoNotification(`SIGN-OFF BLOCKED: ${validation.error}`, 'error');
+      return;
+    }
 
+    authoritativeTca2CertsRef.current[jobId] = finalized;
     setTca2Certs(prev => ({ ...prev, [jobId]: finalized }));
     commitJobsState(
       currentJobs => currentJobs,
@@ -1548,7 +1784,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
-    const cert = tca2Certs[jobId];
+    const cert = authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId];
     const result = processCustomerAckTca2({
       jobId,
       actorPersona: persona,
@@ -1597,7 +1833,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const currentJobs = authoritativeJobsRef.current;
       const currentAudits = authoritativeAuditRecordsRef.current;
       const sourceJob = currentJobs.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
-      const cert = tca2Certs[jobId];
+      const cert = authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId];
       const existingAudit = currentAudits[jobId] || tca2AuditRecords[jobId];
 
       const result = processOfficeReviewTca2({
@@ -1661,52 +1897,84 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  // Helper: Verify whether target form is signed off before modifying attachments
+  // Helper: Verify whether target form is signed off before modifying attachments (reading authoritative refs)
   const isFormSigned = (jobId: string, formType: string): boolean => {
-    if (formType === 'JSA') return Boolean(jsaForms[jobId]?.signedOff);
-    if (formType === 'ELECTRICAL') return Boolean(electricalCerts[jobId]?.signedOff);
-    if (formType === 'SMOKE_ALARM') return Boolean(smokeAlarmCerts[jobId]?.signedOff);
-    if (formType === 'TCA1') return Boolean(tca1Certs[jobId]?.signedOff);
-    if (formType === 'TCA2') return Boolean(tca2Certs[jobId]?.signedOff);
+    if (formType === 'JSA') return Boolean((authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId])?.signedOff);
+    if (formType === 'ELECTRICAL') return Boolean((authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId])?.signedOff);
+    if (formType === 'SMOKE_ALARM') return Boolean((authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId])?.signedOff);
+    if (formType === 'TCA1') return Boolean((authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId])?.signedOff);
+    if (formType === 'TCA2') return Boolean((authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId])?.signedOff);
     return false;
   };
 
-  // Sample Attachment Linkage (G00-027) with universal immutability guards
+  // Sample Attachment Linkage (G00-027) with universal immutability guards & authoritative ref consistency
   const attachSampleToJobForm = (jobId: string, formType: string, sampleId: string) => {
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!job) {
+      showDemoNotification(`Cannot attach sample: Job ${jobId} not found.`, 'error');
+      return;
+    }
+
+    if (!['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'].includes(formType)) {
+      showDemoNotification(`Cannot attach sample: Unsupported form type "${formType}".`, 'error');
+      return;
+    }
+
     if (isFormSigned(jobId, formType)) {
       showDemoNotification(`CANNOT ATTACH: ${formType} form is signed and locked. Attachments cannot be altered on finalized documents.`, 'error');
       return;
     }
 
-    // Add to specific form
+    // Add to specific form reading from latest authoritative refs
     if (formType === 'JSA') {
-      updateJsaForm(jobId, {
-        attachedSampleIds: [...(jsaForms[jobId]?.attachedSampleIds || []), sampleId],
-      });
+      const current = authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId] || buildDefaultJsa(jobId);
+      if (current.signedOff) return;
+      const nextSamples = Array.from(new Set([...(current.attachedSampleIds || []), sampleId]));
+      updateJsaForm(jobId, { attachedSampleIds: nextSamples });
     } else if (formType === 'SMOKE_ALARM') {
-      updateSmokeAlarmForm(jobId, {
-        attachedSampleIds: [...(smokeAlarmCerts[jobId]?.attachedSampleIds || []), sampleId],
-      });
+      const current = authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId] || buildDefaultSmokeAlarm(jobId);
+      if (current.signedOff) return;
+      const nextSamples = Array.from(new Set([...(current.attachedSampleIds || []), sampleId]));
+      updateSmokeAlarmForm(jobId, { attachedSampleIds: nextSamples });
     } else if (formType === 'ELECTRICAL') {
-      updateElectricalForm(jobId, {
-        attachedSampleIds: [...(electricalCerts[jobId]?.attachedSampleIds || []), sampleId],
-      });
+      const current = authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId] || buildDefaultElectrical(jobId);
+      if (current.signedOff) return;
+      const nextSamples = Array.from(new Set([...(current.attachedSampleIds || []), sampleId]));
+      updateElectricalForm(jobId, { attachedSampleIds: nextSamples });
     } else if (formType === 'TCA1') {
-      updateTca1Form(jobId, {
-        attachedSampleIds: [...(tca1Certs[jobId]?.attachedSampleIds || []), sampleId],
-      });
+      const current = authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId] || buildDefaultTca1(jobId);
+      if (current.signedOff) return;
+      const nextSamples = Array.from(new Set([...(current.attachedSampleIds || []), sampleId]));
+      updateTca1Form(jobId, { attachedSampleIds: nextSamples });
     } else if (formType === 'TCA2') {
+      const current = authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId] || buildDefaultTca2(jobId);
+      if (current.signedOff) return;
+      const nextSamples = Array.from(new Set([...(current.attachedSampleIds || []), sampleId]));
       updateTca2Form(jobId, {
-        attachedSampleIds: [...(tca2Certs[jobId]?.attachedSampleIds || []), sampleId],
+        attachedSampleIds: nextSamples,
         samplePhotoLinked: true,
       });
     }
 
-    // Add to job ONLY after form check passed
+    // Recalculate job-level attachments from all forms using authoritative refs
+    const jsaSamples = (authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId])?.attachedSampleIds || [];
+    const smokeSamples = (authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId])?.attachedSampleIds || [];
+    const elecSamples = (authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId])?.attachedSampleIds || [];
+    const tca1Samples = (authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId])?.attachedSampleIds || [];
+    const tca2Samples = (authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId])?.attachedSampleIds || [];
+
+    const updatedJobAttachments = recalculateJobAttachments([
+      jsaSamples,
+      smokeSamples,
+      elecSamples,
+      tca1Samples,
+      tca2Samples,
+    ]);
+
     commitJobsState(current =>
       current.map(j =>
-        j.id === jobId && !j.attachedSampleIds.includes(sampleId)
-          ? { ...j, attachedSampleIds: [...j.attachedSampleIds, sampleId] }
+        j.id === jobId
+          ? { ...j, attachedSampleIds: updatedJobAttachments }
           : j
       )
     );
@@ -1715,29 +1983,50 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const removeSampleFromJobForm = (jobId: string, formType: string, sampleId: string) => {
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!job) {
+      showDemoNotification(`Cannot remove sample: Job ${jobId} not found.`, 'error');
+      return;
+    }
+
+    if (!['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'].includes(formType)) {
+      showDemoNotification(`Cannot remove sample: Unsupported form type "${formType}".`, 'error');
+      return;
+    }
+
     if (isFormSigned(jobId, formType)) {
       showDemoNotification(`CANNOT REMOVE: ${formType} form is signed and locked. Attachments cannot be removed from finalized documents.`, 'error');
       return;
     }
 
     if (formType === 'JSA') {
+      const current = authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId] || buildDefaultJsa(jobId);
+      if (current.signedOff) return;
       updateJsaForm(jobId, {
-        attachedSampleIds: (jsaForms[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+        attachedSampleIds: (current.attachedSampleIds || []).filter(id => id !== sampleId),
       });
     } else if (formType === 'SMOKE_ALARM') {
+      const current = authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId] || buildDefaultSmokeAlarm(jobId);
+      if (current.signedOff) return;
       updateSmokeAlarmForm(jobId, {
-        attachedSampleIds: (smokeAlarmCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+        attachedSampleIds: (current.attachedSampleIds || []).filter(id => id !== sampleId),
       });
     } else if (formType === 'ELECTRICAL') {
+      const current = authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId] || buildDefaultElectrical(jobId);
+      if (current.signedOff) return;
       updateElectricalForm(jobId, {
-        attachedSampleIds: (electricalCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+        attachedSampleIds: (current.attachedSampleIds || []).filter(id => id !== sampleId),
       });
     } else if (formType === 'TCA1') {
+      const current = authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId] || buildDefaultTca1(jobId);
+      if (current.signedOff) return;
       updateTca1Form(jobId, {
-        attachedSampleIds: (tca1Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId),
+        attachedSampleIds: (current.attachedSampleIds || []).filter(id => id !== sampleId),
       });
     } else if (formType === 'TCA2') {
-      const remaining = (tca2Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId);
+      const current = authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId] || buildDefaultTca2(jobId);
+      if (current.signedOff) return;
+      const remaining = (current.attachedSampleIds || []).filter(id => id !== sampleId);
       updateTca2Form(jobId, {
         attachedSampleIds: remaining,
         samplePhotoLinked: remaining.length > 0,
@@ -1745,28 +2034,18 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     // Recalculate job-level attachments from all forms on this job to preserve shared references
-    const jsaRemaining = formType === 'JSA'
-      ? (jsaForms[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
-      : (jsaForms[jobId]?.attachedSampleIds || []);
-    const smokeRemaining = formType === 'SMOKE_ALARM'
-      ? (smokeAlarmCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
-      : (smokeAlarmCerts[jobId]?.attachedSampleIds || []);
-    const elecRemaining = formType === 'ELECTRICAL'
-      ? (electricalCerts[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
-      : (electricalCerts[jobId]?.attachedSampleIds || []);
-    const tca1Remaining = formType === 'TCA1'
-      ? (tca1Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
-      : (tca1Certs[jobId]?.attachedSampleIds || []);
-    const tca2Remaining = formType === 'TCA2'
-      ? (tca2Certs[jobId]?.attachedSampleIds || []).filter(id => id !== sampleId)
-      : (tca2Certs[jobId]?.attachedSampleIds || []);
+    const jsaSamples = (authoritativeJsaFormsRef.current[jobId] || jsaForms[jobId])?.attachedSampleIds || [];
+    const smokeSamples = (authoritativeSmokeAlarmCertsRef.current[jobId] || smokeAlarmCerts[jobId])?.attachedSampleIds || [];
+    const elecSamples = (authoritativeElectricalCertsRef.current[jobId] || electricalCerts[jobId])?.attachedSampleIds || [];
+    const tca1Samples = (authoritativeTca1CertsRef.current[jobId] || tca1Certs[jobId])?.attachedSampleIds || [];
+    const tca2Samples = (authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId])?.attachedSampleIds || [];
 
     const updatedJobAttachments = recalculateJobAttachments([
-      jsaRemaining,
-      smokeRemaining,
-      elecRemaining,
-      tca1Remaining,
-      tca2Remaining,
+      jsaSamples,
+      smokeSamples,
+      elecSamples,
+      tca1Samples,
+      tca2Samples,
     ]);
 
     commitJobsState(current =>
@@ -1907,7 +2186,20 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     seqCounters.invoice++;
     const isOffline = myobConnection.status !== 'CONNECTED';
     const invoiceId = `INV-2026-${seqCounters.invoice}`;
-    const myobRef = isOffline ? 'PENDING-MYOB-SYNC' : `MYOB-INV-${77100 + seqCounters.invoice}`;
+    let myobRef = 'PENDING-MYOB-SYNC';
+    if (!isOffline) {
+      let candidateRef = `MYOB-INV-${77100 + seqCounters.invoice}`;
+      const existingAssignedRefs = new Set(
+        authoritativeJobsRef.current
+          .filter(j => j.invoice?.externalMyobRef && j.invoice.externalMyobRef !== 'PENDING-MYOB-SYNC')
+          .map(j => j.invoice!.externalMyobRef)
+      );
+      while (existingAssignedRefs.has(candidateRef)) {
+        seqCounters.invoice++;
+        candidateRef = `MYOB-INV-${77100 + seqCounters.invoice}`;
+      }
+      myobRef = candidateRef;
+    }
 
     const newInvoice: Invoice = {
       id: invoiceId,
@@ -1953,17 +2245,50 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const reconcileInvoiceSync = (jobId: string, outcome: 'SUCCESS' | 'FAIL') => {
-    commitJobsState(current =>
-      current.map(j => {
-        if (j.id === jobId && j.invoice) {
-          if (outcome === 'SUCCESS') {
+    // FC-18: Read authoritative synchronous state to guard against same-render race conditions
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    if (!targetJob || !targetJob.invoice) return;
+
+    if (outcome === 'SUCCESS') {
+      // FC-18: Stable MYOB external reference algorithm
+      let resolvedMyobRef = targetJob.invoice.externalMyobRef;
+
+      // If pending or missing, derive deterministically from invoice ID sequence suffix (e.g. INV-2026-101 -> 101 -> MYOB-INV-77201)
+      if (!resolvedMyobRef || resolvedMyobRef === 'PENDING-MYOB-SYNC') {
+        const suffixMatch = targetJob.invoice.id.match(/-(\d+)$/);
+        if (!suffixMatch) {
+          showDemoNotification(
+            `RECONCILIATION BLOCKED: Invoice ${targetJob.invoice.id} has malformed identifier. Cannot derive stable MYOB reference.`,
+            'error'
+          );
+          return;
+        }
+        let invSeq = parseInt(suffixMatch[1], 10);
+        let candidateRef = `MYOB-INV-${77100 + invSeq}`;
+
+        // Verify that candidateRef does not duplicate any already assigned external reference across the system
+        const otherAssignedRefs = new Set(
+          authoritativeJobsRef.current
+            .filter(j => j.id !== jobId && j.invoice?.externalMyobRef && j.invoice.externalMyobRef !== 'PENDING-MYOB-SYNC')
+            .map(j => j.invoice!.externalMyobRef)
+        );
+        while (otherAssignedRefs.has(candidateRef)) {
+          invSeq++;
+          candidateRef = `MYOB-INV-${77100 + invSeq}`;
+        }
+        resolvedMyobRef = candidateRef;
+      }
+
+      commitJobsState(current =>
+        current.map(j => {
+          if (j.id === jobId && j.invoice) {
             return {
               ...j,
               invoice: {
                 ...j.invoice,
                 status: 'SENT_TO_MYOB',
                 syncStatus: 'SYNCED',
-                externalMyobRef: `MYOB-INV-${77100 + seqCounters.invoice}`,
+                externalMyobRef: resolvedMyobRef,
                 reconciliationRequired: false,
                 reconciliationNotes: undefined,
                 errorMessage: undefined,
@@ -1973,7 +2298,15 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice synced to MYOB following manual reconciliation', actor: persona },
               ],
             };
-          } else {
+          }
+          return j;
+        })
+      );
+      showDemoNotification(`Invoice ${targetJob.invoice.id} reconciled and synced to MYOB Business (#${resolvedMyobRef}).`, 'success');
+    } else {
+      commitJobsState(current =>
+        current.map(j => {
+          if (j.id === jobId && j.invoice) {
             return {
               ...j,
               invoice: {
@@ -1984,13 +2317,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 reconciliationNotes: 'Reconciliation failed: Remote MYOB rejected document.',
                 errorMessage: 'Simulated Rejection',
               },
+              activityHistory: [
+                ...j.activityHistory,
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice reconciliation failed — marked for office review', actor: persona },
+              ],
             };
           }
-        }
-        return j;
-      })
-    );
-    showDemoNotification(`Invoice reconciliation processed for Job ${jobId}.`, 'info');
+          return j;
+        })
+      );
+      showDemoNotification(`Invoice ${targetJob.invoice.id} reconciliation failed. Marked for office review.`, 'error');
+    }
   };
 
   // Reviews Deduplication & Full Workflow (G00-021: PENDING -> SENT / FAILED / UNCERTAIN)
@@ -2250,7 +2587,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return t;
       })
     );
-    showDemoNotification('Template revision submitted for Owner / Admin compliance review.', 'info');
+    showDemoNotification('Template revision submitted for Admin compliance review.', 'info');
   };
 
   const updateJobTypeConfig = (
@@ -2289,10 +2626,27 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification('Job type compliance matrix policy updated to new version. Existing in-flight jobs retain historical requirement snapshots.', 'success');
   };
 
-  // Certificate Delivery Workflow (G00-022)
+  // Certificate Delivery Workflow (G00-022) & Certificate Policy A & MAN-SEC-01 Permission Guard
   const sendCertificateEmail = (jobId: string, formType: string, simulateFail = false) => {
-    const job = jobs.find(j => j.id === jobId);
+    // MAN-SEC-01: Session authentication & persona role guard
+    if (!authoritativeSessionRef.current) {
+      showDemoNotification('ACCESS DENIED: Session signed out. Sign in to dispatch certificates.', 'error');
+      return { success: false, message: 'Session signed out' };
+    }
+    const currentPersona = authoritativePersonaRef.current || persona;
+    if (!(['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(currentPersona)) {
+      showDemoNotification('ACCESS DENIED: Technicians are not authorized to dispatch compliance certificates.', 'error');
+      return { success: false, message: 'Unauthorized persona' };
+    }
+
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job) return { success: false, message: 'Job not found' };
+
+    // FC-01 & Certificate Policy A: A certificate is eligible for dispatch ONLY if it is required by the job contract
+    if (!(job.formsRequired as string[]).includes(formType)) {
+      showDemoNotification(`DISPATCH BLOCKED: ${formType} certificate is not required by work order contract for ${jobId}.`, 'error');
+      return { success: false, message: 'Certificate not required by work order contract' };
+    }
 
     let docTitle = '';
     let formSnapshot = '';
@@ -2357,7 +2711,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       fullFrozenDocumentSnapshot: fullDocSnapshot,
     };
 
-    setCertificateDeliveries(prev => [newRecord, ...prev]);
+    authoritativeCertificateDeliveriesRef.current = [newRecord, ...authoritativeCertificateDeliveriesRef.current];
+    setCertificateDeliveries(authoritativeCertificateDeliveriesRef.current);
 
     if (simulateFail) {
       showDemoNotification(`Certificate dispatch failed (Simulated SMTP Timeout 504). Retry available.`, 'error');
@@ -2369,13 +2724,47 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const retryCertificateDelivery = (deliveryId: string) => {
-    setCertificateDeliveries(prev =>
-      prev.map(d =>
-        d.id === deliveryId
-          ? { ...d, status: 'SENT', sentAt: serializeBusinessInstant(demoClock) }
-          : d
-      )
+    // MAN-SEC-01: Session authentication & persona role guard
+    if (!authoritativeSessionRef.current) {
+      showDemoNotification('ACCESS DENIED: Session signed out. Sign in to retry certificate delivery.', 'error');
+      return;
+    }
+    const currentPersona = authoritativePersonaRef.current || persona;
+    if (!(['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(currentPersona)) {
+      showDemoNotification('ACCESS DENIED: Technicians are not authorized to retry certificate delivery.', 'error');
+      return;
+    }
+
+    const record = authoritativeCertificateDeliveriesRef.current.find(d => d.id === deliveryId) || certificateDeliveries.find(d => d.id === deliveryId);
+    if (!record) {
+      showDemoNotification(`Cannot retry delivery ${deliveryId}: Record not found.`, 'error');
+      return;
+    }
+    if (record.status !== 'FAILED') {
+      showDemoNotification(`Cannot retry delivery ${deliveryId}: Only FAILED deliveries can be retried.`, 'error');
+      return;
+    }
+    const job = authoritativeJobsRef.current.find(j => j.id === record.jobId) || jobs.find(j => j.id === record.jobId);
+    if (!job) {
+      showDemoNotification(`RETRY BLOCKED: Job ${record.jobId} not found.`, 'error');
+      return;
+    }
+    if (!(job.formsRequired as string[]).includes(record.formType)) {
+      showDemoNotification(`RETRY BLOCKED: ${record.formType} is not required by work order contract for ${record.jobId}.`, 'error');
+      return;
+    }
+    const valRes = validateSignedSnapshot(record.fullFrozenDocumentSnapshot, record.jobId, record.formType);
+    if (!valRes.valid) {
+      showDemoNotification(`RETRY BLOCKED: Snapshot invalid or corrupt for ${record.formType}: ${valRes.error}`, 'error');
+      return;
+    }
+    const nextDeliveries = authoritativeCertificateDeliveriesRef.current.map(d =>
+      d.id === deliveryId && d.status === 'FAILED'
+        ? { ...d, status: 'SENT' as const, sentAt: serializeBusinessInstant(demoClock) }
+        : d
     );
+    authoritativeCertificateDeliveriesRef.current = nextDeliveries;
+    setCertificateDeliveries(nextDeliveries);
     showDemoNotification(`Certificate delivery ${deliveryId} retried and confirmed SENT.`, 'success');
   };
 
@@ -2510,7 +2899,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     authoritativePersonaRef.current = role;
     setPersona(role);
     setIsSimulatedSignedIn(true);
-    showDemoNotification(`Signed in as ${role.toUpperCase()} (Simulated Demo Session).`, 'info');
+    const roleLabel = ({ super_admin: 'SUPER ADMIN', owner_admin: 'ADMIN', office_staff: 'OFFICE STAFF', technician: 'FIELD TECHNICIAN' } as Record<string, string>)[role] || role.toUpperCase();
+    showDemoNotification(`Signed in as ${roleLabel} (Simulated Demo Session).`, 'info');
   };
 
   const simulateSignOut = () => {
@@ -2528,6 +2918,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setActiveBrandId,
         activeBrand: brands[activeBrandId] || INITIAL_BRANDS.solarcell,
         brands,
+        appearance,
+        setAppearance,
         technicians: INITIAL_TECHNICIANS,
         updateBrandConfig,
         addNewBrandProfile,
@@ -2613,6 +3005,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           jobs: authoritativeJobsRef.current,
           tca2AuditRecords: authoritativeAuditRecordsRef.current,
           draftBusinesses: authoritativeDraftBusinessesRef.current,
+          jsaForms: authoritativeJsaFormsRef.current,
+          electricalCerts: authoritativeElectricalCertsRef.current,
+          smokeAlarmCerts: authoritativeSmokeAlarmCertsRef.current,
+          tca1Certs: authoritativeTca1CertsRef.current,
+          tca2Certs: authoritativeTca2CertsRef.current,
         }),
         demoNotification,
         showDemoNotification,

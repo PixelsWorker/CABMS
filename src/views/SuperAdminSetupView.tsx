@@ -9,21 +9,22 @@
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Settings,
-  Building2,
-  Database,
-  Calendar,
-  Mail,
-  ShieldCheck,
-  AlertTriangle,
-  CheckCircle2,
-  RefreshCw,
-  Plus,
-  Sliders,
-  ExternalLink,
-  X,
-} from 'lucide-react';
+  faArrowUpRightFromSquare,
+  faBuilding,
+  faCalendar,
+  faCircleCheck,
+  faDatabase,
+  faEnvelope,
+  faGear,
+  faPlus,
+  faRotate,
+  faShield,
+  faSliders,
+  faTriangleExclamation,
+  faXmark,
+} from '@fortawesome/free-solid-svg-icons';
 import { BrandConfig, BrandId } from '../types/cabms.ts';
 
 let brandSeqCounter = 1;
@@ -75,7 +76,7 @@ export const SuperAdminSetupView: React.FC = () => {
       <AccessDeniedView
         resourceName="Super Admin Business Profiles & Technical Integration Credentials"
         requiredRoleDescription="Super Admin Only"
-        customExplanation="Owner/Admin, Office Staff and Technicians are strictly prohibited from modifying technical integration credentials, shared MYOB bindings, or company file mappings."
+        customExplanation="Admin, Office Staff and Technicians are strictly prohibited from modifying technical integration credentials, shared MYOB bindings, or company file mappings."
       />
     );
   }
@@ -148,16 +149,16 @@ export const SuperAdminSetupView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+      <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <Settings className="w-5 h-5 text-purple-400" />
-              <h1 className="text-xl font-bold text-white tracking-tight">
+              <FontAwesomeIcon icon={faGear} className="w-5 h-5 text-purple-400" />
+              <h1 className="text-xl font-bold text-(--cabms-text-primary) tracking-tight">
                 Super Admin Business & Technical Integration Setup
               </h1>
             </div>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-(--cabms-text-secondary) mt-1">
               Multi-brand configuration, single shared MYOB company file simulation, calendar mappings, and email service parameters.
             </p>
           </div>
@@ -167,11 +168,11 @@ export const SuperAdminSetupView: React.FC = () => {
               onClick={() => setIsAddProfileModalOpen(true)}
               className="flex items-center space-x-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
+              <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
               <span>Add Business Profile</span>
             </button>
             <div className="bg-purple-950/80 border border-purple-800 text-purple-300 text-xs px-3 py-1.5 rounded-lg font-bold flex items-center space-x-1.5">
-              <ShieldCheck className="w-4 h-4 text-purple-400" />
+              <FontAwesomeIcon icon={faShield} className="w-4 h-4 text-purple-400" />
               <span>Super Admin Active</span>
             </div>
           </div>
@@ -179,16 +180,16 @@ export const SuperAdminSetupView: React.FC = () => {
       </div>
 
       {/* SECTION 1: ONE SHARED CONNECT MYOB SIMULATION */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+      <div className="cabms-card p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">
               One Shared Accounting Link
             </span>
-            <h2 className="text-base font-bold text-white mt-0.5">
+            <h2 className="text-base font-bold text-(--cabms-text-primary) mt-0.5">
               MYOB Business — Client-Reported Shared Company File (Simulated)
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-(--cabms-text-secondary)">
               Single shared MYOB company file used across all business profiles. No separate company file authentication required.
             </p>
           </div>
@@ -200,7 +201,7 @@ export const SuperAdminSetupView: React.FC = () => {
               className={`px-3 py-1.5 rounded text-xs font-bold transition cursor-pointer ${
                 myobConnection.status === 'CONNECTED'
                   ? 'bg-emerald-600 text-slate-950 shadow'
-                  : 'bg-slate-800 text-slate-400 hover:text-white'
+                  : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
               }`}
             >
               Simulate Connected
@@ -210,7 +211,7 @@ export const SuperAdminSetupView: React.FC = () => {
               className={`px-3 py-1.5 rounded text-xs font-bold transition cursor-pointer ${
                 myobConnection.status === 'DISCONNECTED'
                   ? 'bg-amber-600 text-slate-950 shadow'
-                  : 'bg-slate-800 text-slate-400 hover:text-white'
+                  : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
               }`}
             >
               Simulate Disconnected
@@ -220,7 +221,7 @@ export const SuperAdminSetupView: React.FC = () => {
               className={`px-3 py-1.5 rounded text-xs font-bold transition cursor-pointer ${
                 myobConnection.status === 'FAILED'
                   ? 'bg-red-600 text-white shadow'
-                  : 'bg-slate-800 text-slate-400 hover:text-white'
+                  : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
               }`}
             >
               Simulate Token Expired
@@ -228,10 +229,10 @@ export const SuperAdminSetupView: React.FC = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs bg-slate-950 p-4 rounded-xl border border-slate-800">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs cabms-card-subtle p-4">
           <div>
             <span className="text-slate-500 uppercase text-[10px] block">Company File Name:</span>
-            <span className="font-bold text-white">{myobConnection.companyFile}</span>
+            <span className="font-bold text-(--cabms-text-primary)">{myobConnection.companyFile}</span>
           </div>
           <div>
             <span className="text-slate-500 uppercase text-[10px] block">MYOB Company ID:</span>
@@ -253,19 +254,19 @@ export const SuperAdminSetupView: React.FC = () => {
           </div>
           <div>
             <span className="text-slate-500 uppercase text-[10px] block">Last Sync Timestamp:</span>
-            <span className="font-mono text-slate-300">{myobConnection.lastSync}</span>
+            <span className="font-mono text-(--cabms-text-secondary)">{myobConnection.lastSync}</span>
           </div>
         </div>
       </div>
 
       {/* SECTION 2: MULTI-BRAND BUSINESS PROFILE CONFIGURATION */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+      <div className="cabms-card p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-3">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400">
               Multi-Brand Identity
             </span>
-            <h2 className="text-base font-bold text-white mt-0.5">
+            <h2 className="text-base font-bold text-(--cabms-text-primary) mt-0.5">
               Configurable Business Profiles & Legal Issuers
             </h2>
           </div>
@@ -281,8 +282,8 @@ export const SuperAdminSetupView: React.FC = () => {
                   onClick={() => handleSwitchEditingBrand(b.id)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center space-x-1.5 ${
                     editingBrandId === b.id
-                      ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                      : 'bg-slate-950 text-slate-400 hover:text-white'
+                      ? 'cabms-surface-subtle border cabms-border text-(--cabms-text-primary) shadow-sm'
+                      : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
                   }`}
                 >
                   <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: b.primaryColor }} />
@@ -297,38 +298,38 @@ export const SuperAdminSetupView: React.FC = () => {
         <form onSubmit={handleSaveProfile} className="space-y-4 text-xs">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">Trading Name *</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Trading Name *</label>
               <input
                 type="text"
                 required
                 value={formBrandName}
                 onChange={e => setFormBrandName(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary)"
               />
             </div>
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">Marketing Tagline</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Marketing Tagline</label>
               <input
                 type="text"
                 value={formTagline}
                 onChange={e => setFormTagline(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary)"
               />
             </div>
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">Brand Theme Color</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand Theme Color</label>
               <div className="flex items-center space-x-2">
                 <input
                   type="color"
                   value={formColor}
                   onChange={e => setFormColor(e.target.value)}
-                  className="w-9 h-9 rounded bg-slate-950 border border-slate-800 cursor-pointer p-0.5"
+                  className="w-9 h-9 rounded cabms-card-subtle cursor-pointer p-0.5"
                 />
                 <input
                   type="text"
                   value={formColor}
                   onChange={e => setFormColor(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
+                  className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary) font-mono"
                 />
               </div>
             </div>
@@ -336,7 +337,7 @@ export const SuperAdminSetupView: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">
                 Legal Document Issuer (Entity Name) *
               </label>
               <input
@@ -344,49 +345,49 @@ export const SuperAdminSetupView: React.FC = () => {
                 required
                 value={formIssuer}
                 onChange={e => setFormIssuer(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-bold"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary) font-bold"
               />
               <span className="text-[10px] text-slate-500 mt-0.5 block">
                 Appears on all printed compliance certificates, quotes, and legal documents.
               </span>
             </div>
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">Australian Business Number (ABN)</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Australian Business Number (ABN)</label>
               <input
                 type="text"
                 value={formAbn}
                 onChange={e => setFormAbn(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary) font-mono"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">Electrical Contractor Licence</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Electrical Contractor Licence</label>
               <input
                 type="text"
                 value={formElecLicence}
                 onChange={e => setFormElecLicence(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary) font-mono"
               />
             </div>
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">ACMA Registered Cabler No.</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">ACMA Registered Cabler No.</label>
               <input
                 type="text"
                 value={formAcma}
                 onChange={e => setFormAcma(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary) font-mono"
               />
             </div>
             <div>
-              <label className="text-slate-300 block font-semibold mb-1">QBCC Licence Placeholder</label>
+              <label className="text-(--cabms-text-secondary) block font-semibold mb-1">QBCC Licence Placeholder</label>
               <input
                 type="text"
                 value={formQbcc}
                 onChange={e => setFormQbcc(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-white font-mono"
+                className="w-full cabms-card-subtle rounded p-2 text-(--cabms-text-primary) font-mono"
               />
             </div>
           </div>
@@ -403,7 +404,7 @@ export const SuperAdminSetupView: React.FC = () => {
       </div>
 
       {/* SECTION 2B: DRAFT BUSINESS PROFILES INCUBATOR (NON-OPERATIONAL) */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+      <div className="cabms-card p-6 space-y-4">
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div>
             <div className="flex items-center space-x-2">
@@ -414,17 +415,17 @@ export const SuperAdminSetupView: React.FC = () => {
                 NON-OPERATIONAL DRAFTS
               </span>
             </div>
-            <h2 className="text-base font-bold text-white mt-0.5">
+            <h2 className="text-base font-bold text-(--cabms-text-primary) mt-0.5">
               Draft Business Profiles
             </h2>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-(--cabms-text-secondary)">
               Future business configurations in draft preview. Strictly excluded from the active operational brand switcher, job scheduling, and compliance certificate generation.
             </p>
           </div>
         </div>
 
         {draftBusinesses.length === 0 ? (
-          <div className="p-4 rounded-lg bg-slate-950/50 border border-dashed border-slate-800 text-slate-400 text-xs text-center">
+          <div className="p-4 rounded-lg cabms-card-subtle border border-dashed cabms-border text-(--cabms-text-secondary) text-xs text-center">
             No draft businesses currently registered. Use &quot;Add Business Profile&quot; to incubate a future brand entity.
           </div>
         ) : (
@@ -432,13 +433,13 @@ export const SuperAdminSetupView: React.FC = () => {
             {draftBusinesses.map(draft => (
               <div
                 key={draft.id}
-                className="p-3.5 bg-slate-950 border border-slate-800 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                className="p-3.5 cabms-card-subtle flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
               >
                 <div>
                   <div className="flex items-center space-x-2">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: draft.primaryColor }} />
-                    <span className="font-bold text-white">{draft.name}</span>
-                    <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                    <span className="font-bold text-(--cabms-text-primary)">{draft.name}</span>
+                    <span className="text-[10px] cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) px-1.5 py-0.5 rounded font-mono">
                       {draft.id}
                     </span>
                     {draft.slug && (
@@ -447,13 +448,13 @@ export const SuperAdminSetupView: React.FC = () => {
                       </span>
                     )}
                   </div>
-                  <div className="text-slate-400 text-[11px] mt-0.5">
+                  <div className="text-(--cabms-text-secondary) text-[11px] mt-0.5">
                     {draft.legalIssuerName} • ABN: {draft.abnPlaceholder}
                   </div>
                   <div className="text-slate-500 text-[10px] mt-0.5 flex flex-wrap gap-x-3">
-                    <span>Elec Lic: <strong className="text-slate-300 font-mono">{draft.electricalLicencePlaceholder || 'N/A'}</strong></span>
-                    <span>ACMA: <strong className="text-slate-300 font-mono">{draft.acmaCablerPlaceholder || 'N/A'}</strong></span>
-                    <span>QBCC: <strong className="text-slate-300 font-mono">{draft.qbccLicencePlaceholder || 'N/A'}</strong></span>
+                    <span>Elec Lic: <strong className="text-(--cabms-text-secondary) font-mono">{draft.electricalLicencePlaceholder || 'N/A'}</strong></span>
+                    <span>ACMA: <strong className="text-(--cabms-text-secondary) font-mono">{draft.acmaCablerPlaceholder || 'N/A'}</strong></span>
+                    <span>QBCC: <strong className="text-(--cabms-text-secondary) font-mono">{draft.qbccLicencePlaceholder || 'N/A'}</strong></span>
                     <span>Created: {draft.createdAt}</span>
                   </div>
                 </div>
@@ -469,32 +470,32 @@ export const SuperAdminSetupView: React.FC = () => {
       {/* SECTION 3: SMTP & CALENDAR SIMULATION STATUS */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
         {/* Email & SMTP Status */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-          <div className="flex items-center space-x-2 text-slate-300">
-            <Mail className="w-4 h-4 text-sky-400" />
-            <h3 className="font-bold text-white text-sm">Email Sender & SMTP Status</h3>
+        <div className="cabms-card p-5 space-y-3">
+          <div className="flex items-center space-x-2 text-(--cabms-text-secondary)">
+            <FontAwesomeIcon icon={faEnvelope} className="w-4 h-4 text-sky-400" />
+            <h3 className="font-bold text-(--cabms-text-primary) text-sm">Email Sender & SMTP Status</h3>
           </div>
-          <p className="text-slate-400 text-xs">
+          <p className="text-(--cabms-text-secondary) text-xs">
             Simulation mock only. Email is the single approved communication channel.
           </p>
-          <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-1 font-mono text-[11px] text-slate-300">
+          <div className="cabms-surface-subtle p-3 rounded border cabms-border space-y-1 font-mono text-[11px] text-(--cabms-text-secondary)">
             <div>Sender: <span className="text-sky-400">noreply-cabms@example.invalid</span></div>
-            <div>SMTP Host: <span className="text-slate-400">smtp.internal.cabms-mock.invalid (Port 587)</span></div>
+            <div>SMTP Host: <span className="text-(--cabms-text-secondary)">smtp.internal.cabms-mock.invalid (Port 587)</span></div>
             <div>Credential Security: <span className="text-emerald-400 font-bold">Isolated Demo Mock</span></div>
           </div>
         </div>
 
         {/* Multi-Calendar Bindings */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
-          <div className="flex items-center space-x-2 text-slate-300">
-            <Calendar className="w-4 h-4 text-amber-400" />
-            <h3 className="font-bold text-white text-sm">Google Calendar Fleet Mappings</h3>
+        <div className="cabms-card p-5 space-y-3">
+          <div className="flex items-center space-x-2 text-(--cabms-text-secondary)">
+            <FontAwesomeIcon icon={faCalendar} className="w-4 h-4 text-amber-400" />
+            <h3 className="font-bold text-(--cabms-text-primary) text-sm">Google Calendar Fleet Mappings</h3>
           </div>
-          <p className="text-slate-400 text-xs">
+          <p className="text-(--cabms-text-secondary) text-xs">
             Primary hub calendar + up to 3 fleet calendars linked to specific technician teams.
           </p>
-          <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-1 text-[11px] text-slate-300">
-            <div>Primary Hub: <strong className="text-white">CABMS Operations Master Calendar</strong></div>
+          <div className="cabms-surface-subtle p-3 rounded border cabms-border space-y-1 text-[11px] text-(--cabms-text-secondary)">
+            <div>Primary Hub: <strong className="text-(--cabms-text-primary)">CABMS Operations Master Calendar</strong></div>
             <div>Solar Crew: <span className="text-amber-400">{brands.solarcell?.calendarMappingName}</span></div>
             <div>Smart Home: <span className="text-sky-400">{brands.smart_home?.calendarMappingName}</span></div>
             <div>CCTV Fleet: <span className="text-emerald-400">{brands.cctv?.calendarMappingName}</span></div>
@@ -505,120 +506,120 @@ export const SuperAdminSetupView: React.FC = () => {
       {/* ADD BUSINESS PROFILE MODAL (G00-024) */}
       {isAddProfileModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white flex items-center space-x-2">
-                <Building2 className="w-5 h-5 text-purple-400" />
+              <h3 className="text-base font-bold text-(--cabms-text-primary) flex items-center space-x-2">
+                <FontAwesomeIcon icon={faBuilding} className="w-5 h-5 text-purple-400" />
                 <span>Add Business Profile (Super Admin)</span>
               </h3>
               <button
                 onClick={() => setIsAddProfileModalOpen(false)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
+                className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold"
               >
                 ✕
               </button>
             </div>
 
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-(--cabms-text-secondary)">
               Configure an additional business profile with isolated branding, legal entity disclosures, and calendar mappings.
             </p>
 
             <form onSubmit={handleCreateNewProfile} className="space-y-3 text-xs">
               <div>
-                <label className="text-slate-300 block font-semibold mb-1">Brand Name *</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand Name *</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. Gold Coast Air Conditioning"
                   value={newBrandName}
                   onChange={e => setNewBrandName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                 />
               </div>
 
               <div>
-                <label className="text-slate-300 block font-semibold mb-1">Tagline</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Tagline</label>
                 <input
                   type="text"
                   placeholder="e.g. Premium Commercial & Residential HVAC"
                   value={newBrandTagline}
                   onChange={e => setNewBrandTagline(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-300 block font-semibold mb-1">Brand ID (Slug)</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand ID (Slug)</label>
                   <input
                     type="text"
                     placeholder="air_con"
                     value={newBrandId}
                     onChange={e => setNewBrandId(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary) font-mono"
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block font-semibold mb-1">Theme Color</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Theme Color</label>
                   <input
                     type="color"
                     value={newBrandColor}
                     onChange={e => setNewBrandColor(e.target.value)}
-                    className="w-full h-8 bg-slate-950 border border-slate-700 rounded cursor-pointer p-0.5"
+                    className="w-full h-8 cabms-input rounded cursor-pointer p-0.5"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-slate-300 block font-semibold mb-1">Legal Issuer Name *</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Legal Issuer Name *</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. Gold Coast Air Con Pty Ltd"
                   value={newLegalIssuer}
                   onChange={e => setNewLegalIssuer(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-300 block font-semibold mb-1">ABN Placeholder</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">ABN Placeholder</label>
                   <input
                     type="text"
                     value={newAbn}
                     onChange={e => setNewAbn(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary) font-mono"
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block font-semibold mb-1">Electrical Licence</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Electrical Licence</label>
                   <input
                     type="text"
                     value={newElecLic}
                     onChange={e => setNewElecLic(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary) font-mono"
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-slate-300 block font-semibold mb-1">ACMA Cabler Licence</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">ACMA Cabler Licence</label>
                   <input
                     type="text"
                     value={newAcma}
                     onChange={e => setNewAcma(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary) font-mono"
                   />
                 </div>
                 <div>
-                  <label className="text-slate-300 block font-semibold mb-1">QBCC Licence</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">QBCC Licence</label>
                   <input
                     type="text"
                     value={newQbcc}
                     onChange={e => setNewQbcc(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white font-mono"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary) font-mono"
                   />
                 </div>
               </div>
@@ -627,7 +628,7 @@ export const SuperAdminSetupView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddProfileModalOpen(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold cursor-pointer"
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) rounded font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>

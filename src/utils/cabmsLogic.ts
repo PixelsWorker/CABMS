@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Pure business logic and validation rules for CABMS G00 Demo
  * Decoupled from UI to enable fast unit testing via node:test and tsx
  */
@@ -220,17 +220,22 @@ export function checkCustomerDuplicate(
   candidate: { email: string; phone: string; name: string },
   existingCustomers: Customer[]
 ): { isDuplicate: boolean; matchedCustomer?: Customer; field?: string } {
-  const normEmail = candidate.email.trim().toLowerCase();
-  const normPhone = candidate.phone.replace(/[^0-9]/g, '');
+  const normEmail = candidate.email ? candidate.email.trim().toLowerCase() : '';
+  const rawPhone = candidate.phone ? candidate.phone.trim() : '';
+  const normPhone = rawPhone.replace(/[^0-9]/g, '');
 
   for (const c of existingCustomers) {
-    if (normEmail && c.email.toLowerCase() === normEmail) {
+    if (normEmail && (c.email || '').trim().toLowerCase() === normEmail) {
       return { isDuplicate: true, matchedCustomer: c, field: 'email' };
     }
-    if (normPhone && c.phone.replace(/[^0-9]/g, '') === normPhone) {
-      return { isDuplicate: true, matchedCustomer: c, field: 'phone' };
+    // FC-15: Check phone only if candidate provided a real non-placeholder phone number
+    if (normPhone && normPhone !== '0400000000') {
+      const existingNormPhone = c.phone ? c.phone.replace(/[^0-9]/g, '') : '';
+      if (existingNormPhone && existingNormPhone !== '0400000000' && existingNormPhone === normPhone) {
+        return { isDuplicate: true, matchedCustomer: c, field: 'phone' };
+      }
     }
-    if (candidate.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
+    if (candidate.name && candidate.name.trim() && candidate.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
       return { isDuplicate: true, matchedCustomer: c, field: 'name' };
     }
   }
@@ -251,7 +256,7 @@ export function verifyPersonaAccess(
       if (resource === 'technical_integrations') {
         return {
           allowed: false,
-          reason: 'Owner/Admin has operational oversight but cannot alter Super Admin technical credentials or bindings.',
+          reason: 'Admin has operational oversight but cannot alter Super Admin technical credentials or bindings.',
         };
       }
       return { allowed: true };

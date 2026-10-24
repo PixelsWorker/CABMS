@@ -6,28 +6,27 @@
 import React from 'react';
 import { isInBusinessWeek } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Briefcase,
-  Users,
-  Calendar,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  ArrowRight,
-  Database,
-  Building2,
-  Inbox,
-  FileCheck2,
-  FileText,
-} from 'lucide-react';
+  faArrowRight,
+  faBriefcase,
+  faBuilding,
+  faCalendar,
+  faCircleCheck,
+  faClock,
+  faDatabase,
+  faFileCircleCheck,
+  faFileLines,
+  faInbox,
+  faTriangleExclamation,
+  faUsers,
+} from '@fortawesome/free-solid-svg-icons';
 import { JobStatus } from '../types/cabms.ts';
 
 export const DashboardView: React.FC = () => {
   const {
     activeBrand,
     activeBrandId,
-    setActiveBrandId,
-    brands,
     persona,
     jobs,
     customers,
@@ -51,116 +50,66 @@ export const DashboardView: React.FC = () => {
   const getStatusBadge = (status: JobStatus) => {
     switch (status) {
       case 'NEW':
-        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-sky-950 text-sky-300 border border-sky-800">New</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-semibold cabms-badge-info">New</span>;
       case 'SCHEDULED':
-        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-950 text-indigo-300 border border-indigo-800">Scheduled</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-semibold cabms-badge-info">Scheduled</span>;
       case 'IN_PROGRESS':
-        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-950 text-amber-300 border border-amber-800">In Progress</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-semibold cabms-badge-warning">In Progress</span>;
       case 'NEEDS_REVISIT':
-        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-red-950 text-red-300 border border-red-800">Needs Revisit</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-semibold cabms-badge-danger">Needs Revisit</span>;
       case 'COMPLETED':
-        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800">Completed</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-semibold cabms-badge-completed">Completed</span>;
       case 'CANCELLED':
-        return <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">Cancelled</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-semibold cabms-surface-subtle text-(--cabms-text-secondary) border cabms-border">Cancelled</span>;
     }
   };
 
   return (
     <div className="space-y-6">
-      {/* Brand Header Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center space-x-4">
-            <div
-              className="w-12 h-12 rounded-xl flex items-center justify-center font-black text-2xl text-white shadow-inner"
-              style={{ backgroundColor: activeBrand.primaryColor }}
-            >
-              {activeBrand.name.charAt(0)}
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className="text-xl font-bold text-white tracking-tight">{activeBrand.name}</h1>
-                <span className="text-xs px-2 py-0.5 rounded font-semibold bg-slate-800 text-slate-300 border border-slate-700">
-                  {activeBrand.abnPlaceholder}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">{activeBrand.tagline}</p>
-              <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mt-2">
-                <span>Licence: <strong className="text-slate-300">{activeBrand.electricalLicencePlaceholder}</strong></span>
-                <span>•</span>
-                <span>Cabler: <strong className="text-slate-300">{activeBrand.acmaCablerPlaceholder}</strong></span>
-                <span>•</span>
-                <span>MYOB File: <strong className="text-sky-400">{myobConnection.companyId}</strong></span>
-              </div>
-            </div>
-          </div>
-
-          {/* Quick Brand Switcher Pills */}
-          <div className="flex max-w-full flex-wrap items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 self-start md:self-auto">
-            {Object.values(brands).map(b => (
-              <button
-                key={b.id}
-                onClick={() => setActiveBrandId(b.id)}
-                aria-label={`Switch business to ${b.name}`}
-                title={b.name}
-                aria-pressed={activeBrandId === b.id}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-md transition cursor-pointer ${
-                  activeBrandId === b.id
-                    ? 'bg-slate-800 text-white border border-slate-700 shadow-sm'
-                    : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                {{ solarcell: 'Solarcell', smart_home: 'Smart Home', cctv: 'CCTV' }[b.id]}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+        <div className="cabms-card p-5">
+          <div className="flex items-center justify-between text-(--cabms-text-secondary) text-sm font-medium">
             <span>In-Progress Jobs</span>
-            <Briefcase className="w-4 h-4 text-amber-400" />
+            <FontAwesomeIcon icon={faBriefcase} className="w-4 h-4 cabms-accent-warning" />
           </div>
-          <div className="text-2xl font-black text-white mt-2">{inProgressJobs}</div>
-          <div className="text-[11px] text-slate-400 mt-1 flex items-center gap-1">
-            <span data-testid="weekly-completed" className="text-emerald-400 font-semibold">{completedJobs}</span> completed this week (Brisbane)
+          <div className="text-2xl lg:text-3xl font-black text-(--cabms-text-primary) mt-2">{inProgressJobs}</div>
+          <div className="text-xs text-(--cabms-text-secondary) mt-2 flex items-center gap-1.5 leading-normal">
+            <span data-testid="weekly-completed" className="cabms-accent-success font-bold">{completedJobs}</span> completed this week (Brisbane)
           </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+        <div className="cabms-card p-5">
+          <div className="flex items-center justify-between text-(--cabms-text-secondary) text-sm font-medium">
             <span>Needs Revisit</span>
-            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 cabms-accent-danger" />
           </div>
-          <div className="text-2xl font-black text-red-400 mt-2">{needsRevisitJobs}</div>
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-2xl lg:text-3xl font-black cabms-accent-danger mt-2">{needsRevisitJobs}</div>
+          <div className="text-xs text-(--cabms-text-secondary) mt-2 leading-normal">
             Cabling defect (TCA2) logged
           </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+        <div className="cabms-card p-5">
+          <div className="flex items-center justify-between text-(--cabms-text-secondary) text-sm font-medium">
             <span>MYOB Write-Through</span>
-            <Database className="w-4 h-4 text-sky-400" />
+            <FontAwesomeIcon icon={faDatabase} className="w-4 h-4 cabms-accent-info" />
           </div>
-          <div className="text-2xl font-black text-sky-300 mt-2">
+          <div className="text-2xl lg:text-3xl font-black cabms-accent-info mt-2">
             {myobConnection.status === 'CONNECTED' ? 'Online' : 'Offline'}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-xs text-(--cabms-text-secondary) mt-2 leading-normal">
             {pendingSyncs > 0 ? `${pendingSyncs} draft awaiting sync` : 'All customer records synced'}
           </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <div className="flex items-center justify-between text-slate-400 text-xs font-medium">
+        <div className="cabms-card p-5">
+          <div className="flex items-center justify-between text-(--cabms-text-secondary) text-sm font-medium">
             <span>Website Enquiries</span>
-            <Inbox className="w-4 h-4 text-emerald-400" />
+            <FontAwesomeIcon icon={faInbox} className="w-4 h-4 cabms-accent-success" />
           </div>
-          <div className="text-2xl font-black text-emerald-400 mt-2">{pendingEnquiries}</div>
-          <div className="text-[11px] text-slate-400 mt-1">
+          <div className="text-2xl lg:text-3xl font-black cabms-accent-success mt-2">{pendingEnquiries}</div>
+          <div className="text-xs text-(--cabms-text-secondary) mt-2 leading-normal">
             Section J website handoff inbox
           </div>
         </div>
@@ -169,24 +118,24 @@ export const DashboardView: React.FC = () => {
       {/* Two-Column Section: Operational Jobs & Quick Simulation Flows */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Jobs Table */}
-        <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-4">
+        <div className="lg:col-span-2 cabms-card p-6">
+          <div className="flex items-center justify-between mb-5">
             <div>
-              <h2 className="text-sm font-bold text-white uppercase tracking-wider">
+              <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
                 {activeBrand.name} Operational Jobs
               </h2>
-              <p className="text-xs text-slate-400">Current work orders and compliance requirements</p>
+              <p className="text-sm text-(--cabms-text-secondary) mt-1">Current work orders and compliance requirements</p>
             </div>
             <button
               onClick={() => setActiveTab('jobs')}
-              className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold cursor-pointer"
+              className="text-sm text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-semibold cursor-pointer"
             >
               <span>View All</span>
-              <ArrowRight className="w-3.5 h-3.5" />
+              <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-4">
             {brandJobs.map(job => (
               <div
                 key={job.id}
@@ -194,40 +143,40 @@ export const DashboardView: React.FC = () => {
                   setSelectedJobId(job.id);
                   setActiveTab('jobs');
                 }}
-                className="bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800 rounded-lg p-3.5 transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-4 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
               >
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-mono text-xs font-bold text-slate-300">{job.id}</span>
-                    <span className="text-white font-semibold text-xs md:text-sm">{job.title}</span>
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2.5">
+                    <span className="font-mono text-sm font-bold text-(--cabms-text-secondary)">{job.id}</span>
+                    <span className="text-(--cabms-text-primary) font-bold text-sm md:text-base">{job.title}</span>
                     {getStatusBadge(job.status)}
                   </div>
-                  <div className="text-xs text-slate-400 mt-1">
+                  <div className="text-sm text-(--cabms-text-secondary) leading-relaxed">
                     Site: {job.siteAddress} • Contact: {job.siteContact}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
                     {job.isDirectToInvoice ? (
-                      <span className="text-[10px] bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono">
+                      <span className="text-xs cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) px-2.5 py-1 rounded font-mono">
                         Direct-to-Invoice (No Forms)
                       </span>
                     ) : (
                       job.formsRequired.map(f => (
-                        <span key={f} className="text-[10px] bg-amber-950/60 text-amber-300 border border-amber-800/60 px-1.5 py-0.5 rounded font-mono">
+                        <span key={f} className="text-xs bg-amber-950/60 text-amber-300 border border-amber-800/60 px-2 py-1 rounded font-mono">
                           Req: {f}
                         </span>
                       ))
                     )}
-                    <span className="text-[11px] text-slate-500">
+                    <span className="text-xs text-(--cabms-text-secondary)">
                       Tech: {job.assignedTechName || 'Unassigned'}
                     </span>
                   </div>
                 </div>
 
-                <div className="text-right sm:self-center">
-                  <div className="text-xs font-semibold text-slate-300">
+                <div className="text-right sm:self-center shrink-0 space-y-1">
+                  <div className="text-sm font-semibold text-(--cabms-text-primary)">
                     {job.scheduledDate} {job.scheduledTime}
                   </div>
-                  <span className="text-[11px] text-sky-400 hover:underline">
+                  <span className="text-xs font-semibold text-sky-400 hover:underline inline-block">
                     Open Job Details →
                   </span>
                 </div>
@@ -237,24 +186,24 @@ export const DashboardView: React.FC = () => {
         </div>
 
         {/* Right Column: Guided Demo Scenarios & Quick Actions */}
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Quick Actions Panel */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <h2 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-3">
+          <div className="cabms-card p-5">
+            <h2 className="text-sm font-bold text-(--cabms-text-primary) uppercase tracking-wider mb-4">
               Guided Demo Journeys (A–J)
             </h2>
-            <div className="space-y-2 text-xs">
+            <div className="space-y-3.5">
               <button
                 onClick={() => {
                   setSelectedJobId('JOB-2026-101');
                   setActiveTab('jobs');
                 }}
-                className="w-full text-left p-2.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 border border-slate-800 flex items-start space-x-2 transition cursor-pointer"
+                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
               >
-                <FileCheck2 className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-semibold text-white">1. Complete Job Journey</div>
-                  <div className="text-slate-400 text-[11px]">
+                <FontAwesomeIcon icon={faFileCircleCheck} className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <div className="font-bold text-(--cabms-text-primary) text-sm">1. Complete Job Journey</div>
+                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
                     Walkthrough JSA & Smoke Alarm sign-off, completion validation, quote acceptance & review automation.
                   </div>
                 </div>
@@ -265,12 +214,12 @@ export const DashboardView: React.FC = () => {
                   setSelectedJobId('JOB-2026-102');
                   setActiveTab('jobs');
                 }}
-                className="w-full text-left p-2.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 border border-slate-800 flex items-start space-x-2 transition cursor-pointer"
+                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
               >
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-semibold text-white">2. Direct-to-Invoice Journey</div>
-                  <div className="text-slate-400 text-[11px]">
+                <FontAwesomeIcon icon={faCircleCheck} className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <div className="font-bold text-(--cabms-text-primary) text-sm">2. Direct-to-Invoice Journey</div>
+                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
                     Emergency service job with 0 compliance forms, completing immediately into MYOB invoice draft.
                   </div>
                 </div>
@@ -281,12 +230,12 @@ export const DashboardView: React.FC = () => {
                   setSelectedJobId('JOB-2026-104');
                   setActiveTab('jobs');
                 }}
-                className="w-full text-left p-2.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 border border-slate-800 flex items-start space-x-2 transition cursor-pointer"
+                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
               >
-                <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-semibold text-white">3. TCA1/TCA2 Cabling Defect</div>
-                  <div className="text-slate-400 text-[11px]">
+                <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <div className="font-bold text-(--cabms-text-primary) text-sm">3. TCA1/TCA2 Cabling Defect</div>
+                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
                     High-risk defect logging with photo attachment, customer ack and office rectification review.
                   </div>
                 </div>
@@ -294,12 +243,12 @@ export const DashboardView: React.FC = () => {
 
               <button
                 onClick={() => setActiveTab('customers')}
-                className="w-full text-left p-2.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 border border-slate-800 flex items-start space-x-2 transition cursor-pointer"
+                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
               >
-                <Users className="w-4 h-4 text-sky-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-semibold text-white">4. MYOB Write-Through Simulation</div>
-                  <div className="text-slate-400 text-[11px]">
+                <FontAwesomeIcon icon={faUsers} className="w-5 h-5 text-sky-400 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <div className="font-bold text-(--cabms-text-primary) text-sm">4. MYOB Write-Through Simulation</div>
+                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
                     Single MYOB customer master shared across brands with duplicate detection & reconciliation.
                   </div>
                 </div>
@@ -307,12 +256,12 @@ export const DashboardView: React.FC = () => {
 
               <button
                 onClick={() => setActiveTab('website_inbox')}
-                className="w-full text-left p-2.5 rounded-lg bg-slate-950/80 hover:bg-slate-800 border border-slate-800 flex items-start space-x-2 transition cursor-pointer"
+                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
               >
-                <Inbox className="w-4 h-4 text-purple-400 mt-0.5 shrink-0" />
-                <div>
-                  <div className="font-semibold text-white">5. Existing-Site Submission (Handoff)</div>
-                  <div className="text-slate-400 text-[11px]">
+                <FontAwesomeIcon icon={faInbox} className="w-5 h-5 text-purple-400 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <div className="font-bold text-(--cabms-text-primary) text-sm">5. Existing-Site Submission (Handoff)</div>
+                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
                     Simulate public website enquiry, office duplicate check and manual conversion to draft job.
                   </div>
                 </div>
@@ -321,12 +270,12 @@ export const DashboardView: React.FC = () => {
           </div>
 
           {/* Compliance & Isolation Card */}
-          <div className="bg-slate-900 border border-amber-900/40 rounded-xl p-4 text-xs text-slate-300">
-            <div className="flex items-center space-x-2 text-amber-400 font-bold mb-1.5">
-              <AlertTriangle className="w-4 h-4" />
+          <div className="cabms-card border-amber-700/60 p-5 text-(--cabms-text-secondary) space-y-2">
+            <div className="flex items-center space-x-2 text-amber-400 font-bold text-sm">
+              <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4" />
               <span>G00 Strict Demo Isolation</span>
             </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
+            <p className="text-xs text-(--cabms-text-secondary) leading-relaxed">
               All records, appointments, quotes, and customer accounts are deterministic synthetic fixtures. Electronic signatures are visibly deferred to the working test system without amount-based legal routing.
             </p>
           </div>

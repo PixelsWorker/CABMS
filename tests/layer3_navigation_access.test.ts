@@ -219,3 +219,74 @@ test('LAYER 3: Wave A — Technician dashboard and work-order selection stay ins
     assert.ok(container.textContent?.includes('Emergency Aircon Automation Inverter Reset'), container.textContent || 'empty jobs view');
   });
 });
+test('LAYER 3: WIN-CR-01 — Navigation accessible name announces pending enquiry count in aria-label (multiple, one, and zero)', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container) => {
+    // 1. Initial mounted state has multiple pending website enquiries
+    const initialPending = ctx.websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW');
+    assert.ok(initialPending.length >= 2, 'Seed data contains multiple pending enquiries');
+
+    const inboxButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      btn => btn.title === 'Website Enquiries'
+    );
+    assert.ok(inboxButton, 'Website Enquiries navigation button is rendered');
+    assert.equal(
+      inboxButton.getAttribute('aria-label'),
+      `Website Enquiries (${initialPending.length} pending enquiries)`,
+      'Navigation button aria-label announces plural count for screen readers'
+    );
+    const multiBadge = inboxButton.querySelector('.cabms-nav-badge');
+    assert.ok(multiBadge, 'Visual badge rendered for multiple enquiries');
+    assert.equal(multiBadge.getAttribute('aria-hidden'), 'true', 'Visual badge marked aria-hidden to avoid duplicate screen reader announcement');
+
+    // 2. Dismiss all but one pending enquiry to verify singular wording
+    await act(async () => {
+      for (let i = 1; i < initialPending.length; i++) {
+        ctx.dismissEnquiry(initialPending[i].id);
+      }
+    });
+
+    assert.equal(
+      inboxButton.getAttribute('aria-label'),
+      'Website Enquiries (1 pending enquiry)',
+      'Navigation button aria-label announces singular "1 pending enquiry"'
+    );
+    const singleBadge = inboxButton.querySelector('.cabms-nav-badge');
+    assert.ok(singleBadge, 'Visual badge rendered for single enquiry');
+    assert.equal(singleBadge.getAttribute('aria-hidden'), 'true', 'Single enquiry badge marked aria-hidden');
+    assert.equal(singleBadge.textContent, '1', 'Badge renders count 1');
+
+    // 3. Dismiss the final pending enquiry to verify badge removal and base aria-label
+    await act(async () => {
+      ctx.dismissEnquiry(initialPending[0].id);
+    });
+
+    assert.equal(
+      inboxButton.getAttribute('aria-label'),
+      'Website Enquiries',
+      'Navigation button aria-label reverts to base label when no pending enquiries exist'
+    );
+    const zeroBadge = inboxButton.querySelector('.cabms-nav-badge');
+    assert.equal(zeroBadge, null, 'Visual badge is removed when pending enquiry count reaches 0');
+  });
+});
+
+test('LAYER 3: Navigation — business switcher accessible disclosure and keyboard traversal', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
+    const trigger = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'Switcher trigger initially aria-expanded false');
+
+    await act(async () => { trigger.click(); });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true', 'Switcher trigger aria-expanded true when opened');
+
+    const menu = container.querySelector('#cabms-brand-dropdown-menu')!;
+    assert.equal(menu.getAttribute('role'), 'group');
+    assert.equal(menu.getAttribute('aria-label'), 'Switch business');
+
+    // Escape closes and restores focus to trigger
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(window.document.activeElement, trigger);
+  });
+});

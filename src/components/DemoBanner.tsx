@@ -4,7 +4,15 @@
  */
 
 import React from 'react';
-import { AlertTriangle, ShieldCheck, Database, Calendar, Mail, FileText } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faCalendar,
+  faDatabase,
+  faEnvelope,
+  faFileLines,
+  faShield,
+  faTriangleExclamation,
+} from '@fortawesome/free-solid-svg-icons';
 
 export const DemoBanner: React.FC = () => {
   return (
@@ -19,10 +27,10 @@ export const DemoBanner: React.FC = () => {
       </div>
       <div className="flex items-center space-x-3 text-xs text-slate-900 font-medium mt-1 sm:mt-0">
         <span className="inline-flex items-center gap-1">
-          <Database className="w-3.5 h-3.5" /> Fictional Data
+          <FontAwesomeIcon icon={faDatabase} className="w-3.5 h-3.5" /> Fictional Data
         </span>
         <span className="inline-flex items-center gap-1">
-          <ShieldCheck className="w-3.5 h-3.5" /> No Live APIs
+          <FontAwesomeIcon icon={faShield} className="w-3.5 h-3.5" /> No Live APIs
         </span>
         <span className="inline-flex items-center gap-1 text-slate-800">
           Strict Isolation

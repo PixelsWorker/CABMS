@@ -42,6 +42,36 @@ export function formatBusinessTime(value: string): string {
   return `${part('day')} ${part('month')} ${part('year')}, ${part('hour')}:${part('minute')} AEST (UTC+10)`;
 }
 
+/**
+ * Format a calendar date-only string ('YYYY-MM-DD') safely in Australia/Brisbane business context,
+ * ensuring no 1-day drift occurs under host timezones with negative UTC offsets (FC-13).
+ */
+export function formatBusinessCalendarDate(
+  dateStr: string,
+  options?: Intl.DateTimeFormatOptions
+): string {
+  if (typeof dateStr !== 'string') return 'Invalid date';
+  const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return 'Invalid date';
+
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+
+  if (month < 1 || month > 12 || day < 1 || day > 31) return 'Invalid date';
+
+  const utcNoon = Date.UTC(year, month - 1, day, 12, 0, 0);
+  const d = new Date(utcNoon);
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return 'Invalid date';
+  }
+
+  return new Intl.DateTimeFormat('en-AU', {
+    ...options,
+    timeZone: BUSINESS_TIME_ZONE,
+  }).format(utcNoon);
+}
+
 /** Monday 00:00 inclusive through the following Monday 00:00 exclusive, in Brisbane. */
 export function businessWeekBounds(clock: string): { start: number; end: number } | null {
   const timestamp = instant(clock);

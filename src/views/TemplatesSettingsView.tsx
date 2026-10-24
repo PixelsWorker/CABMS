@@ -197,9 +197,9 @@ export const TemplatesSettingsView: React.FC = () => {
                     <div>
                       <div className="flex items-center space-x-1.5">
                         <FileText className="w-4 h-4 text-amber-400" />
-                        <span className="font-bold text-[var(--cabms-text-primary)] text-xs">{tpl.name}</span>
+                        <span className="font-bold text-white text-xs">{tpl.name}</span>
                       </div>
-                      <div className="font-mono text-[11px] text-[var(--cabms-text-secondary)] mt-1">
+                      <div className="font-mono text-[11px] text-slate-300 mt-1">
                         Version: <strong className="text-sky-400">{tpl.currentVersion}</strong>
                       </div>
                     </div>
@@ -217,7 +217,7 @@ export const TemplatesSettingsView: React.FC = () => {
                     </span>
                   </div>
 
-                  <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-[var(--cabms-text-secondary)]">
+                  <div className="mt-2 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
                     <span>File: {tpl.sampleFileName}</span>
                     <span className="text-sky-400 font-medium">{tpl.mappingStatus}</span>
                   </div>

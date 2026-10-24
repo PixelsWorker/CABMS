@@ -269,3 +269,24 @@ test('LAYER 3: WIN-CR-01 — Navigation accessible name announces pending enquir
     assert.equal(zeroBadge, null, 'Visual badge is removed when pending enquiry count reaches 0');
   });
 });
+
+test('LAYER 3: Navigation — business switcher accessible disclosure and keyboard traversal', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
+    const trigger = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'Switcher trigger initially aria-expanded false');
+
+    await act(async () => { trigger.click(); });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true', 'Switcher trigger aria-expanded true when opened');
+
+    const menu = container.querySelector('#cabms-brand-dropdown-menu')!;
+    assert.equal(menu.getAttribute('role'), 'group');
+    assert.equal(menu.getAttribute('aria-label'), 'Switch business');
+
+    // Escape closes and restores focus to trigger
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(window.document.activeElement, trigger);
+  });
+});

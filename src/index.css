@@ -451,7 +451,7 @@
   }
 }
 
-.cabms-topbar-logo {
+.cabms-brand-svg.cabms-topbar-logo {
   display: inline-flex;
   align-items: center;
   height: 2.25rem;

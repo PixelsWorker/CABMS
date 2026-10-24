@@ -89,12 +89,21 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
       }
 
       if (event.key === 'Tab') {
-        closeBrandDropdown(false);
+        const optionButtons = Array.from(
+          brandDropdownRef.current?.querySelectorAll<HTMLButtonElement>('.cabms-brand-dropdown-option') ?? []
+        );
+        const active = document.activeElement;
+        const leavingForward = !event.shiftKey && active === optionButtons.at(-1);
+        const leavingBackward = event.shiftKey && active === brandTriggerRef.current;
+        if (leavingForward || leavingBackward) {
+          closeBrandDropdown(false);
+        }
         return;
       }
 
       const menu = brandDropdownRef.current?.querySelector<HTMLDivElement>('#cabms-brand-dropdown-menu');
       if (!menu) return;
+      if (!brandDropdownRef.current?.contains(document.activeElement)) return;
       const options = Array.from(menu.querySelectorAll<HTMLButtonElement>('.cabms-brand-dropdown-option'));
       if (!options.length) return;
 

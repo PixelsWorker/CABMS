@@ -195,6 +195,65 @@ test('LAYER 4: CP-01 — distinct business switches change the header and Brisba
   });
 });
 
+test('LAYER 4: Navigation — business switcher allows keyboard Tab navigation into options and closes when focus leaves', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
+    const trigger = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    assert.ok(trigger, 'Business switcher trigger button is rendered');
+
+    // 1. Open dropdown by clicking
+    await act(async () => { trigger.click(); });
+    const menu = container.querySelector('#cabms-brand-dropdown-menu');
+    assert.ok(menu, 'Dropdown menu opened');
+    const options = Array.from(menu.querySelectorAll<HTMLButtonElement>('.cabms-brand-dropdown-option'));
+    assert.equal(options.length, 3, 'All 3 business options are rendered in dropdown');
+
+    // 2. Focus trigger and press Tab (forward): Tab should NOT close dropdown
+    trigger.focus();
+    assert.equal(window.document.activeElement, trigger);
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    assert.ok(container.querySelector('#cabms-brand-dropdown-menu'), 'Dropdown remains open when Tab pressed on trigger');
+
+    // 3. Arrow down navigates between options
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    assert.equal(window.document.activeElement, options[0], 'ArrowDown moves focus to first option');
+
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    assert.equal(window.document.activeElement, options[1], 'ArrowDown moves focus to second option');
+
+    // 4. Focus last option and press Tab forward: should close dropdown
+    options[2].focus();
+    assert.equal(window.document.activeElement, options[2]);
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    assert.equal(container.querySelector('#cabms-brand-dropdown-menu'), null, 'Dropdown closes when Tab leaves forward from last option');
+
+    // 5. Re-open and verify ArrowDown ignores events when focus is outside the switcher
+    await act(async () => { trigger.click(); });
+    assert.ok(container.querySelector('#cabms-brand-dropdown-menu'), 'Dropdown re-opened');
+    window.document.body.focus();
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    });
+    assert.equal(window.document.activeElement, window.document.body, 'ArrowDown does not hijack focus when activeElement is outside switcher');
+
+    // 6. Focus option and verify Escape closes menu and restores focus to trigger
+    const reloadedOptions = container.querySelectorAll<HTMLButtonElement>('.cabms-brand-dropdown-option');
+    reloadedOptions[0].focus();
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    assert.equal(container.querySelector('#cabms-brand-dropdown-menu'), null, 'Dropdown closed on Escape');
+    assert.equal(window.document.activeElement, trigger, 'Focus restored to trigger button on Escape');
+  });
+});
+
 test('LAYER 4: CP-01 — mounted business clocks agree before and after virtual-clock advance', async () => {
   const previous = process.env.TZ;
   process.env.TZ = 'Asia/Kolkata';

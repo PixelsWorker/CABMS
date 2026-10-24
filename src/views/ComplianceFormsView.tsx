@@ -537,7 +537,7 @@ export const ComplianceFormsView: React.FC = () => {
                       <th className="p-3">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y cabms-border cabms-surface">
+                  <tbody className="divide-y divide-[var(--cabms-border-base)] cabms-surface">
                     {currentJsa.steps.map((step, idx) => (
                       <tr key={step.id}>
                         <td className="p-2.5 font-semibold text-[var(--cabms-text-primary)]">
@@ -864,7 +864,7 @@ export const ComplianceFormsView: React.FC = () => {
                       <th className="p-3 text-center">Action</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y cabms-border cabms-surface">
+                  <tbody className="divide-y divide-[var(--cabms-border-base)] cabms-surface">
                     {currentSmoke.alarmSchedule.map((alarm, idx) => (
                       <tr key={alarm.id}>
                         <td className="p-2.5 font-semibold text-[var(--cabms-text-primary)]">

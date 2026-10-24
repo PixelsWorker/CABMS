@@ -70,20 +70,20 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>In-Progress Jobs</span>
-            <Briefcase className="w-4 h-4 text-amber-400" />
+            <Briefcase className="w-4 h-4 cabms-accent-warning" />
           </div>
           <div className="text-2xl lg:text-3xl font-black text-[var(--cabms-text-primary)] mt-2">{inProgressJobs}</div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 flex items-center gap-1.5 leading-normal">
-            <span data-testid="weekly-completed" className="text-emerald-400 font-bold">{completedJobs}</span> completed this week (Brisbane)
+            <span data-testid="weekly-completed" className="cabms-accent-success font-bold">{completedJobs}</span> completed this week (Brisbane)
           </div>
         </div>
 
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>Needs Revisit</span>
-            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <AlertTriangle className="w-4 h-4 cabms-accent-danger" />
           </div>
-          <div className="text-2xl lg:text-3xl font-black text-red-400 mt-2">{needsRevisitJobs}</div>
+          <div className="text-2xl lg:text-3xl font-black cabms-accent-danger mt-2">{needsRevisitJobs}</div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 leading-normal">
             Cabling defect (TCA2) logged
           </div>
@@ -92,9 +92,9 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>MYOB Write-Through</span>
-            <Database className="w-4 h-4 text-sky-400" />
+            <Database className="w-4 h-4 cabms-accent-info" />
           </div>
-          <div className="text-2xl lg:text-3xl font-black text-sky-300 mt-2">
+          <div className="text-2xl lg:text-3xl font-black cabms-accent-info mt-2">
             {myobConnection.status === 'CONNECTED' ? 'Online' : 'Offline'}
           </div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 leading-normal">
@@ -105,9 +105,9 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>Website Enquiries</span>
-            <Inbox className="w-4 h-4 text-emerald-400" />
+            <Inbox className="w-4 h-4 cabms-accent-success" />
           </div>
-          <div className="text-2xl lg:text-3xl font-black text-emerald-400 mt-2">{pendingEnquiries}</div>
+          <div className="text-2xl lg:text-3xl font-black cabms-accent-success mt-2">{pendingEnquiries}</div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 leading-normal">
             Section J website handoff inbox
           </div>

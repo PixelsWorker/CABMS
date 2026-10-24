@@ -55,18 +55,28 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
   React.useEffect(() => {
     if (!brandDropdownOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeBrandDropdown(true);
+      if (e.key === 'Escape') {
+        const isFocusInside = brandDropdownRef.current?.contains(document.activeElement);
+        closeBrandDropdown(Boolean(isFocusInside));
+      }
     };
     const handleClickOutside = (e: MouseEvent) => {
       if (brandDropdownRef.current && !brandDropdownRef.current.contains(e.target as Node)) {
         closeBrandDropdown(false);
       }
     };
+    const handleFocusOut = (e: FocusEvent) => {
+      if (brandDropdownRef.current && !brandDropdownRef.current.contains(e.relatedTarget as Node)) {
+        closeBrandDropdown(false);
+      }
+    };
     document.addEventListener('keydown', handleKeyDown);
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('focusout', handleFocusOut);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('focusout', handleFocusOut);
     };
   }, [brandDropdownOpen]);
   const [hint, setHint] = React.useState<{ label: string; top: number; left: number } | null>(null);

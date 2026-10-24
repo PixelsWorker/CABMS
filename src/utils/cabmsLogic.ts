@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Pure business logic and validation rules for CABMS G00 Demo
  * Decoupled from UI to enable fast unit testing via node:test and tsx
  */
@@ -225,7 +225,7 @@ export function checkCustomerDuplicate(
   const normPhone = rawPhone.replace(/[^0-9]/g, '');
 
   for (const c of existingCustomers) {
-    if (normEmail && c.email.toLowerCase() === normEmail) {
+    if (normEmail && (c.email || '').trim().toLowerCase() === normEmail) {
       return { isDuplicate: true, matchedCustomer: c, field: 'email' };
     }
     // FC-15: Check phone only if candidate provided a real non-placeholder phone number

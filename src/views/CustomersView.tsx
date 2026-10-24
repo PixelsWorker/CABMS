@@ -231,7 +231,7 @@ export const CustomersView: React.FC = () => {
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y cabms-border bg-transparent">
+            <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
               {filteredCustomers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-slate-500">

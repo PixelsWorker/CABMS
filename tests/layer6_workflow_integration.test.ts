@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -2392,6 +2392,10 @@ test('LAYER 6: FC-10 — rescheduleJobAppointment blocks rescheduling of termina
     // Attempting to cancel appointment on terminal completed or cancelled job is rejected with zero mutations
     const canRemCount = sameRenderCancelled.reminders.length;
     const canHistCount = sameRenderCancelled.activityHistory.length;
+    const preCompletedJob = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    const compApptStatus = preCompletedJob.appointmentStatus;
+    const compRemCount = preCompletedJob.reminders.length;
+    const compHistCount = preCompletedJob.activityHistory.length;
     await act(async () => {
       ctx.cancelJobAppointment(jobCId, 'Attempt appointment cancellation on terminal cancelled job');
       ctx.cancelJobAppointment('JOB-2026-102', 'Attempt appointment cancellation on terminal completed job');
@@ -2401,6 +2405,9 @@ test('LAYER 6: FC-10 — rescheduleJobAppointment blocks rescheduling of termina
     assert.equal(postCancelVisitJob.activityHistory.length, canHistCount, 'Zero activity history additions on rejected visit cancellation');
     const postCancelCompletedJob = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
     assert.equal(postCancelCompletedJob.status, 'COMPLETED', 'Completed job remains COMPLETED');
+    assert.equal(postCancelCompletedJob.appointmentStatus, compApptStatus, 'Completed job appointmentStatus remains unchanged');
+    assert.equal(postCancelCompletedJob.reminders.length, compRemCount, 'Completed job reminders remain unchanged');
+    assert.equal(postCancelCompletedJob.activityHistory.length, compHistCount, 'Completed job activityHistory remains unchanged');
   });
 });
 

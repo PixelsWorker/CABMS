@@ -253,7 +253,7 @@ export const QuotesAcceptanceView: React.FC = () => {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-slate-800 gap-4">
               <div className="flex items-center space-x-3">
                 <div
-                  className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-[var(--cabms-text-primary)] text-lg shadow-md"
+                  className="w-10 h-10 rounded-xl flex items-center justify-center font-black text-white text-lg shadow-md"
                   style={{ backgroundColor: jobBrand.primaryColor }}
                 >
                   {jobBrand.name.charAt(0)}
@@ -300,7 +300,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                       <th className="p-3 text-right">Subtotal (ex GST)</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y cabms-border bg-transparent">
+                  <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
                     {quote.lineItems.map(item => (
                       <tr key={item.id}>
                         <td className="p-3 font-medium text-[var(--cabms-text-primary)]">{item.description}</td>
@@ -471,7 +471,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                         <th className="p-3 text-right">Subtotal (ex GST)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y cabms-border bg-transparent">
+                    <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
                       {quote.lineItems.map(item => (
                         <tr key={item.id}>
                           <td className="p-3 font-medium text-[var(--cabms-text-primary)]">{item.description}</td>

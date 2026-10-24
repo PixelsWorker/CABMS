@@ -116,7 +116,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y cabms-border bg-transparent">
+            <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
               {jobTypes.map(jt => (
                 <tr key={jt.id} className={jt.isDirectToInvoice ? 'bg-slate-900/40' : ''}>
                   <td className="p-3 font-semibold text-[var(--cabms-text-primary)]">

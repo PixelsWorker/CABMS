@@ -511,6 +511,26 @@ test('checkCustomerDuplicate: detects duplicate by email or phone', () => {
     customers
   );
   assert.equal(dupCheck3.isDuplicate, false);
+  const untrimmedExisting: Customer[] = [
+    {
+      id: 'CUSTOMER-DEMO-002',
+      myobCustomerId: 'MYOB-DEMO-002',
+      name: 'Untrimmed Email Customer',
+      contactPerson: 'Untrimmed Email Customer',
+      email: '  untrimmed@example.invalid  ',
+      phone: '0422 333 444',
+      billingAddress: '100 Gold Coast Hwy',
+      brandAffiliations: ['solarcell'],
+      syncStatus: 'SYNCED',
+      createdAt: '2026-01-01',
+    },
+  ];
+  const untrimmedDupCheck = checkCustomerDuplicate(
+    { email: 'UNTRIMMED@example.invalid', phone: '', name: 'Different Name' },
+    untrimmedExisting
+  );
+  assert.equal(untrimmedDupCheck.isDuplicate, true);
+  assert.equal(untrimmedDupCheck.field, 'email');
 });
 
 test('FC-15: checkCustomerDuplicate ignores demo placeholder 0400 000 000 and empty phone, preserving real duplicates', () => {

@@ -157,7 +157,10 @@ export const CustomersView: React.FC = () => {
 
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={() => {
+                setNewCustBrands([activeBrandId]);
+                setIsAddModalOpen(true);
+              }}
               className="flex items-center space-x-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
             >
               <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />

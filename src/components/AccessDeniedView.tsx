@@ -39,33 +39,33 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
 
   return (
     <div className="max-w-2xl mx-auto my-12 p-8 cabms-card border-red-700 shadow-lg text-center">
-      <div className="w-14 h-14 cabms-surface-subtle text-[var(--cabms-accent-danger)] rounded-full flex items-center justify-center mx-auto mb-4 border border-red-700">
+      <div className="w-14 h-14 cabms-surface-subtle text-(--cabms-accent-danger) rounded-full flex items-center justify-center mx-auto mb-4 border border-red-700">
         <FontAwesomeIcon icon={faShieldHalved} className="w-8 h-8" />
       </div>
 
-      <span className="text-[11px] font-bold tracking-widest text-[var(--cabms-accent-danger)] uppercase cabms-surface-subtle px-3 py-1 rounded-full border border-red-700">
+      <span className="text-[11px] font-bold tracking-widest text-(--cabms-accent-danger) uppercase cabms-surface-subtle px-3 py-1 rounded-full border border-red-700">
         Simulated UX Role Boundary
       </span>
 
-      <h2 className="text-xl font-bold text-[var(--cabms-text-primary)] mt-4 mb-2">
+      <h2 className="text-xl font-bold text-(--cabms-text-primary) mt-4 mb-2">
         {title}
       </h2>
 
-      <p className="text-[var(--cabms-text-secondary)] text-sm mb-4">
+      <p className="text-(--cabms-text-secondary) text-sm mb-4">
         Your current active persona is <strong className="text-sky-400">{getPersonaLabel(persona)}</strong>.
       </p>
 
-      <div className="cabms-card-subtle p-4 text-left text-xs text-[var(--cabms-text-secondary)] space-y-2 mb-6">
+      <div className="cabms-card-subtle p-4 text-left text-xs text-(--cabms-text-secondary) space-y-2 mb-6">
         <div>
-          <span className="text-[var(--cabms-text-secondary)] font-semibold">Protected Resource:</span>{' '}
-          <span className="text-[var(--cabms-text-primary)] font-mono">{resourceName}</span>
+          <span className="text-(--cabms-text-secondary) font-semibold">Protected Resource:</span>{' '}
+          <span className="text-(--cabms-text-primary) font-mono">{resourceName}</span>
         </div>
         <div>
-          <span className="text-[var(--cabms-text-secondary)] font-semibold">Required Authorization:</span>{' '}
+          <span className="text-(--cabms-text-secondary) font-semibold">Required Authorization:</span>{' '}
           <span className="text-amber-300">{requiredRoleDescription}</span>
         </div>
         {customExplanation && (
-          <div className="border-t border-[var(--cabms-border-base)] pt-2 text-[var(--cabms-text-secondary)]">
+          <div className="border-t border-(--cabms-border-base) pt-2 text-(--cabms-text-secondary)">
             {customExplanation}
           </div>
         )}
@@ -74,14 +74,14 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
       <div className="flex flex-wrap items-center justify-center gap-3">
         <button
           onClick={() => setActiveTab('dashboard')}
-          className="flex items-center space-x-1.5 px-4 py-2 cabms-surface-subtle border cabms-border hover:bg-sky-700 hover:text-white text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer"
+          className="flex items-center space-x-1.5 px-4 py-2 cabms-surface-subtle border cabms-border hover:bg-sky-700 hover:text-white text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer"
         >
           <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4" />
           <span>Return to Dashboard</span>
         </button>
 
         <div className="flex items-center space-x-2">
-          <span className="text-xs text-[var(--cabms-text-secondary)]">Or switch persona:</span>
+          <span className="text-xs text-(--cabms-text-secondary)">Or switch persona:</span>
           <button
             onClick={() => setPersona('owner_admin')}
             className="px-3 py-2 bg-sky-900/40 hover:bg-sky-800/60 text-sky-200 border border-sky-700 text-xs font-semibold rounded-lg transition cursor-pointer"

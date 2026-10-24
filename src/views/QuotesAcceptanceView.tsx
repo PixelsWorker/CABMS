@@ -117,11 +117,11 @@ export const QuotesAcceptanceView: React.FC = () => {
           <div>
             <div className="flex items-center space-x-2">
               <FontAwesomeIcon icon={faFileLines} className="w-5 h-5 text-sky-400" />
-              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
+              <h1 className="text-xl font-bold text-(--cabms-text-primary) tracking-tight">
                 Quotations, Terms Snapshots & Customer Acceptance
               </h1>
             </div>
-            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
+            <p className="text-xs text-(--cabms-text-secondary) mt-1">
               Simulated MYOB quote preparation, frozen Terms snapshots, and customer online acceptance testing.
             </p>
           </div>
@@ -132,8 +132,8 @@ export const QuotesAcceptanceView: React.FC = () => {
                 onClick={() => setViewMode('office')}
                 className={`px-3 py-1.5 rounded font-semibold transition cursor-pointer ${
                   viewMode === 'office'
-                    ? 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] shadow-sm'
-                    : 'text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
+                    ? 'cabms-surface-subtle border cabms-border text-(--cabms-text-primary) shadow-sm'
+                    : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
                 }`}
               >
                 Office Administration
@@ -143,7 +143,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                 className={`px-3 py-1.5 rounded font-semibold transition cursor-pointer flex items-center space-x-1.5 ${
                   viewMode === 'recipient'
                     ? 'bg-emerald-600 text-slate-950 font-bold shadow-sm'
-                    : 'text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
+                    : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
                 }`}
               >
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3 h-3" />
@@ -152,13 +152,13 @@ export const QuotesAcceptanceView: React.FC = () => {
             </div>
 
             <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-              <label htmlFor="quote-work-order" className="shrink-0 text-xs text-[var(--cabms-text-secondary)]">Target Job:</label>
+              <label htmlFor="quote-work-order" className="shrink-0 text-xs text-(--cabms-text-secondary)">Target Job:</label>
               <select
                 id="quote-work-order"
                 title={`${currentJob.id} — ${currentJob.title}`}
                 value={selectedJobId || ''}
                 onChange={e => setSelectedJobId(e.target.value)}
-                className="w-full min-w-0 max-w-full cabms-card-subtle rounded px-2.5 py-1 text-[var(--cabms-text-primary)] font-mono text-xs font-bold cursor-pointer"
+                className="w-full min-w-0 max-w-full cabms-card-subtle rounded px-2.5 py-1 text-(--cabms-text-primary) font-mono text-xs font-bold cursor-pointer"
               >
                 {jobs.map(j => (
                   <option key={j.id} value={j.id}>
@@ -197,12 +197,12 @@ export const QuotesAcceptanceView: React.FC = () => {
       {!quote ? (
         /* Empty State with Prepare Quote Action */
         <div className="cabms-card p-8 text-center space-y-4">
-          <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mx-auto text-[var(--cabms-text-secondary)]">
+          <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mx-auto text-(--cabms-text-secondary)">
             <FontAwesomeIcon icon={faFileLines} className="w-6 h-6" />
           </div>
           <div className="max-w-md mx-auto space-y-1">
-            <h2 className="text-base font-bold text-[var(--cabms-text-primary)]">No MYOB Quote Linked to {currentJob.id}</h2>
-            <p className="text-xs text-[var(--cabms-text-secondary)]">
+            <h2 className="text-base font-bold text-(--cabms-text-primary)">No MYOB Quote Linked to {currentJob.id}</h2>
+            <p className="text-xs text-(--cabms-text-secondary)">
               This work order has not yet had a quotation prepared or synchronized from the shared MYOB company file.
             </p>
           </div>
@@ -219,18 +219,18 @@ export const QuotesAcceptanceView: React.FC = () => {
         <div className="space-y-6">
           {/* Simulated Link Control Toolbar */}
           <div className="cabms-card p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)]">
+            <div className="flex items-center space-x-2 text-(--cabms-text-secondary)">
               <span className="font-mono text-[11px] text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded border border-emerald-800">
                 https://portal.cabms.example.invalid/quotes/accept?token=tok_{currentJob.id.toLowerCase()}
               </span>
             </div>
 
             <div className="flex items-center space-x-2">
-              <span className="text-[var(--cabms-text-secondary)] font-semibold">Simulate Link Token State:</span>
+              <span className="text-(--cabms-text-secondary) font-semibold">Simulate Link Token State:</span>
               <select
                 value={activeLinkScenario}
                 onChange={e => setActiveLinkScenario(e.target.value as any)}
-                className="cabms-input rounded px-2.5 py-1 text-[var(--cabms-text-primary)] font-medium cursor-pointer"
+                className="cabms-input rounded px-2.5 py-1 text-(--cabms-text-primary) font-medium cursor-pointer"
               >
                 <option value="valid">Valid Acceptance Token (Normal)</option>
                 <option value="invalid">Invalid / Corrupted Token</option>
@@ -241,7 +241,7 @@ export const QuotesAcceptanceView: React.FC = () => {
               </select>
               <button
                 onClick={() => setViewMode('office')}
-                className="px-3 py-1 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] rounded font-semibold transition cursor-pointer"
+                className="px-3 py-1 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) rounded font-semibold transition cursor-pointer"
               >
                 Return to Office
               </button>
@@ -260,13 +260,13 @@ export const QuotesAcceptanceView: React.FC = () => {
                   {jobBrand.name.charAt(0)}
                 </div>
                 <div>
-                  <h2 className="text-xl font-extrabold text-[var(--cabms-text-primary)]">{jobBrand.name}</h2>
-                  <p className="text-xs text-[var(--cabms-text-secondary)]">{quote.frozenIssuerSnapshot}</p>
+                  <h2 className="text-xl font-extrabold text-(--cabms-text-primary)">{jobBrand.name}</h2>
+                  <p className="text-xs text-(--cabms-text-secondary)">{quote.frozenIssuerSnapshot}</p>
                 </div>
               </div>
 
               <div className="text-right">
-                <div className="text-xs text-[var(--cabms-text-secondary)]">Formal Quotation</div>
+                <div className="text-xs text-(--cabms-text-secondary)">Formal Quotation</div>
                 <div className="font-mono text-sm font-bold text-sky-400">{quote.externalMyobRef}</div>
                 <div className="text-[11px] text-slate-500 mt-0.5">Work Order: {currentJob.id}</div>
               </div>
@@ -276,24 +276,24 @@ export const QuotesAcceptanceView: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs cabms-card-subtle p-4">
               <div>
                 <span className="text-slate-500 uppercase text-[10px] block font-bold">Customer Site</span>
-                <span className="text-[var(--cabms-text-primary)] font-semibold">{currentJob.siteContact}</span>
-                <span className="text-[var(--cabms-text-secondary)] block mt-0.5">{currentJob.siteAddress}</span>
+                <span className="text-(--cabms-text-primary) font-semibold">{currentJob.siteContact}</span>
+                <span className="text-(--cabms-text-secondary) block mt-0.5">{currentJob.siteAddress}</span>
               </div>
               <div>
                 <span className="text-slate-500 uppercase text-[10px] block font-bold">Scope of Works</span>
-                <span className="text-[var(--cabms-text-primary)] font-semibold">{quote.title}</span>
-                <span className="text-[var(--cabms-text-secondary)] block mt-0.5">Status: <strong className="text-amber-400">{quote.acceptanceStatus}</strong></span>
+                <span className="text-(--cabms-text-primary) font-semibold">{quote.title}</span>
+                <span className="text-(--cabms-text-secondary) block mt-0.5">Status: <strong className="text-amber-400">{quote.acceptanceStatus}</strong></span>
               </div>
             </div>
 
             {/* Schedule of Items & Unified Subtotal/GST Breakdown */}
             <div className="space-y-2">
-              <span className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider block">
+              <span className="text-xs font-bold text-(--cabms-text-secondary) uppercase tracking-wider block">
                 Schedule of Services & Pricing
               </span>
               <div className="border border-slate-800 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-xs text-[var(--cabms-text-secondary)]">
-                  <thead className="cabms-surface-subtle text-[var(--cabms-text-secondary)] text-[11px] uppercase border-b cabms-border">
+                <table className="w-full text-left text-xs text-(--cabms-text-secondary)">
+                  <thead className="cabms-surface-subtle text-(--cabms-text-secondary) text-[11px] uppercase border-b cabms-border">
                     <tr>
                       <th className="p-3">Description</th>
                       <th className="p-3 text-center">Qty</th>
@@ -301,13 +301,13 @@ export const QuotesAcceptanceView: React.FC = () => {
                       <th className="p-3 text-right">Subtotal (ex GST)</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
+                  <tbody className="divide-y divide-(--cabms-border-base) bg-transparent">
                     {quote.lineItems.map(item => (
                       <tr key={item.id}>
-                        <td className="p-3 font-medium text-[var(--cabms-text-primary)]">{item.description}</td>
+                        <td className="p-3 font-medium text-(--cabms-text-primary)">{item.description}</td>
                         <td className="p-3 text-center font-mono">{item.quantity}</td>
                         <td className="p-3 text-right font-mono">${item.unitPrice.toFixed(2)}</td>
-                        <td className="p-3 text-right font-mono text-[var(--cabms-text-primary)]">${item.total.toFixed(2)}</td>
+                        <td className="p-3 text-right font-mono text-(--cabms-text-primary)">${item.total.toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -316,19 +316,19 @@ export const QuotesAcceptanceView: React.FC = () => {
 
               {/* Total Calculation Card */}
               <div className="cabms-card-subtle p-4 space-y-2 text-xs">
-                <div className="flex justify-between text-[var(--cabms-text-secondary)]">
+                <div className="flex justify-between text-(--cabms-text-secondary)">
                   <span>Subtotal (ex-GST):</span>
                   <span className="font-mono">${quote.subtotal.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-[var(--cabms-text-secondary)]">
+                <div className="flex justify-between text-(--cabms-text-secondary)">
                   <span>Goods & Services Tax (GST 10%):</span>
                   <span className="font-mono">${quote.gst.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-sm font-bold text-[var(--cabms-text-primary)] pt-2 border-t border-slate-800">
+                <div className="flex justify-between text-sm font-bold text-(--cabms-text-primary) pt-2 border-t border-slate-800">
                   <span>Total Amount Payable (inc GST):</span>
                   <span className="font-mono text-emerald-400 text-base">${quote.total.toFixed(2)}</span>
                 </div>
-                <div className="text-[11px] text-[var(--cabms-text-secondary)] pt-2 border-t border-slate-800/60">
+                <div className="text-[11px] text-(--cabms-text-secondary) pt-2 border-t border-slate-800/60">
                   Payment Terms: Standard Payment on Completion (or Approved Stage Progress)
                 </div>
               </div>
@@ -337,21 +337,21 @@ export const QuotesAcceptanceView: React.FC = () => {
             {/* Preserved Terms of Service Snapshot Agreement */}
             <div className="cabms-card-subtle p-4 space-y-2 text-xs">
               <div className="flex items-center justify-between">
-                <span className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px]">
+                <span className="font-bold text-(--cabms-text-secondary) uppercase tracking-wider text-[11px]">
                   Terms of Service Agreement (Snapshot Version {quote.termsVersion})
                 </span>
                 <span className="font-mono text-[10px] text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800">
                   Frozen Terms
                 </span>
               </div>
-              <div className="cabms-surface-subtle p-3 rounded border cabms-border text-[var(--cabms-text-secondary)] text-[11px] font-mono leading-relaxed max-h-32 overflow-y-auto">
+              <div className="cabms-surface-subtle p-3 rounded border cabms-border text-(--cabms-text-secondary) text-[11px] font-mono leading-relaxed max-h-32 overflow-y-auto">
                 {quote.termsContentSnapshot}
               </div>
             </div>
 
             {/* Acceptance Confirmation & Submit Action */}
             <div className="space-y-4 pt-2 border-t border-slate-800">
-              <label className="flex items-start space-x-3 cursor-pointer text-[var(--cabms-text-secondary)] text-xs">
+              <label className="flex items-start space-x-3 cursor-pointer text-(--cabms-text-secondary) text-xs">
                 <input
                   type="checkbox"
                   checked={customerAcceptedCheck}
@@ -405,9 +405,9 @@ export const QuotesAcceptanceView: React.FC = () => {
                   <div className="flex items-center space-x-2">
                     <span className="text-xs font-mono font-bold text-sky-400">{quote.externalMyobRef}</span>
                     <span className="text-slate-500">•</span>
-                    <span className="text-xs text-[var(--cabms-text-secondary)]">{quote.title}</span>
+                    <span className="text-xs text-(--cabms-text-secondary)">{quote.title}</span>
                   </div>
-                  <h2 className="text-lg font-bold text-[var(--cabms-text-primary)] mt-1">
+                  <h2 className="text-lg font-bold text-(--cabms-text-primary) mt-1">
                     Quotation & Frozen Terms Snapshot
                   </h2>
                 </div>
@@ -431,15 +431,15 @@ export const QuotesAcceptanceView: React.FC = () => {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs cabms-card-subtle p-4">
                 <div>
                   <span className="text-slate-500 block text-[10px] uppercase font-bold">Issuer Brand</span>
-                  <span className="font-bold text-[var(--cabms-text-primary)]">{jobBrand.name}</span>
+                  <span className="font-bold text-(--cabms-text-primary)">{jobBrand.name}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[10px] uppercase font-bold">Client Site Contact</span>
-                  <span className="font-bold text-[var(--cabms-text-primary)]">{currentJob.siteContact}</span>
+                  <span className="font-bold text-(--cabms-text-primary)">{currentJob.siteContact}</span>
                 </div>
                 <div>
                   <span className="text-slate-500 block text-[10px] uppercase font-bold">Subtotal (ex GST)</span>
-                  <span className="font-bold text-[var(--cabms-text-secondary)] font-mono">
+                  <span className="font-bold text-(--cabms-text-secondary) font-mono">
                     ${quote.subtotal.toFixed(2)}
                   </span>
                 </div>
@@ -452,19 +452,19 @@ export const QuotesAcceptanceView: React.FC = () => {
               </div>
 
               {/* Payment Terms Notification */}
-              <div className="cabms-card-subtle p-3 text-xs text-[var(--cabms-text-secondary)] flex items-center justify-between">
+              <div className="cabms-card-subtle p-3 text-xs text-(--cabms-text-secondary) flex items-center justify-between">
                 <span>Payment Terms: <strong>Standard Payment on Completion (or Approved Stage Progress)</strong></span>
                 <span className="text-slate-500 text-[11px]">GST 10%: ${quote.gst.toFixed(2)}</span>
               </div>
 
               {/* Line Items Table */}
               <div className="space-y-2">
-                <span className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider block">
+                <span className="text-xs font-bold text-(--cabms-text-secondary) uppercase tracking-wider block">
                   Quote Scope & Schedule of Items
                 </span>
                 <div className="border border-slate-800 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-xs text-[var(--cabms-text-secondary)]">
-                    <thead className="cabms-surface-subtle text-[var(--cabms-text-secondary)] text-[11px] uppercase border-b cabms-border">
+                  <table className="w-full text-left text-xs text-(--cabms-text-secondary)">
+                    <thead className="cabms-surface-subtle text-(--cabms-text-secondary) text-[11px] uppercase border-b cabms-border">
                       <tr>
                         <th className="p-3">Description</th>
                         <th className="p-3 text-center">Qty</th>
@@ -472,13 +472,13 @@ export const QuotesAcceptanceView: React.FC = () => {
                         <th className="p-3 text-right">Subtotal (ex GST)</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
+                    <tbody className="divide-y divide-(--cabms-border-base) bg-transparent">
                       {quote.lineItems.map(item => (
                         <tr key={item.id}>
-                          <td className="p-3 font-medium text-[var(--cabms-text-primary)]">{item.description}</td>
+                          <td className="p-3 font-medium text-(--cabms-text-primary)">{item.description}</td>
                           <td className="p-3 text-center font-mono">{item.quantity}</td>
                           <td className="p-3 text-right font-mono">${item.unitPrice.toFixed(2)}</td>
-                          <td className="p-3 text-right font-bold text-[var(--cabms-text-primary)] font-mono">${item.total.toFixed(2)}</td>
+                          <td className="p-3 text-right font-bold text-(--cabms-text-primary) font-mono">${item.total.toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -489,14 +489,14 @@ export const QuotesAcceptanceView: React.FC = () => {
               {/* Preserved Terms of Service Snapshot */}
               <div className="cabms-card-subtle p-4 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider text-[11px]">
+                  <span className="font-bold text-(--cabms-text-secondary) uppercase tracking-wider text-[11px]">
                     Preserved Terms of Service Snapshot (Immutable)
                   </span>
                   <span className="font-mono text-[10px] text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800">
                     Version: {quote.termsVersion}
                   </span>
                 </div>
-                <div className="cabms-surface-subtle p-3 rounded border cabms-border text-[var(--cabms-text-secondary)] text-[11px] font-mono leading-relaxed max-h-24 overflow-y-auto">
+                <div className="cabms-surface-subtle p-3 rounded border cabms-border text-(--cabms-text-secondary) text-[11px] font-mono leading-relaxed max-h-24 overflow-y-auto">
                   {quote.termsContentSnapshot}
                 </div>
               </div>
@@ -508,13 +508,13 @@ export const QuotesAcceptanceView: React.FC = () => {
             <div className="cabms-card p-5 space-y-4">
               <div className="flex items-center space-x-2 pb-3 border-b border-slate-800">
                 <FontAwesomeIcon icon={faUserCheck} className="w-5 h-5 text-emerald-400" />
-                <h3 className="text-sm font-bold text-[var(--cabms-text-primary)]">
+                <h3 className="text-sm font-bold text-(--cabms-text-primary)">
                   Customer Acceptance Link
                 </h3>
               </div>
 
               <div className="space-y-3 text-xs">
-                <p className="text-[var(--cabms-text-secondary)] leading-relaxed">
+                <p className="text-(--cabms-text-secondary) leading-relaxed">
                   Test the standalone customer acceptance portal link generated for {currentJob.siteContact}.
                 </p>
 
@@ -527,13 +527,13 @@ export const QuotesAcceptanceView: React.FC = () => {
                 </button>
 
                 <div className="pt-3 border-t border-slate-800">
-                  <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">
                     Simulate Quick Token Condition
                   </label>
                   <select
                     value={activeLinkScenario}
                     onChange={e => setActiveLinkScenario(e.target.value as any)}
-                    className="w-full cabms-input rounded px-2.5 py-1.5 text-[var(--cabms-text-primary)] font-medium cursor-pointer"
+                    className="w-full cabms-input rounded px-2.5 py-1.5 text-(--cabms-text-primary) font-medium cursor-pointer"
                   >
                     <option value="valid">Valid Acceptance Token (Normal)</option>
                     <option value="invalid">Invalid / Corrupted Token</option>
@@ -545,7 +545,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                 </div>
 
                 <div className="cabms-card-subtle p-3 space-y-2">
-                  <label className="flex items-start space-x-2 cursor-pointer text-[var(--cabms-text-secondary)]">
+                  <label className="flex items-start space-x-2 cursor-pointer text-(--cabms-text-secondary)">
                     <input
                       type="checkbox"
                       checked={customerAcceptedCheck}
@@ -560,7 +560,7 @@ export const QuotesAcceptanceView: React.FC = () => {
 
                 <button
                   onClick={handleSimulateAcceptance}
-                  className="w-full py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] font-bold text-xs rounded-lg transition cursor-pointer flex items-center justify-center space-x-1.5"
+                  className="w-full py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-bold text-xs rounded-lg transition cursor-pointer flex items-center justify-center space-x-1.5"
                 >
                   <FontAwesomeIcon icon={faPaperPlane} className="w-4 h-4" />
                   <span>Execute Acceptance in Office</span>
@@ -596,34 +596,34 @@ export const QuotesAcceptanceView: React.FC = () => {
       {isPrepareModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
+            <h3 className="text-base font-bold text-(--cabms-text-primary) flex items-center space-x-2">
               <FontAwesomeIcon icon={faPlus} className="w-5 h-5 text-sky-400" />
               <span>Prepare MYOB Quote for {currentJob.id}</span>
             </h3>
-            <p className="text-xs text-[var(--cabms-text-secondary)]">
+            <p className="text-xs text-(--cabms-text-secondary)">
               Generates a formal quotation linked to the shared MYOB company file with snapshot Terms of Service.
             </p>
 
             <form onSubmit={handlePrepareQuoteSubmit} className="space-y-3 text-xs">
               <div>
-                <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Quote Title / Scope</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Quote Title / Scope</label>
                 <input
                   type="text"
                   required
                   value={quoteTitle}
                   onChange={e => setQuoteTitle(e.target.value)}
-                  className="w-full cabms-input rounded p-2 text-[var(--cabms-text-primary)]"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                 />
               </div>
 
               <div>
-                <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Total Amount Inc GST ($)</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Total Amount Inc GST ($)</label>
                 <input
                   type="number"
                   required
                   value={quoteAmount}
                   onChange={e => setQuoteAmount(e.target.value)}
-                  className="w-full cabms-input rounded p-2 text-[var(--cabms-text-primary)] font-mono"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary) font-mono"
                 />
               </div>
 
@@ -631,7 +631,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsPrepareModalOpen(false)}
-                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] rounded font-semibold transition cursor-pointer"
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) rounded font-semibold transition cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -651,16 +651,16 @@ export const QuotesAcceptanceView: React.FC = () => {
       {showReferralModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
+            <h3 className="text-base font-bold text-(--cabms-text-primary) flex items-center space-x-2">
               <FontAwesomeIcon icon={faShieldHalved} className="w-5 h-5 text-purple-400" />
               <span>Manual Owner Referral Logged</span>
             </h3>
-            <p className="text-xs text-[var(--cabms-text-secondary)] leading-relaxed">
+            <p className="text-xs text-(--cabms-text-secondary) leading-relaxed">
               This job has been flagged for manual owner review regarding formal major residential contract documentation.
               Because automatic legal routing by threshold is explicitly DEFERRED in G00, an office administrator or owner
               must manually verify whether a statutory QBCC contract is necessary.
             </p>
-            <div className="cabms-card-subtle p-3 text-[11px] text-[var(--cabms-text-secondary)] font-mono">
+            <div className="cabms-card-subtle p-3 text-[11px] text-(--cabms-text-secondary) font-mono">
               Referral logged for {currentJob.id} • Action assigned to: Owner / Principal
             </div>
             <div className="flex justify-end pt-2">

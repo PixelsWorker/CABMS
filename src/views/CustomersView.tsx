@@ -146,11 +146,11 @@ export const CustomersView: React.FC = () => {
           <div>
             <div className="flex items-center space-x-2">
               <FontAwesomeIcon icon={faUsers} className="w-5 h-5 text-sky-400" />
-              <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
+              <h1 className="text-xl font-bold text-(--cabms-text-primary) tracking-tight">
                 Customer Directory & MYOB Business Master
               </h1>
             </div>
-            <p className="text-xs text-[var(--cabms-text-secondary)] mt-1">
+            <p className="text-xs text-(--cabms-text-secondary) mt-1">
               Shared cross-brand client records synchronized directly with MYOB Business — Client-Reported Shared Company File (Simulated).
             </p>
           </div>
@@ -170,8 +170,8 @@ export const CustomersView: React.FC = () => {
         <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center space-x-2">
             <FontAwesomeIcon icon={faDatabase} className="w-4 h-4 text-emerald-400" />
-            <span className="text-[var(--cabms-text-secondary)]">Connection:</span>
-            <strong className="text-[var(--cabms-text-primary)] font-mono">
+            <span className="text-(--cabms-text-secondary)">Connection:</span>
+            <strong className="text-(--cabms-text-primary) font-mono">
               MYOB Business — Client-Reported Shared Company File (Simulated)
             </strong>
           </div>
@@ -193,22 +193,22 @@ export const CustomersView: React.FC = () => {
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 cabms-card p-3 rounded-xl">
         <div className="relative w-full sm:w-80">
-          <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-[var(--cabms-text-secondary)] absolute left-3 top-2.5" />
+          <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-(--cabms-text-secondary) absolute left-3 top-2.5" />
           <input
             type="text"
             placeholder="Search by name, email, MYOB Card ID..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            className="w-full cabms-card-subtle pl-9 pr-3 py-1.5 text-xs text-[var(--cabms-text-primary)] placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            className="w-full cabms-card-subtle pl-9 pr-3 py-1.5 text-xs text-(--cabms-text-primary) placeholder-slate-500 focus:outline-none focus:border-sky-500"
           />
         </div>
 
         <div className="flex items-center space-x-2 w-full sm:w-auto">
-          <span className="text-xs text-[var(--cabms-text-secondary)]">Brand:</span>
+          <span className="text-xs text-(--cabms-text-secondary)">Brand:</span>
           <select
             value={filterBrand}
             onChange={e => setFilterBrand(e.target.value)}
-            className="cabms-card-subtle rounded px-2.5 py-1 text-xs text-[var(--cabms-text-primary)] cursor-pointer"
+            className="cabms-card-subtle rounded px-2.5 py-1 text-xs text-(--cabms-text-primary) cursor-pointer"
           >
             <option value="all">All Brand Affiliations</option>
             <option value="solarcell">Solarcell</option>
@@ -221,8 +221,8 @@ export const CustomersView: React.FC = () => {
       {/* Customers Table */}
       <div className="cabms-card overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs text-[var(--cabms-text-secondary)]">
-            <thead className="cabms-surface-subtle text-[var(--cabms-text-secondary)] text-[11px] uppercase border-b cabms-border">
+          <table className="w-full text-left text-xs text-(--cabms-text-secondary)">
+            <thead className="cabms-surface-subtle text-(--cabms-text-secondary) text-[11px] uppercase border-b cabms-border">
               <tr>
                 <th className="p-3">Customer / Company</th>
                 <th className="p-3">MYOB Card ID</th>
@@ -232,7 +232,7 @@ export const CustomersView: React.FC = () => {
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[var(--cabms-border-base)] bg-transparent">
+            <tbody className="divide-y divide-(--cabms-border-base) bg-transparent">
               {filteredCustomers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-slate-500">
@@ -243,8 +243,8 @@ export const CustomersView: React.FC = () => {
                 filteredCustomers.map(customer => (
                   <tr key={customer.id} className="hover:bg-slate-800/40 transition">
                     <td className="p-3">
-                      <div className="font-bold text-[var(--cabms-text-primary)] text-sm">{customer.name}</div>
-                      <div className="text-[11px] text-[var(--cabms-text-secondary)] flex items-center space-x-1 mt-0.5">
+                      <div className="font-bold text-(--cabms-text-primary) text-sm">{customer.name}</div>
+                      <div className="text-[11px] text-(--cabms-text-secondary) flex items-center space-x-1 mt-0.5">
                         <FontAwesomeIcon icon={faLocationDot} className="w-3 h-3 text-slate-500" />
                         <span>{customer.billingAddress}</span>
                       </div>
@@ -255,11 +255,11 @@ export const CustomersView: React.FC = () => {
                       </span>
                     </td>
                     <td className="p-3 space-y-0.5">
-                      <div className="flex items-center space-x-1 text-[var(--cabms-text-secondary)]">
+                      <div className="flex items-center space-x-1 text-(--cabms-text-secondary)">
                         <FontAwesomeIcon icon={faEnvelope} className="w-3 h-3 text-slate-500" />
                         <span>{customer.email}</span>
                       </div>
-                      <div className="flex items-center space-x-1 text-[var(--cabms-text-secondary)]">
+                      <div className="flex items-center space-x-1 text-(--cabms-text-secondary)">
                         <FontAwesomeIcon icon={faPhone} className="w-3 h-3 text-slate-500" />
                         <span>{customer.phone}</span>
                       </div>
@@ -269,7 +269,7 @@ export const CustomersView: React.FC = () => {
                         {customer.brandAffiliations.map(b => (
                           <span
                             key={b}
-                            className="px-2 py-0.5 rounded text-[10px] font-semibold cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]"
+                            className="px-2 py-0.5 rounded text-[10px] font-semibold cabms-surface-subtle border cabms-border text-(--cabms-text-secondary)"
                           >
                             {brands[b]?.name || b}
                           </span>
@@ -322,66 +322,66 @@ export const CustomersView: React.FC = () => {
       {isAddModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
+            <h3 className="text-base font-bold text-(--cabms-text-primary) flex items-center space-x-2">
               <FontAwesomeIcon icon={faPlus} className="w-5 h-5 text-sky-400" />
               <span>Create Customer (MYOB Write-Through Simulation)</span>
             </h3>
 
-            <p className="text-xs text-[var(--cabms-text-secondary)]">
+            <p className="text-xs text-(--cabms-text-secondary)">
               New customer records are written directly to the shared MYOB company file. Test deterministic outcomes below.
             </p>
 
             <form onSubmit={e => handleFormSubmit(e, false)} className="space-y-3 text-xs">
               <div>
-                <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Customer / Business Name</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Customer / Business Name</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. Oceanic Resort Group"
                   value={newCustName}
                   onChange={e => setNewCustName(e.target.value)}
-                  className="w-full cabms-input rounded p-2 text-[var(--cabms-text-primary)]"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Email</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Email</label>
                   <input
                     type="email"
                     required
                     placeholder="accounts@example.com"
                     value={newCustEmail}
                     onChange={e => setNewCustEmail(e.target.value)}
-                    className="w-full cabms-input rounded p-2 text-[var(--cabms-text-primary)]"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                   />
                 </div>
                 <div>
-                  <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Phone</label>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Phone</label>
                   <input
                     type="tel"
                     placeholder="0400 123 456"
                     value={newCustPhone}
                     onChange={e => setNewCustPhone(e.target.value)}
-                    className="w-full cabms-input rounded p-2 text-[var(--cabms-text-primary)]"
+                    className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-[var(--cabms-text-secondary)] block font-semibold mb-1">Billing Address</label>
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Billing Address</label>
                 <input
                   type="text"
                   placeholder="[Fictional] 120 Marine Parade, Southport QLD 4215"
                   value={newCustAddress}
                   onChange={e => setNewCustAddress(e.target.value)}
-                  className="w-full cabms-input rounded p-2 text-[var(--cabms-text-primary)]"
+                  className="w-full cabms-input rounded p-2 text-(--cabms-text-primary)"
                 />
               </div>
 
               {/* Simulation Outcome Selector */}
               <div className="cabms-card-subtle p-3 space-y-2">
-                <label className="text-[var(--cabms-text-secondary)] block font-semibold text-[11px]">
+                <label className="text-(--cabms-text-secondary) block font-semibold text-[11px]">
                   Simulated Write-Through Outcome (Test Resilience)
                 </label>
                 <div className="grid grid-cols-3 gap-2">
@@ -391,7 +391,7 @@ export const CustomersView: React.FC = () => {
                     className={`py-1.5 px-2 rounded font-bold text-center border cursor-pointer ${
                       simOutcome === 'SUCCESS'
                         ? 'bg-emerald-950 text-emerald-400 border-emerald-600'
-                        : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
+                        : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary)'
                     }`}
                   >
                     Success
@@ -402,7 +402,7 @@ export const CustomersView: React.FC = () => {
                     className={`py-1.5 px-2 rounded font-bold text-center border cursor-pointer ${
                       simOutcome === 'FAILURE'
                         ? 'bg-red-950 text-red-400 border-red-600'
-                        : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
+                        : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary)'
                     }`}
                   >
                     Sync Failure
@@ -413,7 +413,7 @@ export const CustomersView: React.FC = () => {
                     className={`py-1.5 px-2 rounded font-bold text-center border cursor-pointer ${
                       simOutcome === 'UNCERTAIN'
                         ? 'bg-amber-950 text-amber-400 border-amber-600'
-                        : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)]'
+                        : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary)'
                     }`}
                   >
                     Uncertain
@@ -425,7 +425,7 @@ export const CustomersView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsAddModalOpen(false)}
-                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] rounded font-semibold transition cursor-pointer"
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) rounded font-semibold transition cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -445,22 +445,22 @@ export const CustomersView: React.FC = () => {
       {duplicateWarning.isOpen && duplicateWarning.existingCustomer && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card border-amber-900/80 max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
+            <h3 className="text-base font-bold text-(--cabms-text-primary) flex items-center space-x-2">
               <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5 text-amber-400 shrink-0" />
               <span>Potential Customer Duplicate Detected</span>
             </h3>
 
-            <p className="text-xs text-[var(--cabms-text-secondary)] leading-relaxed">
+            <p className="text-xs text-(--cabms-text-secondary) leading-relaxed">
               A customer record matching the provided {duplicateWarning.field || 'contact details'} already exists in the system.
             </p>
 
             <div className="cabms-card-subtle p-3 text-xs space-y-1">
               <span className="text-[10px] uppercase font-bold text-slate-500 block">Existing Match:</span>
-              <div className="font-bold text-[var(--cabms-text-primary)] text-sm">{duplicateWarning.existingCustomer.name}</div>
-              <div className="text-[var(--cabms-text-secondary)] font-mono">
+              <div className="font-bold text-(--cabms-text-primary) text-sm">{duplicateWarning.existingCustomer.name}</div>
+              <div className="text-(--cabms-text-secondary) font-mono">
                 MYOB Card ID: {duplicateWarning.existingCustomer.myobCustomerId}
               </div>
-              <div className="text-[var(--cabms-text-secondary)]">{duplicateWarning.existingCustomer.email}</div>
+              <div className="text-(--cabms-text-secondary)">{duplicateWarning.existingCustomer.email}</div>
             </div>
 
             <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-3 border-t border-slate-800 text-xs">
@@ -473,7 +473,7 @@ export const CustomersView: React.FC = () => {
                   setSearchQuery(existing.name);
                   showDemoNotification(`Selected existing customer: ${existing.name} (${existing.myobCustomerId}). Linked for operations.`, 'success');
                 }}
-                className="w-full sm:w-auto px-3.5 py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] rounded font-semibold cursor-pointer"
+                className="w-full sm:w-auto px-3.5 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) rounded font-semibold cursor-pointer"
               >
                 Use Existing Record
               </button>
@@ -506,12 +506,12 @@ export const CustomersView: React.FC = () => {
       {reconcileCustomerTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
+            <h3 className="text-base font-bold text-(--cabms-text-primary) flex items-center space-x-2">
               <FontAwesomeIcon icon={faRotate} className="w-5 h-5 text-amber-400" />
               <span>Reconcile Uncertain MYOB Draft</span>
             </h3>
 
-            <p className="text-xs text-[var(--cabms-text-secondary)] leading-relaxed">
+            <p className="text-xs text-(--cabms-text-secondary) leading-relaxed">
               The write-through for customer <strong>{reconcileCustomerTarget.name}</strong> returned an uncertain
               state (timeout / ambiguous response). Verify if the customer card exists in MYOB Business.
             </p>

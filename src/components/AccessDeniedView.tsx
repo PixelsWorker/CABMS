@@ -34,11 +34,11 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
 
   return (
     <div className="max-w-2xl mx-auto my-12 p-8 cabms-card border-red-700 shadow-lg text-center">
-      <div className="w-14 h-14 cabms-surface-subtle text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-700">
+      <div className="w-14 h-14 cabms-surface-subtle text-[var(--cabms-accent-danger)] rounded-full flex items-center justify-center mx-auto mb-4 border border-red-700">
         <ShieldAlert className="w-8 h-8" />
       </div>
 
-      <span className="text-[11px] font-bold tracking-widest text-red-500 uppercase cabms-surface-subtle px-3 py-1 rounded-full border border-red-700">
+      <span className="text-[11px] font-bold tracking-widest text-[var(--cabms-accent-danger)] uppercase cabms-surface-subtle px-3 py-1 rounded-full border border-red-700">
         Simulated UX Role Boundary
       </span>
 

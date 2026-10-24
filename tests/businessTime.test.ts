@@ -65,21 +65,30 @@ test('Business clock advancement and serialized event instants are explicit Bris
   assert.throws(() => advanceBusinessClock(start, Number.NaN), /finite hour/i);
 });
 
+const expectedAU = (iso: string, options: Intl.DateTimeFormatOptions) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-AU', {
+    ...options,
+    timeZone: 'Australia/Brisbane',
+  }).format(Date.UTC(y, m - 1, d, 12, 0, 0));
+};
+
 test('FC-13: formatBusinessCalendarDate renders identical calendar dates under UTC, Brisbane, Kolkata, and New York host timezones', () => {
   const previous = process.env.TZ;
   try {
     for (const timezone of ['UTC', 'Australia/Brisbane', 'Asia/Kolkata', 'America/New_York']) {
       process.env.TZ = timezone;
       const shortOct23 = formatBusinessCalendarDate('2026-10-23', { weekday: 'short', day: 'numeric', month: 'short' });
-      assert.equal(shortOct23, 'Fri, 23 Oct', `Short Oct 23 under ${timezone}`);
+      assert.equal(shortOct23, expectedAU('2026-10-23', { weekday: 'short', day: 'numeric', month: 'short' }), `Short Oct 23 under ${timezone}`);
 
       const longOct23 = formatBusinessCalendarDate('2026-10-23', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-      assert.ok(longOct23.includes('23 October 2026') && longOct23.includes('Friday'), `Long Oct 23 under ${timezone}`);
+      assert.equal(longOct23, expectedAU('2026-10-23', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), `Long Oct 23 under ${timezone}`);
+      assert.ok(longOct23.includes('23') && longOct23.includes('October') && longOct23.includes('2026') && longOct23.includes('Friday'), `Long Oct 23 components under ${timezone}`);
 
       // Month/Year boundaries
-      assert.equal(formatBusinessCalendarDate('2026-12-31', { weekday: 'short', day: 'numeric', month: 'short' }), 'Thu, 31 Dec');
-      assert.equal(formatBusinessCalendarDate('2027-01-01', { weekday: 'short', day: 'numeric', month: 'short' }), 'Fri, 1 Jan');
-      assert.equal(formatBusinessCalendarDate('2026-02-28', { day: 'numeric', month: 'short' }), '28 Feb');
+      assert.equal(formatBusinessCalendarDate('2026-12-31', { weekday: 'short', day: 'numeric', month: 'short' }), expectedAU('2026-12-31', { weekday: 'short', day: 'numeric', month: 'short' }));
+      assert.equal(formatBusinessCalendarDate('2027-01-01', { weekday: 'short', day: 'numeric', month: 'short' }), expectedAU('2027-01-01', { weekday: 'short', day: 'numeric', month: 'short' }));
+      assert.equal(formatBusinessCalendarDate('2026-02-28', { day: 'numeric', month: 'short' }), expectedAU('2026-02-28', { day: 'numeric', month: 'short' }));
 
       // Invalid inputs
       assert.equal(formatBusinessCalendarDate('2026-02-29'), 'Invalid date');
@@ -93,13 +102,15 @@ test('FC-13: formatBusinessCalendarDate renders identical calendar dates under U
   }
 });
 test('FC-13: formatBusinessCalendarDate strictly enforces Australia/Brisbane timezone even if caller options specify a different timeZone', () => {
+  const expectedShortOct23 = expectedAU('2026-10-23', { weekday: 'short', day: 'numeric', month: 'short' });
+
   const resultOverrideNY = formatBusinessCalendarDate('2026-10-23', {
     timeZone: 'America/New_York',
     weekday: 'short',
     day: 'numeric',
     month: 'short',
   } as any);
-  assert.equal(resultOverrideNY, 'Fri, 23 Oct', 'Forced Australia/Brisbane despite caller timeZone override');
+  assert.equal(resultOverrideNY, expectedShortOct23, 'Forced Australia/Brisbane despite caller timeZone override');
 
   const resultOverrideHNL = formatBusinessCalendarDate('2026-10-23', {
     timeZone: 'Pacific/Honolulu',
@@ -107,7 +118,7 @@ test('FC-13: formatBusinessCalendarDate strictly enforces Australia/Brisbane tim
     day: 'numeric',
     month: 'short',
   } as any);
-  assert.equal(resultOverrideHNL, 'Fri, 23 Oct', 'Forced Australia/Brisbane despite Honolulu override');
+  assert.equal(resultOverrideHNL, expectedShortOct23, 'Forced Australia/Brisbane despite Honolulu override');
 
   const resultOverrideUTC = formatBusinessCalendarDate('2026-10-23', {
     timeZone: 'UTC',
@@ -115,5 +126,5 @@ test('FC-13: formatBusinessCalendarDate strictly enforces Australia/Brisbane tim
     day: 'numeric',
     month: 'short',
   } as any);
-  assert.equal(resultOverrideUTC, 'Fri, 23 Oct', 'Forced Australia/Brisbane despite UTC override');
+  assert.equal(resultOverrideUTC, expectedShortOct23, 'Forced Australia/Brisbane despite UTC override');
 });

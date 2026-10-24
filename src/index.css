@@ -211,27 +211,27 @@
 }
 
 /* Light mode utility overrides for accessible contrast on light backgrounds */
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-sky-400, .text-sky-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-sky-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-sky-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-sky-500, .text-sky-400, .text-sky-300):not(:is(.bg-slate-800, .bg-slate-900, .bg-slate-950, [class*="bg-sky-950"], [class*="bg-sky-900"], .cabms-demo-controls) *):not(.bg-slate-800):not(.bg-slate-900):not(.bg-slate-950):not([class*="bg-sky-950"]):not([class*="bg-sky-900"]) {
   color: var(--cabms-accent-info);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-amber-400, .text-amber-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-amber-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-amber-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-amber-500, .text-amber-400, .text-amber-300):not(:is(.bg-slate-800, .bg-slate-900, .bg-slate-950, [class*="bg-amber-950"], [class*="bg-amber-900"], .cabms-demo-controls) *):not(.bg-slate-800):not(.bg-slate-900):not(.bg-slate-950):not([class*="bg-amber-950"]):not([class*="bg-amber-900"]) {
   color: var(--cabms-accent-warning);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-emerald-400, .text-emerald-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-emerald-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-emerald-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-emerald-500, .text-emerald-400, .text-emerald-300):not(:is(.bg-slate-800, .bg-slate-900, .bg-slate-950, [class*="bg-emerald-950"], [class*="bg-emerald-900"], .cabms-demo-controls) *):not(.bg-slate-800):not(.bg-slate-900):not(.bg-slate-950):not([class*="bg-emerald-950"]):not([class*="bg-emerald-900"]) {
   color: var(--cabms-accent-success);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-red-400, .text-red-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-red-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-red-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-red-500, .text-red-400, .text-red-300):not(:is(.bg-slate-800, .bg-slate-900, .bg-slate-950, [class*="bg-red-950"], [class*="bg-red-900"], .cabms-demo-controls) *):not(.bg-slate-800):not(.bg-slate-900):not(.bg-slate-950):not([class*="bg-red-950"]):not([class*="bg-red-900"]) {
   color: var(--cabms-accent-danger);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-purple-400, .text-purple-300):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], [class*="bg-purple-950"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]):not([class*="bg-purple-950"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-purple-500, .text-purple-400, .text-purple-300):not(:is(.bg-slate-800, .bg-slate-900, .bg-slate-950, [class*="bg-purple-950"], [class*="bg-purple-900"], .cabms-demo-controls) *):not(.bg-slate-800):not(.bg-slate-900):not(.bg-slate-950):not([class*="bg-purple-950"]):not([class*="bg-purple-900"]) {
   color: var(--cabms-accent-purple);
 }
 
-[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-slate-400, .text-slate-500):not(:is([class*="bg-slate-8"], [class*="bg-slate-9"], .cabms-demo-controls) *):not([class*="bg-slate-8"]):not([class*="bg-slate-9"]) {
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-slate-400, .text-slate-500):not(:is(.bg-slate-800, .bg-slate-900, .bg-slate-950, .cabms-demo-controls) *):not(.bg-slate-800):not(.bg-slate-900):not(.bg-slate-950) {
   color: var(--cabms-text-secondary);
 }
 

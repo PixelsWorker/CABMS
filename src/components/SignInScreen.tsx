@@ -6,7 +6,16 @@
 import React from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { Persona } from '../types/cabms.ts';
-import { ShieldCheck, UserCheck, Wrench, Building2, Lock, ArrowRight } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
+import {
+  faBuilding,
+  faUserCheck,
+  faWrench,
+  faShield,
+  faLock,
+  faArrowRight,
+} from '@fortawesome/free-solid-svg-icons';
 
 export const SignInScreen: React.FC = () => {
   const { simulateSignIn } = useCabms();
@@ -15,7 +24,7 @@ export const SignInScreen: React.FC = () => {
     role: Persona;
     title: string;
     description: string;
-    icon: React.ComponentType<{ className?: string }>;
+    icon: IconDefinition;
     accentColor: string;
     badge: string;
   }[] = [
@@ -23,7 +32,7 @@ export const SignInScreen: React.FC = () => {
       role: 'owner_admin',
       title: 'Admin (Primary Operator)',
       description: 'Full business operations, job creation, template editing, customer linkage, and MYOB invoice synchronization.',
-      icon: Building2,
+      icon: faBuilding,
       accentColor: 'border-amber-500/80 text-amber-400 bg-amber-950/20',
       badge: 'Recommended',
     },
@@ -31,7 +40,7 @@ export const SignInScreen: React.FC = () => {
       role: 'office_staff',
       title: 'Office Staff (Operations & Dispatch)',
       description: 'Work order dispatch, quotation generation, calendar appointment scheduling, and website enquiry triage.',
-      icon: UserCheck,
+      icon: faUserCheck,
       accentColor: 'border-sky-500/80 text-sky-400 bg-sky-950/20',
       badge: 'Operational',
     },
@@ -39,7 +48,7 @@ export const SignInScreen: React.FC = () => {
       role: 'technician',
       title: 'Field Technician (Dave Miller)',
       description: 'On-site field mode: safety risk assessment (JSA), test readings, compliance certificate signing, and evidence capture.',
-      icon: Wrench,
+      icon: faWrench,
       accentColor: 'border-emerald-500/80 text-emerald-400 bg-emerald-950/20',
       badge: 'Field Tech',
     },
@@ -47,7 +56,7 @@ export const SignInScreen: React.FC = () => {
       role: 'super_admin',
       title: 'Super Admin (System Governance)',
       description: 'Multi-business tenant profile creation, template version publishing, and simulated integrations configuration.',
-      icon: ShieldCheck,
+      icon: faShield,
       accentColor: 'border-purple-500/80 text-purple-400 bg-purple-950/20',
       badge: 'System Admin',
     },
@@ -57,7 +66,7 @@ export const SignInScreen: React.FC = () => {
     <div className="max-w-4xl mx-auto px-4 py-12 space-y-8">
       <div className="text-center space-y-3">
         <div className="inline-flex items-center space-x-2 cabms-surface-subtle border cabms-border px-3 py-1.5 rounded-full text-xs text-[var(--cabms-text-secondary)]">
-          <Lock className="w-3.5 h-3.5 text-amber-400" />
+          <FontAwesomeIcon icon={faLock} className="w-3.5 h-3.5 text-amber-400" />
           <span>Simulated Authentication & Role Boundary</span>
         </div>
         <h1 className="text-3xl font-extrabold text-[var(--cabms-text-primary)] tracking-tight">
@@ -70,7 +79,6 @@ export const SignInScreen: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {personas.map(p => {
-          const Icon = p.icon;
           return (
             <div
               key={p.role}
@@ -80,7 +88,7 @@ export const SignInScreen: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2.5">
                     <div className="p-2 cabms-surface-subtle rounded-lg border cabms-border">
-                      <Icon className="w-5 h-5" />
+                      <FontAwesomeIcon icon={p.icon} className="w-5 h-5" />
                     </div>
                     <span className="font-bold text-[var(--cabms-text-primary)] text-base">{p.title}</span>
                   </div>
@@ -98,7 +106,7 @@ export const SignInScreen: React.FC = () => {
                 className="w-full py-2.5 cabms-surface-subtle hover:bg-sky-700 hover:text-white text-[var(--cabms-text-primary)] font-bold text-xs rounded-lg transition border cabms-border flex items-center justify-center space-x-2 cursor-pointer shadow-sm"
               >
                 <span>Sign In as {p.title.split(' (')[0].toUpperCase()}</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <FontAwesomeIcon icon={faArrowRight} className="w-3.5 h-3.5" />
               </button>
             </div>
           );

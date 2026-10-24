@@ -9,21 +9,22 @@
 import React, { useState, useEffect } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  FileText,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  ExternalLink,
-  ShieldAlert,
-  Send,
-  RotateCcw,
-  UserCheck,
-  Building2,
-  DollarSign,
-  HelpCircle,
-  Plus,
-} from 'lucide-react';
+  faArrowUpRightFromSquare,
+  faBuilding,
+  faCircleCheck,
+  faCircleQuestion,
+  faClock,
+  faDollarSign,
+  faFileLines,
+  faPaperPlane,
+  faPlus,
+  faRotateLeft,
+  faShieldHalved,
+  faTriangleExclamation,
+  faUserCheck,
+} from '@fortawesome/free-solid-svg-icons';
 import { Quote } from '../types/cabms.ts';
 
 export const QuotesAcceptanceView: React.FC = () => {
@@ -115,7 +116,7 @@ export const QuotesAcceptanceView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <FileText className="w-5 h-5 text-sky-400" />
+              <FontAwesomeIcon icon={faFileLines} className="w-5 h-5 text-sky-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Quotations, Terms Snapshots & Customer Acceptance
               </h1>
@@ -145,7 +146,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                     : 'text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
                 }`}
               >
-                <ExternalLink className="w-3 h-3" />
+                <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3 h-3" />
                 <span>Recipient Portal View</span>
               </button>
             </div>
@@ -174,7 +175,7 @@ export const QuotesAcceptanceView: React.FC = () => {
       <div className="p-4 rounded-xl bg-purple-950/40 border border-purple-800/80 text-purple-200 text-xs space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2 font-bold text-purple-300 text-sm">
-            <ShieldAlert className="w-5 h-5 text-purple-400 shrink-0" />
+            <FontAwesomeIcon icon={faShieldHalved} className="w-5 h-5 text-purple-400 shrink-0" />
             <span>CONTRACT & E-SIGNATURE BOUNDARY: DEFERRED TO WORKING TEST SYSTEM</span>
           </div>
           <button
@@ -197,7 +198,7 @@ export const QuotesAcceptanceView: React.FC = () => {
         /* Empty State with Prepare Quote Action */
         <div className="cabms-card p-8 text-center space-y-4">
           <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mx-auto text-[var(--cabms-text-secondary)]">
-            <FileText className="w-6 h-6" />
+            <FontAwesomeIcon icon={faFileLines} className="w-6 h-6" />
           </div>
           <div className="max-w-md mx-auto space-y-1">
             <h2 className="text-base font-bold text-[var(--cabms-text-primary)]">No MYOB Quote Linked to {currentJob.id}</h2>
@@ -209,7 +210,7 @@ export const QuotesAcceptanceView: React.FC = () => {
             onClick={() => setIsPrepareModalOpen(true)}
             className="inline-flex items-center space-x-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
+            <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
             <span>Prepare / Link MYOB Quote</span>
           </button>
         </div>
@@ -366,7 +367,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                 onClick={handleSimulateAcceptance}
                 className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-sm rounded-xl transition shadow-lg cursor-pointer flex items-center justify-center space-x-2"
               >
-                <CheckCircle2 className="w-5 h-5" />
+                <FontAwesomeIcon icon={faCircleCheck} className="w-5 h-5" />
                 <span>Accept & Authorize Quotation</span>
               </button>
 
@@ -381,9 +382,9 @@ export const QuotesAcceptanceView: React.FC = () => {
                 >
                   <div className="flex items-center space-x-2 font-bold">
                     {acceptanceFeedback.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                     ) : (
-                      <AlertTriangle className="w-4 h-4 text-red-400" />
+                      <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 text-red-400" />
                     )}
                     <span>{acceptanceFeedback.success ? 'Acceptance Successfully Recorded' : 'Acceptance Blocked'}</span>
                   </div>
@@ -506,7 +507,7 @@ export const QuotesAcceptanceView: React.FC = () => {
           <div className="space-y-6">
             <div className="cabms-card p-5 space-y-4">
               <div className="flex items-center space-x-2 pb-3 border-b border-slate-800">
-                <UserCheck className="w-5 h-5 text-emerald-400" />
+                <FontAwesomeIcon icon={faUserCheck} className="w-5 h-5 text-emerald-400" />
                 <h3 className="text-sm font-bold text-[var(--cabms-text-primary)]">
                   Customer Acceptance Link
                 </h3>
@@ -521,7 +522,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                   onClick={() => setViewMode('recipient')}
                   className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs rounded-lg transition shadow-md cursor-pointer flex items-center justify-center space-x-1.5"
                 >
-                  <ExternalLink className="w-4 h-4" />
+                  <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-4 h-4" />
                   <span>Open Standalone Recipient Portal</span>
                 </button>
 
@@ -561,7 +562,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                   onClick={handleSimulateAcceptance}
                   className="w-full py-2 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] font-bold text-xs rounded-lg transition cursor-pointer flex items-center justify-center space-x-1.5"
                 >
-                  <Send className="w-4 h-4" />
+                  <FontAwesomeIcon icon={faPaperPlane} className="w-4 h-4" />
                   <span>Execute Acceptance in Office</span>
                 </button>
 
@@ -576,9 +577,9 @@ export const QuotesAcceptanceView: React.FC = () => {
                   >
                     <div className="flex items-center space-x-1.5 font-bold">
                       {acceptanceFeedback.success ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                       ) : (
-                        <AlertTriangle className="w-4 h-4 text-red-400" />
+                        <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 text-red-400" />
                       )}
                       <span>{acceptanceFeedback.success ? 'Acceptance Processed' : 'Acceptance Blocked'}</span>
                     </div>
@@ -596,7 +597,7 @@ export const QuotesAcceptanceView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <Plus className="w-5 h-5 text-sky-400" />
+              <FontAwesomeIcon icon={faPlus} className="w-5 h-5 text-sky-400" />
               <span>Prepare MYOB Quote for {currentJob.id}</span>
             </h3>
             <p className="text-xs text-[var(--cabms-text-secondary)]">
@@ -651,7 +652,7 @@ export const QuotesAcceptanceView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <ShieldAlert className="w-5 h-5 text-purple-400" />
+              <FontAwesomeIcon icon={faShieldHalved} className="w-5 h-5 text-purple-400" />
               <span>Manual Owner Referral Logged</span>
             </h3>
             <p className="text-xs text-[var(--cabms-text-secondary)] leading-relaxed">

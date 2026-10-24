@@ -8,20 +8,21 @@
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Sliders,
-  FileText,
-  FileCheck2,
-  CheckCircle2,
-  Clock,
-  Layers,
-  ArrowRight,
-  ShieldCheck,
-  Upload,
-  AlertTriangle,
-  Eye,
-  Plus,
-} from 'lucide-react';
+  faArrowRight,
+  faCircleCheck,
+  faClock,
+  faEye,
+  faFileCircleCheck,
+  faFileLines,
+  faLayerGroup,
+  faPlus,
+  faShield,
+  faSliders,
+  faTriangleExclamation,
+  faUpload,
+} from '@fortawesome/free-solid-svg-icons';
 import { TemplateSetting } from '../types/cabms.ts';
 
 export const TemplatesSettingsView: React.FC = () => {
@@ -69,7 +70,7 @@ export const TemplatesSettingsView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <Sliders className="w-5 h-5 text-amber-400" />
+              <FontAwesomeIcon icon={faSliders} className="w-5 h-5 text-amber-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Admin Content & Template Settings
               </h1>
@@ -196,7 +197,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center space-x-1.5">
-                        <FileText className="w-4 h-4 text-amber-400" />
+                        <FontAwesomeIcon icon={faFileLines} className="w-4 h-4 text-amber-400" />
                         <span className="font-bold text-white text-xs">{tpl.name}</span>
                       </div>
                       <div className="font-mono text-[11px] text-slate-300 mt-1">
@@ -249,7 +250,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 onClick={() => setPreviewModalDoc(currentTemplate)}
                 className="px-3 py-1.5 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
               >
-                <Eye className="w-3.5 h-3.5" />
+                <FontAwesomeIcon icon={faEye} className="w-3.5 h-3.5" />
                 <span>Preview Document</span>
               </button>
             </div>
@@ -286,7 +287,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   onClick={() => submitTemplateForReview(currentTemplate.id)}
                   className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg transition shadow cursor-pointer flex items-center space-x-1"
                 >
-                  <Clock className="w-3.5 h-3.5" />
+                  <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5" />
                   <span>Submit for Review</span>
                 </button>
               )}
@@ -309,7 +310,7 @@ export const TemplatesSettingsView: React.FC = () => {
                     : 'Approve and publish this template version'
                 }
               >
-                <CheckCircle2 className="w-4 h-4" />
+                <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
                 <span>
                   {currentTemplate.activeStatus === 'REVIEW'
                     ? 'Approve & Publish'

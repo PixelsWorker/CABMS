@@ -7,21 +7,22 @@
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Inbox,
-  Plus,
-  ArrowRight,
-  CheckCircle2,
-  XCircle,
-  Building2,
-  Clock,
-  User,
-  Mail,
-  Phone,
-  MapPin,
-  AlertTriangle,
-  FileCheck2,
-} from 'lucide-react';
+  faArrowRight,
+  faBuilding,
+  faCircleCheck,
+  faCircleXmark,
+  faClock,
+  faEnvelope,
+  faFileCircleCheck,
+  faInbox,
+  faLocationDot,
+  faPhone,
+  faPlus,
+  faTriangleExclamation,
+  faUser,
+} from '@fortawesome/free-solid-svg-icons';
 import { BrandId, WebsiteEnquiry } from '../types/cabms.ts';
 
 export const WebsiteInboxView: React.FC = () => {
@@ -71,7 +72,7 @@ export const WebsiteInboxView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <Inbox className="w-5 h-5 text-purple-400" />
+              <FontAwesomeIcon icon={faInbox} className="w-5 h-5 text-purple-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Existing-Website Handoff Inbox (Office Review)
               </h1>
@@ -99,7 +100,7 @@ export const WebsiteInboxView: React.FC = () => {
               onClick={() => simulateWebsiteSubmission(selectedBrandForSim)}
               className="flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-normal px-3 py-1.5 bg-purple-600 sm:w-auto hover:bg-purple-500 text-white text-xs font-bold rounded transition shadow-sm cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <FontAwesomeIcon icon={faPlus} className="w-3.5 h-3.5" />
               <span>Simulate Web Submission</span>
             </button>
           </div>
@@ -107,7 +108,7 @@ export const WebsiteInboxView: React.FC = () => {
 
         {/* Isolation Boundary Disclosure */}
         <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-[var(--cabms-text-secondary)] flex items-center space-x-2">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+          <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 text-amber-400 shrink-0" />
           <span>
             Strict boundary: No live webhooks, external forms, or website rebuilds. Synthetic entries test the office triage and matching flow.
           </span>
@@ -154,7 +155,7 @@ export const WebsiteInboxView: React.FC = () => {
 
                       <div className="text-xs text-[var(--cabms-text-secondary)] mt-1 flex flex-wrap items-center gap-3">
                         <span className="flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-slate-500" />
+                          <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5 text-slate-500" />
                           Received: {enq.submissionDate}
                         </span>
                         <span>•</span>
@@ -166,7 +167,7 @@ export const WebsiteInboxView: React.FC = () => {
                     <div>
                       {matchedCust ? (
                         <div className="bg-sky-950/80 border border-sky-800 text-sky-300 px-3 py-1 rounded-lg text-xs flex items-center space-x-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-sky-400" />
+                          <FontAwesomeIcon icon={faCircleCheck} className="w-3.5 h-3.5 text-sky-400" />
                           <span>Matched: {matchedCust.name} ({matchedCust.myobCustomerId})</span>
                         </div>
                       ) : (
@@ -188,15 +189,15 @@ export const WebsiteInboxView: React.FC = () => {
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[var(--cabms-text-secondary)] text-[11px] pt-1">
                       <div className="flex items-center space-x-1.5 truncate">
-                        <Mail className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <FontAwesomeIcon icon={faEnvelope} className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                         <span>{enq.email}</span>
                       </div>
                       <div className="flex items-center space-x-1.5">
-                        <Phone className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <FontAwesomeIcon icon={faPhone} className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                         <span>{enq.phone}</span>
                       </div>
                       <div className="flex items-center space-x-1.5 truncate">
-                        <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                        <FontAwesomeIcon icon={faLocationDot} className="w-3.5 h-3.5 text-slate-500 shrink-0" />
                         <span>{enq.address}</span>
                       </div>
                     </div>
@@ -221,7 +222,7 @@ export const WebsiteInboxView: React.FC = () => {
                       className="flex items-center space-x-1.5 px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
                     >
                       <span>Convert to Work Order</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
+                      <FontAwesomeIcon icon={faArrowRight} className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -270,7 +271,7 @@ export const WebsiteInboxView: React.FC = () => {
           <div className="cabms-card rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div className="flex items-center space-x-2">
-                <FileCheck2 className="w-5 h-5 text-purple-400" />
+                <FontAwesomeIcon icon={faFileCircleCheck} className="w-5 h-5 text-purple-400" />
                 <h3 className="text-base font-bold text-[var(--cabms-text-primary)]">Convert Web Lead to Work Order</h3>
               </div>
               <button
@@ -363,7 +364,7 @@ export const WebsiteInboxView: React.FC = () => {
 
               {myobConnection.status !== 'CONNECTED' && selectedCustMatchMode === 'new_write_through' && (
                 <div className="p-2.5 rounded bg-amber-950/40 border border-amber-800/80 text-amber-300 text-[11px] flex items-start space-x-2">
-                  <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                  <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
                   <span>
                     MYOB Business is currently offline. The new customer will be preserved as an unresolved operational local draft with pending sync status.
                   </span>
@@ -438,7 +439,7 @@ export const WebsiteInboxView: React.FC = () => {
                 className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded transition shadow cursor-pointer flex items-center space-x-1.5"
               >
                 <span>Confirm Conversion & Open Job</span>
-                <ArrowRight className="w-4 h-4" />
+                <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
               </button>
             </div>
           </div>

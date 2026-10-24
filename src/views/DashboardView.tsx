@@ -6,20 +6,21 @@
 import React from 'react';
 import { isInBusinessWeek } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Briefcase,
-  Users,
-  Calendar,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  ArrowRight,
-  Database,
-  Building2,
-  Inbox,
-  FileCheck2,
-  FileText,
-} from 'lucide-react';
+  faArrowRight,
+  faBriefcase,
+  faBuilding,
+  faCalendar,
+  faCircleCheck,
+  faClock,
+  faDatabase,
+  faFileCircleCheck,
+  faFileLines,
+  faInbox,
+  faTriangleExclamation,
+  faUsers,
+} from '@fortawesome/free-solid-svg-icons';
 import { JobStatus } from '../types/cabms.ts';
 
 export const DashboardView: React.FC = () => {
@@ -70,7 +71,7 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>In-Progress Jobs</span>
-            <Briefcase className="w-4 h-4 cabms-accent-warning" />
+            <FontAwesomeIcon icon={faBriefcase} className="w-4 h-4 cabms-accent-warning" />
           </div>
           <div className="text-2xl lg:text-3xl font-black text-[var(--cabms-text-primary)] mt-2">{inProgressJobs}</div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 flex items-center gap-1.5 leading-normal">
@@ -81,7 +82,7 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>Needs Revisit</span>
-            <AlertTriangle className="w-4 h-4 cabms-accent-danger" />
+            <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 cabms-accent-danger" />
           </div>
           <div className="text-2xl lg:text-3xl font-black cabms-accent-danger mt-2">{needsRevisitJobs}</div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 leading-normal">
@@ -92,7 +93,7 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>MYOB Write-Through</span>
-            <Database className="w-4 h-4 cabms-accent-info" />
+            <FontAwesomeIcon icon={faDatabase} className="w-4 h-4 cabms-accent-info" />
           </div>
           <div className="text-2xl lg:text-3xl font-black cabms-accent-info mt-2">
             {myobConnection.status === 'CONNECTED' ? 'Online' : 'Offline'}
@@ -105,7 +106,7 @@ export const DashboardView: React.FC = () => {
         <div className="cabms-card p-5">
           <div className="flex items-center justify-between text-[var(--cabms-text-secondary)] text-sm font-medium">
             <span>Website Enquiries</span>
-            <Inbox className="w-4 h-4 cabms-accent-success" />
+            <FontAwesomeIcon icon={faInbox} className="w-4 h-4 cabms-accent-success" />
           </div>
           <div className="text-2xl lg:text-3xl font-black cabms-accent-success mt-2">{pendingEnquiries}</div>
           <div className="text-xs text-[var(--cabms-text-secondary)] mt-2 leading-normal">
@@ -130,7 +131,7 @@ export const DashboardView: React.FC = () => {
               className="text-sm text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-semibold cursor-pointer"
             >
               <span>View All</span>
-              <ArrowRight className="w-4 h-4" />
+              <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
             </button>
           </div>
 
@@ -199,7 +200,7 @@ export const DashboardView: React.FC = () => {
                 }}
                 className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-[var(--cabms-surface)] flex items-start space-x-3 transition cursor-pointer"
               >
-                <FileCheck2 className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
+                <FontAwesomeIcon icon={faFileCircleCheck} className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <div className="font-bold text-[var(--cabms-text-primary)] text-sm">1. Complete Job Journey</div>
                   <div className="text-[var(--cabms-text-secondary)] text-xs leading-relaxed">
@@ -215,7 +216,7 @@ export const DashboardView: React.FC = () => {
                 }}
                 className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-[var(--cabms-surface)] flex items-start space-x-3 transition cursor-pointer"
               >
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
+                <FontAwesomeIcon icon={faCircleCheck} className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <div className="font-bold text-[var(--cabms-text-primary)] text-sm">2. Direct-to-Invoice Journey</div>
                   <div className="text-[var(--cabms-text-secondary)] text-xs leading-relaxed">
@@ -231,7 +232,7 @@ export const DashboardView: React.FC = () => {
                 }}
                 className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-[var(--cabms-surface)] flex items-start space-x-3 transition cursor-pointer"
               >
-                <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
+                <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <div className="font-bold text-[var(--cabms-text-primary)] text-sm">3. TCA1/TCA2 Cabling Defect</div>
                   <div className="text-[var(--cabms-text-secondary)] text-xs leading-relaxed">
@@ -244,7 +245,7 @@ export const DashboardView: React.FC = () => {
                 onClick={() => setActiveTab('customers')}
                 className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-[var(--cabms-surface)] flex items-start space-x-3 transition cursor-pointer"
               >
-                <Users className="w-5 h-5 text-sky-400 mt-0.5 shrink-0" />
+                <FontAwesomeIcon icon={faUsers} className="w-5 h-5 text-sky-400 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <div className="font-bold text-[var(--cabms-text-primary)] text-sm">4. MYOB Write-Through Simulation</div>
                   <div className="text-[var(--cabms-text-secondary)] text-xs leading-relaxed">
@@ -257,7 +258,7 @@ export const DashboardView: React.FC = () => {
                 onClick={() => setActiveTab('website_inbox')}
                 className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-[var(--cabms-surface)] flex items-start space-x-3 transition cursor-pointer"
               >
-                <Inbox className="w-5 h-5 text-purple-400 mt-0.5 shrink-0" />
+                <FontAwesomeIcon icon={faInbox} className="w-5 h-5 text-purple-400 mt-0.5 shrink-0" />
                 <div className="space-y-1">
                   <div className="font-bold text-[var(--cabms-text-primary)] text-sm">5. Existing-Site Submission (Handoff)</div>
                   <div className="text-[var(--cabms-text-secondary)] text-xs leading-relaxed">
@@ -271,7 +272,7 @@ export const DashboardView: React.FC = () => {
           {/* Compliance & Isolation Card */}
           <div className="cabms-card border-amber-700/60 p-5 text-[var(--cabms-text-secondary)] space-y-2">
             <div className="flex items-center space-x-2 text-amber-400 font-bold text-sm">
-              <AlertTriangle className="w-4 h-4" />
+              <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4" />
               <span>G00 Strict Demo Isolation</span>
             </div>
             <p className="text-xs text-[var(--cabms-text-secondary)] leading-relaxed">

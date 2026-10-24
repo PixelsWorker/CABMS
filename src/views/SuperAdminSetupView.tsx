@@ -9,21 +9,22 @@
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Settings,
-  Building2,
-  Database,
-  Calendar,
-  Mail,
-  ShieldCheck,
-  AlertTriangle,
-  CheckCircle2,
-  RefreshCw,
-  Plus,
-  Sliders,
-  ExternalLink,
-  X,
-} from 'lucide-react';
+  faArrowUpRightFromSquare,
+  faBuilding,
+  faCalendar,
+  faCircleCheck,
+  faDatabase,
+  faEnvelope,
+  faGear,
+  faPlus,
+  faRotate,
+  faShield,
+  faSliders,
+  faTriangleExclamation,
+  faXmark,
+} from '@fortawesome/free-solid-svg-icons';
 import { BrandConfig, BrandId } from '../types/cabms.ts';
 
 let brandSeqCounter = 1;
@@ -152,7 +153,7 @@ export const SuperAdminSetupView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <Settings className="w-5 h-5 text-purple-400" />
+              <FontAwesomeIcon icon={faGear} className="w-5 h-5 text-purple-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Super Admin Business & Technical Integration Setup
               </h1>
@@ -167,11 +168,11 @@ export const SuperAdminSetupView: React.FC = () => {
               onClick={() => setIsAddProfileModalOpen(true)}
               className="flex items-center space-x-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
+              <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
               <span>Add Business Profile</span>
             </button>
             <div className="bg-purple-950/80 border border-purple-800 text-purple-300 text-xs px-3 py-1.5 rounded-lg font-bold flex items-center space-x-1.5">
-              <ShieldCheck className="w-4 h-4 text-purple-400" />
+              <FontAwesomeIcon icon={faShield} className="w-4 h-4 text-purple-400" />
               <span>Super Admin Active</span>
             </div>
           </div>
@@ -471,7 +472,7 @@ export const SuperAdminSetupView: React.FC = () => {
         {/* Email & SMTP Status */}
         <div className="cabms-card p-5 space-y-3">
           <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)]">
-            <Mail className="w-4 h-4 text-sky-400" />
+            <FontAwesomeIcon icon={faEnvelope} className="w-4 h-4 text-sky-400" />
             <h3 className="font-bold text-[var(--cabms-text-primary)] text-sm">Email Sender & SMTP Status</h3>
           </div>
           <p className="text-[var(--cabms-text-secondary)] text-xs">
@@ -487,7 +488,7 @@ export const SuperAdminSetupView: React.FC = () => {
         {/* Multi-Calendar Bindings */}
         <div className="cabms-card p-5 space-y-3">
           <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)]">
-            <Calendar className="w-4 h-4 text-amber-400" />
+            <FontAwesomeIcon icon={faCalendar} className="w-4 h-4 text-amber-400" />
             <h3 className="font-bold text-[var(--cabms-text-primary)] text-sm">Google Calendar Fleet Mappings</h3>
           </div>
           <p className="text-[var(--cabms-text-secondary)] text-xs">
@@ -508,7 +509,7 @@ export const SuperAdminSetupView: React.FC = () => {
           <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-                <Building2 className="w-5 h-5 text-purple-400" />
+                <FontAwesomeIcon icon={faBuilding} className="w-5 h-5 text-purple-400" />
                 <span>Add Business Profile (Super Admin)</span>
               </h3>
               <button

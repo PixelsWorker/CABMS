@@ -7,21 +7,22 @@
 import React, { useState } from 'react';
 import { formatBusinessTime, formatBusinessCalendarDate } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Calendar as CalendarIcon,
-  Clock,
-  MapPin,
-  ExternalLink,
-  RotateCcw,
-  XCircle,
-  AlertTriangle,
-  CheckCircle2,
-  Bell,
-  User,
-  Building2,
-  CalendarDays,
-  FastForward,
-} from 'lucide-react';
+  faArrowUpRightFromSquare,
+  faBell,
+  faBuilding,
+  faCalendar,
+  faCalendarDays,
+  faCircleCheck,
+  faCircleXmark,
+  faClock,
+  faForward,
+  faLocationDot,
+  faRotateLeft,
+  faTriangleExclamation,
+  faUser,
+} from '@fortawesome/free-solid-svg-icons';
 import { Job } from '../types/cabms.ts';
 
 export const ScheduleView: React.FC = () => {
@@ -91,7 +92,7 @@ export const ScheduleView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <CalendarIcon className="w-5 h-5 text-indigo-400" />
+              <FontAwesomeIcon icon={faCalendar} className="w-5 h-5 text-indigo-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Field Service Dispatch & Calendar Scheduling
               </h1>
@@ -104,7 +105,7 @@ export const ScheduleView: React.FC = () => {
           {/* Demo Clock Advance Control (G00-020) */}
           <div className="flex flex-wrap items-center gap-2 cabms-card-subtle p-2 text-xs">
             <div className="flex items-center space-x-1.5 text-[var(--cabms-text-secondary)]">
-              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5 text-amber-400" />
               <span className="font-mono text-[var(--cabms-text-primary)] font-bold">{formatBusinessTime(demoClock)}</span>
             </div>
             <div className="flex items-center space-x-1 pl-2 border-l border-slate-800">
@@ -162,7 +163,7 @@ export const ScheduleView: React.FC = () => {
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
               <span className="text-[var(--cabms-text-primary)] font-semibold">CABMS Operations Hub</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <CheckCircle2 className="w-3 h-3" /> Synced (Simulated)
+                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced (Simulated)
               </div>
             </div>
 
@@ -170,7 +171,7 @@ export const ScheduleView: React.FC = () => {
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #1</span>
               <span className="text-amber-400 font-semibold">{brands.solarcell?.calendarMappingName}</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <CheckCircle2 className="w-3 h-3" /> Synced
+                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
               </div>
             </div>
 
@@ -178,7 +179,7 @@ export const ScheduleView: React.FC = () => {
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #2</span>
               <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName || brands.smarthome?.calendarMappingName}</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <CheckCircle2 className="w-3 h-3" /> Synced
+                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
               </div>
             </div>
 
@@ -186,7 +187,7 @@ export const ScheduleView: React.FC = () => {
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #3</span>
               <span className="text-emerald-400 font-semibold">{brands.cctv?.calendarMappingName}</span>
               <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <CheckCircle2 className="w-3 h-3" /> Synced
+                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
               </div>
             </div>
           </div>
@@ -197,7 +198,7 @@ export const ScheduleView: React.FC = () => {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider flex items-center space-x-2">
-            <CalendarDays className="w-4 h-4 text-amber-400" />
+            <FontAwesomeIcon icon={faCalendarDays} className="w-4 h-4 text-amber-400" />
             <span>
               Agenda for {formatBusinessCalendarDate(selectedDay, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </span>
@@ -226,7 +227,7 @@ export const ScheduleView: React.FC = () => {
                 {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && job.appointmentStatus === 'CANCELLED' && (
                   <div className="bg-red-950/40 border border-red-800/80 rounded-lg p-3 text-xs text-red-200 flex items-center justify-between">
                     <div className="flex items-center space-x-2">
-                      <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                      <FontAwesomeIcon icon={faCircleXmark} className="w-4 h-4 text-red-400 shrink-0" />
                       <span>
                         <strong>Visit Cancelled</strong> — Customer reminders have been suppressed. Work order remains open for rescheduling.
                       </span>
@@ -247,7 +248,7 @@ export const ScheduleView: React.FC = () => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-start space-x-3">
                     <div className="cabms-card-subtle p-2.5 rounded-lg text-center shrink-0">
-                      <Clock className="w-4 h-4 text-amber-400 mx-auto" />
+                      <FontAwesomeIcon icon={faClock} className="w-4 h-4 text-amber-400 mx-auto" />
                       <span className="font-mono text-xs font-bold text-[var(--cabms-text-primary)] block mt-1">
                         {job.scheduledTime}
                       </span>
@@ -278,7 +279,7 @@ export const ScheduleView: React.FC = () => {
                       </div>
                       <div className="text-xs text-[var(--cabms-text-secondary)] mt-1 flex flex-wrap items-center gap-3">
                         <span className="flex items-center gap-1">
-                          <User className="w-3.5 h-3.5 text-slate-500" />
+                          <FontAwesomeIcon icon={faUser} className="w-3.5 h-3.5 text-slate-500" />
                           {job.siteContact} ({job.sitePhone})
                         </span>
                         <span>•</span>
@@ -306,7 +307,7 @@ export const ScheduleView: React.FC = () => {
                           }}
                           className="px-2.5 py-1.5 cabms-surface-subtle border cabms-border text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
                         >
-                          <RotateCcw className="w-3.5 h-3.5 text-sky-400" />
+                          <FontAwesomeIcon icon={faRotateLeft} className="w-3.5 h-3.5 text-sky-400" />
                           <span>{job.appointmentStatus === 'CANCELLED' ? 'Re-book Visit' : 'Reschedule'}</span>
                         </button>
 
@@ -315,7 +316,7 @@ export const ScheduleView: React.FC = () => {
                             onClick={() => setCancelTarget(job)}
                             className="px-2.5 py-1.5 bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/60 text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1"
                           >
-                            <XCircle className="w-3.5 h-3.5" />
+                            <FontAwesomeIcon icon={faCircleXmark} className="w-3.5 h-3.5" />
                             <span>Cancel Visit</span>
                           </button>
                         )}
@@ -341,7 +342,7 @@ export const ScheduleView: React.FC = () => {
                 {/* Site Address & Safe Google Maps Demonstration Link (G00-023) */}
                 <div className="cabms-card-subtle p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                   <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)]">
-                    <MapPin className="w-4 h-4 text-red-400 shrink-0" />
+                    <FontAwesomeIcon icon={faLocationDot} className="w-4 h-4 text-red-400 shrink-0" />
                     <div>
                       <span className="text-[var(--cabms-text-secondary)] text-[11px] block">Job Installation Site:</span>
                       <span className="text-[var(--cabms-text-primary)] font-medium">{job.siteAddress}</span>
@@ -356,7 +357,7 @@ export const ScheduleView: React.FC = () => {
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 rounded-lg font-semibold text-xs transition cursor-pointer self-start sm:self-center"
                     title="Opens safe public Google Maps navigation example"
                   >
-                    <ExternalLink className="w-3.5 h-3.5" />
+                    <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3.5 h-3.5" />
                     <span>Open in Google Maps (Public Demo Destination)</span>
                   </a>
                 </div>
@@ -365,7 +366,7 @@ export const ScheduleView: React.FC = () => {
                 {job.reminders.length > 0 && (
                   <div className="pt-2 border-t border-slate-800/80 text-xs space-y-1.5">
                     <span className="text-[11px] font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider flex items-center space-x-1">
-                      <Bell className="w-3 h-3 text-amber-400" />
+                      <FontAwesomeIcon icon={faBell} className="w-3 h-3 text-amber-400" />
                       <span>Automated Email Reminders & Suppression History</span>
                     </span>
                     <div className="space-y-1">
@@ -415,7 +416,7 @@ export const ScheduleView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <RotateCcw className="w-5 h-5 text-sky-400" />
+              <FontAwesomeIcon icon={faRotateLeft} className="w-5 h-5 text-sky-400" />
               <span>Reschedule Appointment ({rescheduleTarget.id})</span>
             </h3>
 
@@ -471,7 +472,7 @@ export const ScheduleView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card border-red-900/60 max-w-md w-full p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <XCircle className="w-5 h-5 text-red-400" />
+              <FontAwesomeIcon icon={faCircleXmark} className="w-5 h-5 text-red-400" />
               <span>Cancel Appointment ({cancelTarget.id})</span>
             </h3>
 

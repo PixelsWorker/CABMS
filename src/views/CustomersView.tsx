@@ -8,23 +8,24 @@
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Users,
-  Search,
-  Plus,
-  Database,
-  AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  HelpCircle,
-  Building2,
-  RefreshCw,
-  Mail,
-  Phone,
-  MapPin,
-  ArrowRight,
-  ShieldAlert,
-} from 'lucide-react';
+  faArrowRight,
+  faBuilding,
+  faCircleCheck,
+  faCircleQuestion,
+  faCircleXmark,
+  faDatabase,
+  faEnvelope,
+  faLocationDot,
+  faMagnifyingGlass,
+  faPhone,
+  faPlus,
+  faRotate,
+  faShieldHalved,
+  faTriangleExclamation,
+  faUsers,
+} from '@fortawesome/free-solid-svg-icons';
 import { BrandId, Customer } from '../types/cabms.ts';
 import { checkCustomerDuplicate } from '../utils/cabmsLogic.ts';
 
@@ -144,7 +145,7 @@ export const CustomersView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <Users className="w-5 h-5 text-sky-400" />
+              <FontAwesomeIcon icon={faUsers} className="w-5 h-5 text-sky-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Customer Directory & MYOB Business Master
               </h1>
@@ -159,7 +160,7 @@ export const CustomersView: React.FC = () => {
               onClick={() => setIsAddModalOpen(true)}
               className="flex items-center space-x-1.5 px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
+              <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
               <span>New Customer (MYOB Write-Through)</span>
             </button>
           </div>
@@ -168,7 +169,7 @@ export const CustomersView: React.FC = () => {
         {/* MYOB Shared Connection Info Bar (G00-035) */}
         <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center space-x-2">
-            <Database className="w-4 h-4 text-emerald-400" />
+            <FontAwesomeIcon icon={faDatabase} className="w-4 h-4 text-emerald-400" />
             <span className="text-[var(--cabms-text-secondary)]">Connection:</span>
             <strong className="text-[var(--cabms-text-primary)] font-mono">
               MYOB Business — Client-Reported Shared Company File (Simulated)
@@ -192,7 +193,7 @@ export const CustomersView: React.FC = () => {
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-3 cabms-card p-3 rounded-xl">
         <div className="relative w-full sm:w-80">
-          <Search className="w-4 h-4 text-[var(--cabms-text-secondary)] absolute left-3 top-2.5" />
+          <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-[var(--cabms-text-secondary)] absolute left-3 top-2.5" />
           <input
             type="text"
             placeholder="Search by name, email, MYOB Card ID..."
@@ -244,7 +245,7 @@ export const CustomersView: React.FC = () => {
                     <td className="p-3">
                       <div className="font-bold text-[var(--cabms-text-primary)] text-sm">{customer.name}</div>
                       <div className="text-[11px] text-[var(--cabms-text-secondary)] flex items-center space-x-1 mt-0.5">
-                        <MapPin className="w-3 h-3 text-slate-500" />
+                        <FontAwesomeIcon icon={faLocationDot} className="w-3 h-3 text-slate-500" />
                         <span>{customer.billingAddress}</span>
                       </div>
                     </td>
@@ -255,11 +256,11 @@ export const CustomersView: React.FC = () => {
                     </td>
                     <td className="p-3 space-y-0.5">
                       <div className="flex items-center space-x-1 text-[var(--cabms-text-secondary)]">
-                        <Mail className="w-3 h-3 text-slate-500" />
+                        <FontAwesomeIcon icon={faEnvelope} className="w-3 h-3 text-slate-500" />
                         <span>{customer.email}</span>
                       </div>
                       <div className="flex items-center space-x-1 text-[var(--cabms-text-secondary)]">
-                        <Phone className="w-3 h-3 text-slate-500" />
+                        <FontAwesomeIcon icon={faPhone} className="w-3 h-3 text-slate-500" />
                         <span>{customer.phone}</span>
                       </div>
                     </td>
@@ -285,9 +286,9 @@ export const CustomersView: React.FC = () => {
                             : 'bg-amber-950 text-amber-400 border border-amber-800'
                         }`}
                       >
-                        {customer.syncStatus === 'SYNCED' && <CheckCircle2 className="w-3 h-3" />}
-                        {customer.syncStatus === 'FAILED' && <XCircle className="w-3 h-3" />}
-                        {customer.syncStatus === 'UNCERTAIN' && <AlertTriangle className="w-3 h-3" />}
+                        {customer.syncStatus === 'SYNCED' && <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" />}
+                        {customer.syncStatus === 'FAILED' && <FontAwesomeIcon icon={faCircleXmark} className="w-3 h-3" />}
+                        {customer.syncStatus === 'UNCERTAIN' && <FontAwesomeIcon icon={faTriangleExclamation} className="w-3 h-3" />}
                         <span>{customer.syncStatus}</span>
                       </span>
                     </td>
@@ -322,7 +323,7 @@ export const CustomersView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <Plus className="w-5 h-5 text-sky-400" />
+              <FontAwesomeIcon icon={faPlus} className="w-5 h-5 text-sky-400" />
               <span>Create Customer (MYOB Write-Through Simulation)</span>
             </h3>
 
@@ -445,7 +446,7 @@ export const CustomersView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card border-amber-900/80 max-w-md w-full p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+              <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5 text-amber-400 shrink-0" />
               <span>Potential Customer Duplicate Detected</span>
             </h3>
 
@@ -506,7 +507,7 @@ export const CustomersView: React.FC = () => {
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-[var(--cabms-text-primary)] flex items-center space-x-2">
-              <RefreshCw className="w-5 h-5 text-amber-400" />
+              <FontAwesomeIcon icon={faRotate} className="w-5 h-5 text-amber-400" />
               <span>Reconcile Uncertain MYOB Draft</span>
             </h3>
 

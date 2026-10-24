@@ -14,6 +14,7 @@ import { ComplianceFormsView } from '../src/views/ComplianceFormsView.tsx';
 import { QuotesAcceptanceView } from '../src/views/QuotesAcceptanceView.tsx';
 import { ScheduleView } from '../src/views/ScheduleView.tsx';
 import { AccessDeniedView } from '../src/components/AccessDeniedView.tsx';
+import { BrandLogo } from '../src/components/BrandLogo.tsx';
 import { Persona, BrandId, AppearanceMode } from '../src/types/cabms.ts';
 // These SSR wrappers label markup fixtures; they do not execute responsive CSS.
 // Fixed Viewport Representation Wrappers
@@ -227,6 +228,27 @@ test('LAYER 7: Mounted light mode test verifies representative inputs, panels an
       assert.ok(!card.classList.contains('bg-slate-900'), 'Card does not use hardcoded bg-slate-900');
     }
   });
+});
+
+test('LAYER 7: SSR markup — brand logos render for all 3 businesses across all appearance modes', () => {
+  const brands = ['solarcell', 'smart_home', 'cctv'] as const;
+  const modes = ['default_dark', 'high_visibility_light', 'high_visibility_dark'] as const;
+
+  for (const brand of brands) {
+    for (const mode of modes) {
+      const fullHtml = renderToString(
+        React.createElement(BrandLogo, { brandId: brand, variant: 'full' })
+      );
+      assert.ok(fullHtml.includes('cabms-brand-svg'), `full logo for ${brand} has cabms-brand-svg`);
+      assert.ok(fullHtml.includes('cabms-brand-full-svg'), `full logo for ${brand} has cabms-brand-full-svg`);
+
+      const markHtml = renderToString(
+        React.createElement(BrandLogo, { brandId: brand, variant: 'mark' })
+      );
+      assert.ok(markHtml.includes('cabms-brand-svg'), `mark logo for ${brand} has cabms-brand-svg`);
+      assert.ok(markHtml.includes('cabms-brand-mark-svg'), `mark logo for ${brand} has cabms-brand-mark-svg`);
+    }
+  }
 });
 
 // Mounted state assertions supplement SSR structure; JSDOM does not measure CSS layout.

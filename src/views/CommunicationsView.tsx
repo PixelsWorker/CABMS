@@ -10,21 +10,22 @@ import { formatBusinessTime } from '../utils/businessTime.ts';
 import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  MessageSquare,
-  Bell,
-  Mail,
-  Send,
-  RotateCcw,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  ShieldCheck,
-  Star,
-  ExternalLink,
-  FastForward,
-  RefreshCw,
-} from 'lucide-react';
+  faArrowUpRightFromSquare,
+  faBell,
+  faCircleCheck,
+  faClock,
+  faComment,
+  faEnvelope,
+  faForward,
+  faPaperPlane,
+  faRotate,
+  faRotateLeft,
+  faShield,
+  faStar,
+  faTriangleExclamation,
+} from '@fortawesome/free-solid-svg-icons';
 import { Job } from '../types/cabms.ts';
 
 export const CommunicationsView: React.FC = () => {
@@ -140,7 +141,7 @@ export const CommunicationsView: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center space-x-2">
-              <MessageSquare className="w-5 h-5 text-emerald-400" />
+              <FontAwesomeIcon icon={faComment} className="w-5 h-5 text-emerald-400" />
               <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
                 Automated Communications & Google Review Requests
               </h1>
@@ -153,7 +154,7 @@ export const CommunicationsView: React.FC = () => {
           <div className="flex w-full min-w-0 flex-wrap items-center gap-3 sm:w-auto">
             {/* Clock Advance Widget (G00-020) */}
             <div className="flex max-w-full flex-wrap items-center gap-2 cabms-card-subtle px-2.5 py-1.5 text-xs">
-              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5 text-amber-400" />
               <span className="font-mono text-[var(--cabms-text-primary)] font-bold">{formatBusinessTime(demoClock)}</span>
               <button
                 onClick={() => advanceClock(2)}
@@ -196,7 +197,7 @@ export const CommunicationsView: React.FC = () => {
                 : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
             }`}
           >
-            <Star className="w-3.5 h-3.5" />
+            <FontAwesomeIcon icon={faStar} className="w-3.5 h-3.5" />
             <span>Google Review Automation & Deduplication</span>
           </button>
 
@@ -208,7 +209,7 @@ export const CommunicationsView: React.FC = () => {
                 : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
             }`}
           >
-            <Bell className="w-3.5 h-3.5" />
+            <FontAwesomeIcon icon={faBell} className="w-3.5 h-3.5" />
             <span>Appointment Reminders & Invalidation</span>
           </button>
 
@@ -220,7 +221,7 @@ export const CommunicationsView: React.FC = () => {
                 : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
             }`}
           >
-            <Mail className="w-3.5 h-3.5" />
+            <FontAwesomeIcon icon={faEnvelope} className="w-3.5 h-3.5" />
             <span>Certificate Delivery Previews</span>
           </button>
         </div>
@@ -284,7 +285,7 @@ export const CommunicationsView: React.FC = () => {
                   onClick={() => handleSendReview()}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold rounded-lg transition shadow-md cursor-pointer flex items-center space-x-1.5"
                 >
-                  <Send className="w-3.5 h-3.5" />
+                  <FontAwesomeIcon icon={faPaperPlane} className="w-3.5 h-3.5" />
                   <span>Send Review Request (Normal)</span>
                 </button>
 
@@ -312,7 +313,7 @@ export const CommunicationsView: React.FC = () => {
                     }}
                     className="px-3.5 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded-lg transition cursor-pointer flex items-center space-x-1.5"
                   >
-                    <RefreshCw className="w-3.5 h-3.5" />
+                    <FontAwesomeIcon icon={faRotate} className="w-3.5 h-3.5" />
                     <span>Retry Dispatch</span>
                   </button>
                 )}
@@ -326,7 +327,7 @@ export const CommunicationsView: React.FC = () => {
                       }}
                       className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg transition cursor-pointer flex items-center space-x-1.5"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" />
+                      <FontAwesomeIcon icon={faRotateLeft} className="w-3.5 h-3.5" />
                       <span>Confirm Sent</span>
                     </button>
                     <button
@@ -353,9 +354,9 @@ export const CommunicationsView: React.FC = () => {
                 >
                   <div className="flex items-center space-x-1.5 font-bold">
                     {reviewFeedback.success ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                     ) : (
-                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                      <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4 text-amber-400" />
                     )}
                     <span>{reviewFeedback.success ? 'Dispatch Confirmed' : 'Dispatch Guard Triggered'}</span>
                   </div>
@@ -398,7 +399,7 @@ export const CommunicationsView: React.FC = () => {
                     className="inline-flex items-center space-x-2 px-5 py-2.5 rounded-lg font-bold text-slate-950 text-xs transition shadow cursor-pointer"
                     style={{ backgroundColor: brands[currentJob.brandId]?.primaryColor }}
                   >
-                    <Star className="w-4 h-4 fill-current" />
+                    <FontAwesomeIcon icon={faStar} className="w-4 h-4 fill-current" />
                     <span>Share Your Experience on Google</span>
                   </a>
                 </div>
@@ -516,7 +517,7 @@ export const CommunicationsView: React.FC = () => {
                         >
                           <span>{fType}</span>
                           {isSigned ? (
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                            <FontAwesomeIcon icon={faCircleCheck} className="w-3.5 h-3.5 text-emerald-300" />
                           ) : (
                             <span className="text-[10px] text-amber-400 font-mono">(Unsigned)</span>
                           )}
@@ -545,7 +546,7 @@ export const CommunicationsView: React.FC = () => {
                         : 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60'
                     }`}
                   >
-                    <Send className="w-3.5 h-3.5" />
+                    <FontAwesomeIcon icon={faPaperPlane} className="w-3.5 h-3.5" />
                     <span>Send Certificate Email (Normal)</span>
                   </button>
                   <button
@@ -595,7 +596,7 @@ export const CommunicationsView: React.FC = () => {
                   <div className="space-y-1">
                     {signedCerts.map((certName, idx) => (
                       <div key={idx} className="flex items-center space-x-1.5 text-emerald-400 font-mono text-[11px]">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                        <FontAwesomeIcon icon={faCircleCheck} className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                         <span>{certName}</span>
                       </div>
                     ))}
@@ -662,7 +663,7 @@ export const CommunicationsView: React.FC = () => {
                             onClick={() => retryCertificateDelivery(deliv.id)}
                             className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[11px] rounded transition cursor-pointer flex items-center space-x-1"
                           >
-                            <RefreshCw className="w-3 h-3" />
+                            <FontAwesomeIcon icon={faRotate} className="w-3 h-3" />
                             <span>Retry Delivery</span>
                           </button>
                         )}

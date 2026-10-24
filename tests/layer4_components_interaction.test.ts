@@ -27,12 +27,13 @@ test('LAYER 4: Components — DashboardView renders KPI metrics and workflow que
   assert.ok(html.includes('Operational Jobs') || html.includes('Website Enquiries'));
 });
 
-test('LAYER 4: Components — Navigation topbar renders brand identity, credentials, and MYOB connection', () => {
+test('LAYER 4: Components — Navigation topbar renders brand logo and omits redundant topbar metadata', () => {
   const html = renderToString(
     React.createElement(CabmsProvider, null, React.createElement(Navigation))
   );
   assert.ok(html.includes('Solarcell'));
-  assert.ok(html.includes('Licence:') || html.includes('MYOB File:'));
+  assert.ok(html.includes('cabms-topbar-logo'));
+  assert.ok(!html.includes('cabms-topbar-meta'));
 });
 
 test('LAYER 4: Components — CustomersView renders directory, search, and duplicate resolution structure', () => {

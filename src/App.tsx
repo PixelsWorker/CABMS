@@ -10,6 +10,7 @@
  */
 
 import React from 'react';
+import { config } from '@fortawesome/fontawesome-svg-core';
 import { CabmsProvider, useCabms } from './context/CabmsContext.tsx';
 import { DemoBanner } from './components/DemoBanner.tsx';
 import { DemoControlsBar } from './components/DemoControlsBar.tsx';
@@ -27,6 +28,8 @@ import { SuperAdminSetupView } from './views/SuperAdminSetupView.tsx';
 
 import { SignInScreen } from './components/SignInScreen.tsx';
 import { AccessDeniedView } from './components/AccessDeniedView.tsx';
+
+config.autoAddCss = false;
 
 export const AppContent: React.FC = () => {
   const { activeTab, isSimulatedSignedIn, persona } = useCabms();

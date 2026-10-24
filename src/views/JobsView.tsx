@@ -9,27 +9,28 @@
 
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Briefcase,
-  Search,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  MapPin,
-  Phone,
-  FileCheck2,
-  FileText,
-  DollarSign,
-  Plus,
-  ArrowRight,
-  ExternalLink,
-  ShieldAlert,
-  Send,
-  RotateCcw,
-  XCircle,
-  History,
-  User,
-} from 'lucide-react';
+  faArrowRight,
+  faArrowUpRightFromSquare,
+  faBriefcase,
+  faCircleCheck,
+  faCircleXmark,
+  faClock,
+  faClockRotateLeft,
+  faDollarSign,
+  faFileCircleCheck,
+  faFileLines,
+  faLocationDot,
+  faMagnifyingGlass,
+  faPaperPlane,
+  faPhone,
+  faPlus,
+  faRotateLeft,
+  faShieldHalved,
+  faTriangleExclamation,
+  faUser,
+} from '@fortawesome/free-solid-svg-icons';
 import { Job, JobStatus, ActivityLogEntry } from '../types/cabms.ts';
 import { CompletionValidationResult } from '../utils/cabmsLogic.ts';
 
@@ -177,7 +178,7 @@ export const JobsView: React.FC = () => {
       <div className="cabms-card p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <Briefcase className="w-5 h-5 text-amber-400" />
+            <FontAwesomeIcon icon={faBriefcase} className="w-5 h-5 text-amber-400" />
             <h1 className="text-xl font-bold text-[var(--cabms-text-primary)] tracking-tight">
               Operational Work Orders & Compliance Journey
             </h1>
@@ -192,7 +193,7 @@ export const JobsView: React.FC = () => {
             onClick={() => setIsNewJobModalOpen(true)}
             className="flex items-center space-x-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded-lg transition shadow-sm cursor-pointer self-start sm:self-auto"
           >
-            <Plus className="w-4 h-4" />
+            <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
             <span>Create New Job</span>
           </button>
         )}
@@ -205,7 +206,7 @@ export const JobsView: React.FC = () => {
           {/* Search and Status Filter */}
           <div className="cabms-card p-3 space-y-2">
             <div className="relative">
-              <Search className="w-4 h-4 text-[var(--cabms-text-secondary)] absolute left-3 top-2.5" />
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-[var(--cabms-text-secondary)] absolute left-3 top-2.5" />
               <input
                 type="text"
                 placeholder="Search jobs..."
@@ -323,7 +324,7 @@ export const JobsView: React.FC = () => {
                     onClick={() => reopenCancelledJob(selectedJob.id)}
                     className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold rounded-lg transition shadow-sm cursor-pointer flex items-center space-x-1.5"
                   >
-                    <RotateCcw className="w-4 h-4" />
+                    <FontAwesomeIcon icon={faRotateLeft} className="w-4 h-4" />
                     <span>Reopen Cancelled Job</span>
                   </button>
                 ) : selectedJob.status !== 'COMPLETED' ? (
@@ -332,7 +333,7 @@ export const JobsView: React.FC = () => {
                       onClick={handleCompleteAttempt}
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-sm font-bold rounded-lg transition shadow-sm cursor-pointer flex items-center space-x-1.5"
                     >
-                      <CheckCircle2 className="w-4 h-4" />
+                      <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
                       <span>Complete Work Order</span>
                     </button>
 
@@ -357,7 +358,7 @@ export const JobsView: React.FC = () => {
                   </>
                 ) : (
                   <div className="flex items-center space-x-2 text-emerald-400 text-sm font-bold bg-emerald-950/80 border border-emerald-800 px-3.5 py-2 rounded-lg">
-                    <CheckCircle2 className="w-4 h-4" />
+                    <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
                     <span>Work Order Completed</span>
                   </div>
                 )}
@@ -384,7 +385,7 @@ export const JobsView: React.FC = () => {
                     : 'cabms-surface-subtle border cabms-border text-[var(--cabms-text-secondary)] hover:text-[var(--cabms-text-primary)]'
                 }`}
               >
-                <History className="w-3.5 h-3.5" />
+                <FontAwesomeIcon icon={faClockRotateLeft} className="w-3.5 h-3.5" />
                 <span>Audit Trail ({selectedJob.activityHistory?.length || 0})</span>
               </button>
             </div>
@@ -393,7 +394,7 @@ export const JobsView: React.FC = () => {
               /* Activity & Audit History Trail (G00-018) */
               <div className="cabms-card-subtle p-4 space-y-3">
                 <h3 className="text-xs font-bold text-[var(--cabms-text-secondary)] uppercase tracking-wider flex items-center space-x-1.5">
-                  <History className="w-3.5 h-3.5 text-sky-400" />
+                  <FontAwesomeIcon icon={faClockRotateLeft} className="w-3.5 h-3.5 text-sky-400" />
                   <span>Activity & Status Change History</span>
                 </h3>
                 <div className="space-y-2">
@@ -428,7 +429,7 @@ export const JobsView: React.FC = () => {
                       Site Information (Physical Location)
                     </h3>
                     <div className="flex items-start space-x-2.5 text-[var(--cabms-text-primary)] font-medium text-sm md:text-base leading-relaxed">
-                      <MapPin className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <FontAwesomeIcon icon={faLocationDot} className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                       <span>{selectedJob.siteAddress}</span>
                     </div>
                     <div className="pt-2">
@@ -439,7 +440,7 @@ export const JobsView: React.FC = () => {
                         className="inline-flex items-center space-x-1.5 text-sky-400 hover:text-sky-300 text-xs md:text-sm font-semibold"
                       >
                         <span>Navigate via Google Maps (Public Demo)</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
+                        <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3.5 h-3.5" />
                       </a>
                     </div>
                   </div>
@@ -451,7 +452,7 @@ export const JobsView: React.FC = () => {
                     <div className="space-y-1.5 text-[var(--cabms-text-primary)]">
                       <div className="font-bold text-base">{selectedJob.siteContact}</div>
                       <div className="flex items-center space-x-2 text-[var(--cabms-text-secondary)] text-sm">
-                        <Phone className="w-4 h-4 text-slate-500" />
+                        <FontAwesomeIcon icon={faPhone} className="w-4 h-4 text-slate-500" />
                         <span>{selectedJob.sitePhone}</span>
                       </div>
                     </div>
@@ -480,7 +481,7 @@ export const JobsView: React.FC = () => {
                       className="text-amber-400 hover:text-amber-300 text-sm font-semibold flex items-center space-x-1 cursor-pointer"
                     >
                       <span>Open Forms Tab</span>
-                      <ArrowRight className="w-4 h-4" />
+                      <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
                     </button>
                   </div>
 
@@ -495,7 +496,7 @@ export const JobsView: React.FC = () => {
                           key={f}
                           className="flex items-center space-x-2 px-3 py-1.5 rounded-lg cabms-card text-sm text-[var(--cabms-text-primary)]"
                         >
-                          <FileCheck2 className="w-4 h-4 text-amber-400" />
+                          <FontAwesomeIcon icon={faFileCircleCheck} className="w-4 h-4 text-amber-400" />
                           <span>{f} Form</span>
                         </div>
                       ))}
@@ -507,7 +508,7 @@ export const JobsView: React.FC = () => {
                 <div className="cabms-card-subtle p-5 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-bold text-[var(--cabms-text-primary)] uppercase tracking-wider flex items-center space-x-2">
-                      <DollarSign className="w-4 h-4 text-emerald-400" />
+                      <FontAwesomeIcon icon={faDollarSign} className="w-4 h-4 text-emerald-400" />
                       <span>MYOB Invoice & Billing Status</span>
                     </h3>
                     {selectedJob.invoice ? (
@@ -562,11 +563,11 @@ export const JobsView: React.FC = () => {
             <div className="flex items-center space-x-3">
               {validationModalResult.canComplete ? (
                 <div className="w-10 h-10 bg-emerald-950 text-emerald-400 rounded-full flex items-center justify-center border border-emerald-800">
-                  <CheckCircle2 className="w-6 h-6" />
+                  <FontAwesomeIcon icon={faCircleCheck} className="w-6 h-6" />
                 </div>
               ) : (
                 <div className="w-10 h-10 bg-red-950 text-red-400 rounded-full flex items-center justify-center border border-red-800">
-                  <ShieldAlert className="w-6 h-6" />
+                  <FontAwesomeIcon icon={faShieldHalved} className="w-6 h-6" />
                 </div>
               )}
 

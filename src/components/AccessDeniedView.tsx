@@ -5,7 +5,12 @@
 
 import React from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
-import { ShieldAlert, ArrowLeft, UserCheck } from 'lucide-react';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import {
+  faArrowLeft,
+  faShieldHalved,
+  faUserCheck,
+} from '@fortawesome/free-solid-svg-icons';
 import { Persona } from '../types/cabms.ts';
 
 interface AccessDeniedProps {
@@ -35,7 +40,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
   return (
     <div className="max-w-2xl mx-auto my-12 p-8 cabms-card border-red-700 shadow-lg text-center">
       <div className="w-14 h-14 cabms-surface-subtle text-[var(--cabms-accent-danger)] rounded-full flex items-center justify-center mx-auto mb-4 border border-red-700">
-        <ShieldAlert className="w-8 h-8" />
+        <FontAwesomeIcon icon={faShieldHalved} className="w-8 h-8" />
       </div>
 
       <span className="text-[11px] font-bold tracking-widest text-[var(--cabms-accent-danger)] uppercase cabms-surface-subtle px-3 py-1 rounded-full border border-red-700">
@@ -71,7 +76,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
           onClick={() => setActiveTab('dashboard')}
           className="flex items-center space-x-1.5 px-4 py-2 cabms-surface-subtle border cabms-border hover:bg-sky-700 hover:text-white text-[var(--cabms-text-primary)] text-xs font-semibold rounded-lg transition cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <FontAwesomeIcon icon={faArrowLeft} className="w-4 h-4" />
           <span>Return to Dashboard</span>
         </button>
 

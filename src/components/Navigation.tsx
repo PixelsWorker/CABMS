@@ -354,7 +354,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
               />
             </h1>
             <span className="cabms-active-area font-medium text-sm">
-              • {activeDestination?.label || 'Restricted destination'}
+              • {activeDestination ? getDestinationLabel(activeDestination, persona) : 'Restricted destination'}
             </span>
           </div>
         </div>

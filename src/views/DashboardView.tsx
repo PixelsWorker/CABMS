@@ -223,6 +223,8 @@ export const DashboardView: React.FC = () => {
                     <div
                       key={job.id}
                       data-testid={`consolidated-job-${job.id}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => {
                         if (job.brandId !== activeBrandId) {
                           setActiveBrandId(job.brandId);
@@ -230,7 +232,17 @@ export const DashboardView: React.FC = () => {
                         setSelectedJobId(job.id);
                         setActiveTab('jobs');
                       }}
-                      className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-3.5 rounded-lg cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-(--cabms-border-base)"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          if (job.brandId !== activeBrandId) {
+                            setActiveBrandId(job.brandId);
+                          }
+                          setSelectedJobId(job.id);
+                          setActiveTab('jobs');
+                        }
+                      }}
+                      className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-3.5 rounded-lg cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-(--cabms-border-base) focus:outline-none focus:ring-2 focus:ring-(--cabms-accent)"
                     >
                       <div className="space-y-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">

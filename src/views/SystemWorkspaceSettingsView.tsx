@@ -44,7 +44,7 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
                 ? 'bg-(--cabms-surface) text-amber-400 shadow-sm border border-(--cabms-border-focus)'
                 : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
             }`}
-            aria-selected={activeSubTab === 'workspace'}
+            aria-pressed={activeSubTab === 'workspace'}
           >
             <FontAwesomeIcon icon={faBuilding} />
             <span>Workspace Settings</span>
@@ -58,7 +58,7 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
                 ? 'bg-(--cabms-surface) text-amber-400 shadow-sm border border-(--cabms-border-focus)'
                 : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
             }`}
-            aria-selected={activeSubTab === 'system'}
+            aria-pressed={activeSubTab === 'system'}
           >
             <FontAwesomeIcon icon={faGear} />
             <span>System & Integrations</span>

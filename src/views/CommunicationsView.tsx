@@ -33,6 +33,7 @@ export const CommunicationsView: React.FC = () => {
     jobs,
     selectedJobId,
     setSelectedJobId,
+    activeBrandId,
     brands,
     persona,
     triggerReviewRequest,
@@ -65,8 +66,24 @@ export const CommunicationsView: React.FC = () => {
     );
   }
 
-  // Selected job
-  const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
+  // Selected job (honours selectedJobId, falls back to active brand job, then first job)
+  const currentJob =
+    (selectedJobId ? jobs.find(j => j.id === selectedJobId) : undefined) ||
+    jobs.find(j => j.brandId === activeBrandId) ||
+    jobs[0];
+
+  // Empty-state guard if no jobs exist in the system
+  if (!currentJob) {
+    return (
+      <div className="cabms-card p-8 text-center space-y-3">
+        <FontAwesomeIcon icon={faTriangleExclamation} className="w-8 h-8 text-amber-400 mx-auto" />
+        <h2 className="text-base font-bold text-(--cabms-text-primary)">No Work Orders Found</h2>
+        <p className="text-xs text-(--cabms-text-secondary)">
+          There are no active or historical work orders in the system.
+        </p>
+      </div>
+    );
+  }
 
   // FC-01 & Certificate Policy A: Synchronize active certificate selection with current job requirements
   const effectiveCertType = currentJob.formsRequired.includes(selectedCertType)

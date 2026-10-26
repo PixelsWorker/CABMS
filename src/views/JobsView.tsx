@@ -59,7 +59,16 @@ export const JobsView: React.FC = () => {
     demoClock,
   } = useCabms();
 
-  const [statusFilter, setStatusFilter] = useState<string>('open');
+  // Resolve selection only inside the active business/persona boundary. A stale id
+  // after a brand or persona switch must never select an out-of-scope record.
+  const authorizedJobs = jobs.filter(j =>
+    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
+  );
+
+  const [statusFilter, setStatusFilter] = useState<string>(() => {
+    const initialJob = authorizedJobs.find(j => j.id === selectedJobId);
+    return initialJob && (initialJob.status === 'COMPLETED' || initialJob.status === 'CANCELLED') ? 'all' : 'open';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [validationModalResult, setValidationModalResult] = useState<CompletionValidationResult | null>(null);
   const [isNewJobModalOpen, setIsNewJobModalOpen] = useState(false);
@@ -86,12 +95,6 @@ export const JobsView: React.FC = () => {
   const [newIsDirectToInvoice, setNewIsDirectToInvoice] = useState(false);
   const [newForms, setNewForms] = useState<('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[]>(['JSA']);
 
-  // Resolve selection only inside the active business/persona boundary. A stale id
-  // after a brand or persona switch must never select an out-of-scope record.
-  const authorizedJobs = jobs.filter(j =>
-    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
-  );
-
   // Filter jobs by active brand & status
   const filteredJobs = authorizedJobs.filter(j => {
     const matchesStatus = statusFilter === 'all' ? true : statusFilter === 'open' ? (j.status !== 'COMPLETED' && j.status !== 'CANCELLED') : j.status === statusFilter;
@@ -104,6 +107,23 @@ export const JobsView: React.FC = () => {
   });
 
   const selectedJob = (selectedJobId ? filteredJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
+
+  useEffect(() => {
+    if (selectedJob && selectedJob.id !== selectedJobId) {
+      setSelectedJobId(selectedJob.id);
+    }
+  }, [selectedJob?.id, selectedJobId, setSelectedJobId]);
+
+  useEffect(() => {
+    if (!selectedJobId) return;
+    const target = authorizedJobs.find(j => j.id === selectedJobId);
+    if (!target) return;
+    if (statusFilter === 'open' && (target.status === 'COMPLETED' || target.status === 'CANCELLED')) {
+      setStatusFilter('all');
+    } else if (statusFilter !== 'all' && statusFilter !== 'open' && target.status !== statusFilter) {
+      setStatusFilter('all');
+    }
+  }, [selectedJobId]);
 
   const handleCompleteAttempt = () => {
     if (!selectedJob) return;

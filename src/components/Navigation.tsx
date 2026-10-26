@@ -90,7 +90,9 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        closeBrandDropdown(true);
+        const active = document.activeElement;
+        const isExternalActive = active && active !== document.body && !brandDropdownRef.current?.contains(active);
+        closeBrandDropdown(!isExternalActive);
         return;
       }
 

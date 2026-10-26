@@ -177,9 +177,15 @@ export function addBusinessDays(
   }
   let currentYMD = startInstantOrDate.includes('T')
     ? businessCalendarDate(startInstantOrDate)
-    : startInstantOrDate;
+    : startInstantOrDate.trim();
 
-  let [year, month, day] = currentYMD.split('-').map(Number);
+  const match = currentYMD.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new RangeError('A valid YYYY-MM-DD date or timezone-qualified instant is required.');
+  let [year, month, day] = match.slice(1).map(Number);
+  const check = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
+    throw new RangeError('A valid calendar date is required.');
+  }
   let added = 0;
   while (added < days) {
     const nextDate = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0));

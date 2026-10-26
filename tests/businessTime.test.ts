@@ -177,6 +177,11 @@ test('addBusinessDays correctly skips weekends and regional public holidays', ()
 
   // Over Easter 2027 (Wed 24 March + 3 business days -> skips Good Friday & Easter Mon -> Wed 31 March)
   assert.equal(addBusinessDays('2027-03-24', 3, 'brisbane'), '2027-03-31');
+
+  // Malformed / impossible dates throw RangeError instead of hanging
+  assert.throws(() => addBusinessDays('', 3), RangeError);
+  assert.throws(() => addBusinessDays('not-a-date', 3), RangeError);
+  assert.throws(() => addBusinessDays('2026-02-31', 3), RangeError);
 });
 
 test('calculateQuoteFollowUpDates computes Stage 1 (3 business days), Stage 2 (7 business days), and 14 calendar day expiry', () => {

@@ -91,7 +91,6 @@ export const JobsView: React.FC = () => {
   const authorizedJobs = jobs.filter(j =>
     j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
   );
-  const selectedJob = authorizedJobs.find(j => j.id === selectedJobId) || authorizedJobs[0];
 
   // Filter jobs by active brand & status
   const filteredJobs = authorizedJobs.filter(j => {
@@ -103,6 +102,8 @@ export const JobsView: React.FC = () => {
       j.siteAddress.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
+
+  const selectedJob = (selectedJobId ? authorizedJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
 
   const handleCompleteAttempt = () => {
     if (!selectedJob) return;
@@ -173,7 +174,7 @@ export const JobsView: React.FC = () => {
     }
   };
 
-  if (!selectedJob) {
+  if (authorizedJobs.length === 0) {
     return (
       <div role="status" className="cabms-card p-6 text-sm text-(--cabms-text-secondary)">
         No work orders are available for this business and your current access.
@@ -302,7 +303,7 @@ export const JobsView: React.FC = () => {
         </div>
 
         {/* Right Pane: Selected Job Detail (7 cols) */}
-        {selectedJob && (
+        {selectedJob ? (
           <div className="lg:col-span-7 cabms-card p-6 space-y-6">
             {/* Top Job Action Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
@@ -562,6 +563,10 @@ export const JobsView: React.FC = () => {
                 </div>
               </div>
             )}
+          </div>
+        ) : (
+          <div className="lg:col-span-7 cabms-card p-8 text-center text-sm text-(--cabms-text-secondary) flex items-center justify-center min-h-[300px]">
+            No work order matches the selected filter.
           </div>
         )}
       </div>

@@ -103,7 +103,7 @@ export const JobsView: React.FC = () => {
     return matchesStatus && matchesSearch;
   });
 
-  const selectedJob = (selectedJobId ? authorizedJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
+  const selectedJob = (selectedJobId ? filteredJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
 
   const handleCompleteAttempt = () => {
     if (!selectedJob) return;

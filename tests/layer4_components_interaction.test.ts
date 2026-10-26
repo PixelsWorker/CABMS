@@ -795,6 +795,38 @@ test('LAYER 4: JobsView — defaults statusFilter to open, filters completed job
   });
 });
 
+test('LAYER 4: JobsView — preserves newly selected or created job when status filter resets to all', async () => {
+  await mountView(React.createElement(JobsView), async (ctx, container, window) => {
+    const statusSelect = container.querySelector<HTMLSelectElement>('select.cabms-card-subtle')!;
+    assert.ok(statusSelect, 'Status filter select found');
+
+    // Switch status filter to COMPLETED
+    await act(async () => {
+      statusSelect.value = 'COMPLETED';
+      statusSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(statusSelect.value, 'COMPLETED');
+
+    // Create a new job while in COMPLETED view
+    let createdJobId = '';
+    await act(async () => {
+      const created = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Preserved Job Outside Filter',
+        jobType: 'Residential Solar Installation',
+        siteAddress: '123 Sunshine Coast QLD',
+        siteContact: 'Alice Smith',
+      });
+      createdJobId = created.id;
+      ctx.setSelectedJobId(created.id);
+    });
+
+    // Verify filter expanded to 'all' to preserve newly created/selected job
+    assert.equal(statusSelect.value, 'all', 'Filter expands to all to preserve newly selected job');
+    assert.equal(ctx.selectedJobId, createdJobId, 'Newly created job remains selected in context');
+  });
+});
+
 test('LAYER 4: ComplianceFormsView — Return to Job button returns operator to Jobs view with correct context', async () => {
   await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
     // Set activeTab to compliance

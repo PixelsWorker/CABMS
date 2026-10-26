@@ -7,7 +7,7 @@
  * and activity history audit trail (G00-018).
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -74,6 +74,8 @@ export const JobsView: React.FC = () => {
   const [isNewJobModalOpen, setIsNewJobModalOpen] = useState(false);
   const [activeJobDetailTab, setActiveJobDetailTab] = useState<'details' | 'history'>('details');
 
+  const lastSelectedJobIdRef = useRef<string | null>(selectedJobId);
+
   // New Job Form State
   const [newTitle, setNewTitle] = useState('');
   const [newCustId, setNewCustId] = useState(customers[0]?.id || '');
@@ -109,21 +111,31 @@ export const JobsView: React.FC = () => {
   const selectedJob = (selectedJobId ? filteredJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
 
   useEffect(() => {
+    // If selectedJobId just changed to an authorized job that is outside the current filter,
+    // widen statusFilter to 'all' so the newly selected job remains visible and selected.
+    if (selectedJobId && selectedJobId !== lastSelectedJobIdRef.current) {
+      lastSelectedJobIdRef.current = selectedJobId;
+      const target = authorizedJobs.find(j => j.id === selectedJobId);
+      if (target) {
+        const matchesFilter =
+          statusFilter === 'all'
+            ? true
+            : statusFilter === 'open'
+            ? target.status !== 'COMPLETED' && target.status !== 'CANCELLED'
+            : target.status === statusFilter;
+        if (!matchesFilter) {
+          setStatusFilter('all');
+          return;
+        }
+      }
+    }
+    lastSelectedJobIdRef.current = selectedJobId;
+
+    // Synchronize context state with fallback job if current selection is not in filtered list
     if (selectedJob && selectedJob.id !== selectedJobId) {
       setSelectedJobId(selectedJob.id);
     }
-  }, [selectedJob?.id, selectedJobId, setSelectedJobId]);
-
-  useEffect(() => {
-    if (!selectedJobId) return;
-    const target = authorizedJobs.find(j => j.id === selectedJobId);
-    if (!target) return;
-    if (statusFilter === 'open' && (target.status === 'COMPLETED' || target.status === 'CANCELLED')) {
-      setStatusFilter('all');
-    } else if (statusFilter !== 'all' && statusFilter !== 'open' && target.status !== statusFilter) {
-      setStatusFilter('all');
-    }
-  }, [selectedJobId]);
+  }, [selectedJob?.id, selectedJobId, statusFilter, authorizedJobs, setSelectedJobId]);
 
   const handleCompleteAttempt = () => {
     if (!selectedJob) return;

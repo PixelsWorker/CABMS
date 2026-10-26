@@ -542,6 +542,7 @@ test('LAYER 6: Integration — Journey C: TCA2 defect generates separate audit r
 
   // 5. Real Context Action Integration: Two calls in the same tick without intervening render
   const realCtx = getMountedCabmsContext();
+  act(() => { realCtx.setPersona('super_admin'); });
   // Call real CabmsContext.officeReviewTca2 twice synchronously in same tick on seed job JOB-2026-104
   realCtx.officeReviewTca2('JOB-2026-104');
   realCtx.officeReviewTca2('JOB-2026-104');
@@ -961,6 +962,9 @@ test('LAYER 6: Integration — Journey H: Certificate delivery captures full fro
 // -------------------------------------------------------------
 test('LAYER 6: Integration — Journey I: Draft business incubator isolates non-operational profiles, enforces slug uniqueness, and preserves licences', () => {
   const realCtx = getMountedCabmsContext();
+  act(() => {
+    realCtx.simulateSignIn('super_admin');
+  });
 
   // 1. Create a draft business profile with complete licence fields and custom slug
   const result = realCtx.createDraftBusiness({
@@ -2425,6 +2429,7 @@ test('LAYER 6: FC-18 — reconcileInvoiceSync ensures unique, stable external MY
 
     // 2. Go offline via setMyobStatus and create two invoices for Job 102 and Job 103
     await act(async () => {
+      ctx.setPersona('super_admin');
       ctx.setMyobStatus('DISCONNECTED');
     });
     await act(async () => {
@@ -2904,6 +2909,7 @@ test('LAYER 6: FC-20 & FC-18 — default certificate reference stability across 
     // 2. FC-18: Online invoice reference collision immunity against offline-reconciled reference
     // Create offline invoice on Job A
     await act(async () => {
+      ctx.setPersona('super_admin');
       ctx.setMyobStatus('DISCONNECTED');
     });
     await act(async () => {

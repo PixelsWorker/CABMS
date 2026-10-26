@@ -7,7 +7,7 @@
  * and activity history audit trail (G00-018).
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -59,7 +59,7 @@ export const JobsView: React.FC = () => {
     demoClock,
   } = useCabms();
 
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('open');
   const [searchQuery, setSearchQuery] = useState('');
   const [validationModalResult, setValidationModalResult] = useState<CompletionValidationResult | null>(null);
   const [isNewJobModalOpen, setIsNewJobModalOpen] = useState(false);
@@ -71,6 +71,13 @@ export const JobsView: React.FC = () => {
   const [selectedJobTypeId, setSelectedJobTypeId] = useState<string>(jobTypes[0]?.id || '');
   const brandJobTypes = jobTypes.filter(jobType => jobType.brandId === activeBrandId);
   const selectedJobType = brandJobTypes.find(jobType => jobType.id === selectedJobTypeId) || brandJobTypes[0];
+
+  useEffect(() => {
+    if (selectedJobType) {
+      setNewIsDirectToInvoice(selectedJobType.isDirectToInvoice);
+      setNewForms(selectedJobType.isDirectToInvoice ? [] : selectedJobType.formsRequired);
+    }
+  }, [activeBrandId]);
   const [newSiteAddress, setNewSiteAddress] = useState('[Fictional] 50 Cavill Avenue, Surfers Paradise QLD 4217');
   const [newSiteContact, setNewSiteContact] = useState('John Citizen');
   const [newSitePhone, setNewSitePhone] = useState('0400 000 001');
@@ -88,7 +95,7 @@ export const JobsView: React.FC = () => {
 
   // Filter jobs by active brand & status
   const filteredJobs = authorizedJobs.filter(j => {
-    const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' ? true : statusFilter === 'open' ? (j.status !== 'COMPLETED' && j.status !== 'CANCELLED') : j.status === statusFilter;
     const matchesSearch =
       j.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       j.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -108,7 +115,7 @@ export const JobsView: React.FC = () => {
     const jt = brandJobTypes.find(t => t.id === typeId);
     if (jt) {
       setNewIsDirectToInvoice(jt.isDirectToInvoice);
-      setNewForms(jt.formsRequired);
+      setNewForms(jt.isDirectToInvoice ? [] : jt.formsRequired);
       if (!newTitle) {
         setNewTitle(jt.name);
       }
@@ -137,7 +144,9 @@ export const JobsView: React.FC = () => {
       siteContact: newSiteContact,
       sitePhone: newSitePhone,
       isDirectToInvoice: selectedJt.isDirectToInvoice,
-      formsRequired: selectedJt.formsRequired,
+      formsRequired: selectedJt.isDirectToInvoice
+        ? []
+        : Array.from(new Set([...(selectedJt.formsRequired || []), ...newForms])),
       unresolvedWarnings: [],
     });
 
@@ -222,6 +231,7 @@ export const JobsView: React.FC = () => {
                 onChange={e => setStatusFilter(e.target.value)}
                 className="cabms-card-subtle rounded px-2 py-1 text-(--cabms-text-primary) text-xs font-medium cursor-pointer"
               >
+                <option value="open">Open (Active &amp; Scheduled)</option>
                 <option value="all">All Statuses</option>
                 <option value="NEW">New (Unassigned Pool)</option>
                 <option value="SCHEDULED">Scheduled</option>
@@ -753,16 +763,51 @@ export const JobsView: React.FC = () => {
                     Direct-to-invoice service: no compliance documentation required for operational completion.
                   </p>
                 ) : (
-                  <div>
-                    <span className="block text-(--cabms-text-secondary) font-semibold mb-1">
-                      Mandatory Forms (governed by {selectedJobType?.name} {selectedJobType?.version}):
+                  <div className="space-y-2">
+                    <span className="block text-(--cabms-text-secondary) font-semibold">
+                      Compliance Forms Checklist (Job Type Mandatory + Optional):
                     </span>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedJobType?.formsRequired.map(ft => (
-                        <span key={ft} className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-sky-300 font-mono text-[11px] font-bold">
-                          {ft}
-                        </span>
-                      ))}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      {(('JSA,ELECTRICAL,SMOKE_ALARM,TCA1,TCA2').split(',') as ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[]).map(formType => {
+                        const isMandatory = selectedJobType?.formsRequired.includes(formType);
+                        const isChecked = isMandatory || newForms.includes(formType);
+                        return (
+                          <label
+                            key={formType}
+                            className={`flex items-center space-x-2 p-2 rounded border text-xs cursor-pointer ${
+                              isMandatory
+                                ? 'bg-slate-900/80 border-sky-800/60 text-sky-300'
+                                : isChecked
+                                ? 'bg-amber-950/40 border-amber-700/60 text-amber-200'
+                                : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              data-testid={`form-checkbox-${formType}`}
+                              checked={isChecked}
+                              disabled={isMandatory}
+                              onChange={e => {
+                                if (isMandatory) return;
+                                if (e.target.checked) {
+                                  setNewForms(prev => [...prev, formType]);
+                                } else {
+                                  setNewForms(prev => prev.filter(f => f !== formType));
+                                }
+                              }}
+                              className="rounded border-slate-700 text-amber-500 focus:ring-amber-500"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <span className="font-mono font-bold">{formType}</span>
+                              {isMandatory && (
+                                <span className="ml-1.5 text-[10px] uppercase font-bold text-sky-400 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-800/40">
+                                  Mandatory
+                                </span>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 )}

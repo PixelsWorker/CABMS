@@ -6,6 +6,9 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
   AppearanceMode,
+  BrandingMode,
+  VisualPreset,
+  QuoteFollowUp,
   BrandConfig,
   BrandId,
   Customer,
@@ -61,7 +64,7 @@ import {
   processReviewDispatch,
   validateSignedSnapshot,
 } from '../utils/cabmsLogic.ts';
-import { advanceBusinessClock, businessCalendarDate, serializeBusinessInstant } from '../utils/businessTime.ts';
+import { advanceBusinessClock, businessCalendarDate, serializeBusinessInstant, calculateQuoteFollowUpDates, calculateQuoteExpiration } from '../utils/businessTime.ts';
 
 export type DemoScenario =
   | 'default'
@@ -82,6 +85,12 @@ interface CabmsContextType {
   brands: Record<string, BrandConfig>;
   appearance: AppearanceMode;
   setAppearance: (mode: AppearanceMode) => void;
+  brandingMode: BrandingMode;
+  setBrandingMode: (mode: BrandingMode) => void;
+  visualPreset: VisualPreset;
+  setVisualPreset: (preset: VisualPreset) => void;
+  revokeQuote: (jobId: string, reason?: string) => { success: boolean; message: string };
+  refuseQuote: (jobId: string, reason?: string) => { success: boolean; message: string };
   technicians: typeof INITIAL_TECHNICIANS;
   updateBrandConfig: (brand: BrandConfig) => void;
   addNewBrandProfile: (brand: BrandConfig) => void;
@@ -264,21 +273,69 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [activeScenario, setActiveScenario] = useState<DemoScenario>('default');
   const [isSimulatedSignedIn, setIsSimulatedSignedIn] = useState(true);
 
-  // Appearance Mode (In-memory, defaults to default_dark)
+    // Appearance & Visual Presets (Preset 2 — Dark + Company Branding is initial)
   const [appearance, setAppearanceState] = useState<AppearanceMode>('default_dark');
+  const [brandingMode, setBrandingModeState] = useState<BrandingMode>('company');
+  const [visualPreset, setVisualPresetState] = useState<VisualPreset>('dark_company');
+
+  const setBrandingMode = (mode: BrandingMode) => {
+    setBrandingModeState(mode);
+    if (appearance === 'high_visibility_dark') {
+      setVisualPresetState('high_visibility_dark');
+    } else if (appearance === 'high_visibility_light') {
+      setVisualPresetState(mode === 'company' ? 'light_company' : 'light_neutral');
+    } else {
+      setVisualPresetState(mode === 'company' ? 'dark_company' : 'dark_neutral');
+    }
+  };
+
+  const setVisualPreset = (preset: VisualPreset) => {
+    setVisualPresetState(preset);
+    switch (preset) {
+      case 'dark_neutral':
+        setAppearanceState('default_dark');
+        setBrandingModeState('neutral');
+        break;
+      case 'dark_company':
+        setAppearanceState('default_dark');
+        setBrandingModeState('company');
+        break;
+      case 'light_neutral':
+        setAppearanceState('high_visibility_light');
+        setBrandingModeState('neutral');
+        break;
+      case 'light_company':
+        setAppearanceState('high_visibility_light');
+        setBrandingModeState('company');
+        break;
+      case 'high_visibility_dark':
+        setAppearanceState('high_visibility_dark');
+        break;
+    }
+  };
+
   const setAppearance = (mode: AppearanceMode) => {
     if (mode === 'default_dark' || mode === 'high_visibility_light' || mode === 'high_visibility_dark') {
       setAppearanceState(mode);
+      if (mode === 'high_visibility_dark') {
+        setVisualPresetState('high_visibility_dark');
+      } else if (mode === 'high_visibility_light') {
+        setVisualPresetState(brandingMode === 'company' ? 'light_company' : 'light_neutral');
+      } else {
+        setVisualPresetState(brandingMode === 'company' ? 'dark_company' : 'dark_neutral');
+      }
     } else {
       setAppearanceState('default_dark');
+      setVisualPresetState(brandingMode === 'company' ? 'dark_company' : 'dark_neutral');
     }
   };
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('data-appearance', appearance);
+      document.documentElement.setAttribute('data-branding', brandingMode);
     }
-  }, [appearance]);
+  }, [appearance, brandingMode]);
 
   // Clock
   const [demoClock, setDemoClock] = useState<string>(INITIAL_DEMO_CLOCK);
@@ -536,6 +593,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     error?: string;
     profile?: DraftBusinessProfile;
   } => {
+    const callerPersona = authoritativePersonaRef.current;
+    if (callerPersona !== 'super_admin') {
+      const err = 'Unauthorized: Incubating draft businesses requires Super Admin authority.';
+      showDemoNotification(err, 'error');
+      return { success: false, error: err };
+    }
     // Slug validation: must not collide with operational brands or existing drafts
     const slug = (profile.slug || profile.name.toLowerCase().replace(/[^a-z0-9]/g, '_')).trim().toLowerCase();
     const operationalSlugs = ['solarcell', 'smart_home', 'cctv'];
@@ -597,6 +660,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setPersona('owner_admin');
     setActiveBrandId('solarcell');
     setAppearance('default_dark');
+    setBrandingMode('company');
+    setVisualPreset('dark_company');
     setBrands(INITIAL_BRANDS);
     setJobTypes(INITIAL_JOB_TYPES);
     setDemoClock(INITIAL_DEMO_CLOCK);
@@ -709,6 +774,76 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             || (activeScenario === 'myob_uncertain' ? 'UNCERTAIN' : 'SENT');
           updatedJob = resolveReviewJob(updatedJob, outcome, newClock, brand.name, 'Automated System Clock');
           pendingReviewOutcomeRef.current.delete(j.id);
+        }
+
+        // 3. Process quote follow-ups and expiration (14 calendar days expiry & cap)
+        if (updatedJob.quote) {
+          const q = updatedJob.quote;
+          const quoteCurrentDate = businessCalendarDate(newClock);
+          const isQuoteExpired = q.expiresAt ? new Date(newClock) >= new Date(q.expiresAt) : false;
+
+          let quoteUpdated = false;
+          let newAcceptanceStatus = q.acceptanceStatus;
+          let newAcceptanceHistory = [...q.acceptanceHistory];
+
+          // Transition to EXPIRED if past 14 calendar days
+          if (isQuoteExpired && (q.acceptanceStatus === 'SENT' || q.acceptanceStatus === 'DRAFT')) {
+            newAcceptanceStatus = 'EXPIRED';
+            newAcceptanceHistory.push({
+              timestamp: newClock,
+              action: 'Quotation expired (14-calendar-day validity period exceeded)',
+              actor: 'Automated System Clock',
+            });
+            quoteUpdated = true;
+          }
+
+          if (q.followUps && q.followUps.length > 0) {
+            let followUpsChanged = false;
+            const updatedFollowUps = q.followUps.map(fu => {
+              if (fu.status === 'SCHEDULED') {
+                if (
+                  newAcceptanceStatus === 'EXPIRED' ||
+                  newAcceptanceStatus === 'ACCEPTED' ||
+                  newAcceptanceStatus === 'REVOKED' ||
+                  newAcceptanceStatus === 'SUPERSEDED'
+                ) {
+                  followUpsChanged = true;
+                  return { ...fu, status: 'CANCELLED' as const };
+                }
+
+                if (fu.scheduledDate <= quoteCurrentDate && !isQuoteExpired) {
+                  followUpsChanged = true;
+                  deliveredCount++;
+                  newAcceptanceHistory.push({
+                    timestamp: newClock,
+                    action: `Quotation follow-up email dispatched (${fu.stage === 'STAGE_1_COURTESY' ? 'Stage 1 Courtesy' : 'Stage 2 Expiry Warning'})`,
+                    actor: 'Automated System Service',
+                  });
+                  return {
+                    ...fu,
+                    status: 'SENT' as const,
+                    sentAt: newClock,
+                  };
+                }
+              }
+              return fu;
+            });
+
+            if (followUpsChanged || quoteUpdated) {
+              updatedJob.quote = {
+                ...q,
+                acceptanceStatus: newAcceptanceStatus,
+                acceptanceHistory: newAcceptanceHistory,
+                followUps: updatedFollowUps,
+              };
+            }
+          } else if (quoteUpdated) {
+            updatedJob.quote = {
+              ...q,
+              acceptanceStatus: newAcceptanceStatus,
+              acceptanceHistory: newAcceptanceHistory,
+            };
+          }
         }
 
         return updatedJob;
@@ -936,10 +1071,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     seqCounters.job++;
     const nextId = `JOB-2026-${seqCounters.job}`;
 
-    // G00-012/P1: Mandatory compliance forms configured on the Job Type cannot be bypassed
-    const forms = matchedJobType.formsRequired.length > 0
-      ? matchedJobType.formsRequired
-      : (jobData.formsRequired ?? []);
+    // Mandatory forms configured on the Job Type plus optional user-selected forms
+    const mandatory = matchedJobType.formsRequired || [];
+    const requested = jobData.formsRequired || [];
+    const forms = Array.from(new Set([...mandatory, ...requested]));
     const isDirect = forms.length === 0 ? Boolean(jobData.isDirectToInvoice) : false;
 
     // P0: Decouple technician assignment from appointment scheduling
@@ -2069,21 +2204,51 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       throw new Error(access.reason);
     }
+    const job = jobs.find(j => j.id === jobId);
+    if (!job) {
+      const message = 'Cannot prepare quote: work order not found.';
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
+
     seqCounters.quote++;
     // Clear subtotal (ex-GST) + GST (10%) = Total (inc-GST) convention
     const subtotal = Math.round(lineItems.reduce((acc, item) => acc + item.total, 0) * 100) / 100;
     const gst = Math.round(subtotal * 0.1 * 100) / 100;
     const total = Math.round((subtotal + gst) * 100) / 100;
 
-    const job = jobs.find(j => j.id === jobId);
-    const brand = brands[job?.brandId || activeBrandId];
+    const brand = brands[job.brandId || activeBrandId];
     const termsTpl = templates.find(t => t.type === 'TERMS') || templates[0];
+    const quoteId = `QUOTE-2026-${seqCounters.quote}`;
+    const issuedAt = serializeBusinessInstant(demoClock);
+    const expiresAt = calculateQuoteExpiration(demoClock);
+    const region = brand?.holidayRegion || 'brisbane';
+    const { stage1Date, stage2Date } = calculateQuoteFollowUpDates(demoClock, region);
+
+    const followUps: QuoteFollowUp[] = [
+      {
+        id: `QFU-${quoteId}-1`,
+        quoteId,
+        stage: 'STAGE_1_COURTESY',
+        scheduledDate: stage1Date,
+        status: 'SCHEDULED',
+        channel: 'EMAIL_SIMULATED',
+      },
+      {
+        id: `QFU-${quoteId}-2`,
+        quoteId,
+        stage: 'STAGE_2_EXPIRY',
+        scheduledDate: stage2Date,
+        status: 'SCHEDULED',
+        channel: 'EMAIL_SIMULATED',
+      },
+    ];
 
     const newQuote: Quote = {
-      id: `QUOTE-2026-${seqCounters.quote}`,
+      id: quoteId,
       jobId,
-      customerId: job?.customerId || customers[0].id,
-      brandId: job?.brandId || activeBrandId,
+      customerId: job.customerId || customers[0].id,
+      brandId: job.brandId || activeBrandId,
       externalMyobRef: `MYOB-Q-${88200 + seqCounters.quote}`,
       title,
       subtotal,
@@ -2095,14 +2260,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
       acceptanceStatus: 'SENT',
       linkScenario: 'valid',
+      issuedAt,
+      expiresAt,
+      followUps,
       acceptanceHistory: [
         {
-          timestamp: serializeBusinessInstant(demoClock),
+          timestamp: issuedAt,
           action: `Quote generated & synced to MYOB Business (#MYOB-Q-${88200 + seqCounters.quote})`,
           actor: persona,
         },
         {
-          timestamp: serializeBusinessInstant(demoClock),
+          timestamp: issuedAt,
           action: 'Acceptance link generated and sent via email',
           actor: 'Automated Service',
         },
@@ -2121,7 +2289,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     jobId: string,
     scenario: 'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted'
   ) => {
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job || !job.quote) {
       return { success: false, message: 'Quote not found for this job.' };
     }
@@ -2129,13 +2297,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (scenario === 'invalid') {
       return { success: false, message: 'Invalid or broken quotation acceptance token.' };
     }
-    if (scenario === 'expired') {
+    if (scenario === 'expired' || job.quote.acceptanceStatus === 'EXPIRED') {
       return { success: false, message: 'This quotation link has expired (14-day validity exceeded).' };
     }
-    if (scenario === 'revoked') {
-      return { success: false, message: 'This quotation has been revoked by CABMS administration.' };
+    if (scenario === 'revoked' || job.quote.acceptanceStatus === 'REVOKED') {
+      return { success: false, message: 'This quotation has been revoked or declined.' };
     }
-    if (scenario === 'superseded') {
+    if (scenario === 'superseded' || job.quote.acceptanceStatus === 'SUPERSEDED') {
       return { success: false, message: 'This quotation has been superseded by a newer revision.' };
     }
     if (scenario === 'already_accepted' || job.quote.acceptanceStatus === 'ACCEPTED') {
@@ -2153,6 +2321,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId && j.quote) {
+          const updatedFollowUps = j.quote.followUps?.map(fu =>
+            fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' as const } : fu
+          );
           return {
             ...j,
             quote: {
@@ -2161,6 +2332,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               acceptedAt: acceptedTimestamp,
               acceptedByName: job.siteContact,
               acceptanceHistory: [...j.quote.acceptanceHistory, historyEntry],
+              followUps: updatedFollowUps,
             },
             activityHistory: [
               ...j.activityHistory,
@@ -2177,6 +2349,93 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // Invoices (G00-018: Checks MYOB status for real failure/uncertain states)
+
+  const revokeQuote = (jobId: string, reason: string = 'Revoked by CABMS administration'): { success: boolean; message: string } => {
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!job || !job.quote) {
+      showDemoNotification('Cannot revoke quote: work order or quote not found.', 'error');
+      return { success: false, message: 'Quote not found.' };
+    }
+    if (job.quote.acceptanceStatus !== 'SENT' && job.quote.acceptanceStatus !== 'DRAFT') {
+      const message = `Cannot revoke quote in ${job.quote.acceptanceStatus} state.`;
+      showDemoNotification(message, 'error');
+      return { success: false, message };
+    }
+    const timestamp = serializeBusinessInstant(demoClock);
+    commitJobsState(current =>
+      current.map(j => {
+        if (j.id === jobId && j.quote) {
+          const updatedFollowUps = j.quote.followUps?.map(fu =>
+            fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' as const } : fu
+          );
+          return {
+            ...j,
+            quote: {
+              ...j.quote,
+              acceptanceStatus: 'REVOKED',
+              refusalReason: reason,
+              followUps: updatedFollowUps,
+              acceptanceHistory: [
+                ...j.quote.acceptanceHistory,
+                { timestamp, action: `Quotation revoked: ${reason}`, actor: persona },
+              ],
+            },
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp, action: `Quote ${j.quote.externalMyobRef} revoked (${reason})`, actor: persona },
+            ],
+          };
+        }
+        return j;
+      })
+    );
+    showDemoNotification(`Quote ${job.quote.externalMyobRef} revoked. Pending follow-ups cancelled.`, 'warning');
+    return { success: true, message: 'Quote successfully revoked.' };
+  };
+
+  const refuseQuote = (jobId: string, reason: string = 'Declined by customer'): { success: boolean; message: string } => {
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!job || !job.quote) {
+      showDemoNotification('Cannot decline quote: work order or quote not found.', 'error');
+      return { success: false, message: 'Quote not found.' };
+    }
+    if (job.quote.acceptanceStatus !== 'SENT' && job.quote.acceptanceStatus !== 'DRAFT') {
+      const message = `Cannot decline quote in ${job.quote.acceptanceStatus} state.`;
+      showDemoNotification(message, 'error');
+      return { success: false, message };
+    }
+    const timestamp = serializeBusinessInstant(demoClock);
+    commitJobsState(current =>
+      current.map(j => {
+        if (j.id === jobId && j.quote) {
+          const updatedFollowUps = j.quote.followUps?.map(fu =>
+            fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' as const } : fu
+          );
+          return {
+            ...j,
+            quote: {
+              ...j.quote,
+              acceptanceStatus: 'REVOKED',
+              refusalReason: reason,
+              followUps: updatedFollowUps,
+              acceptanceHistory: [
+                ...j.quote.acceptanceHistory,
+                { timestamp, action: `Customer declined quotation: ${reason}`, actor: job.siteContact },
+              ],
+            },
+            activityHistory: [
+              ...j.activityHistory,
+              { timestamp, action: `Quote ${j.quote.externalMyobRef} declined by customer (${reason})`, actor: job.siteContact },
+            ],
+          };
+        }
+        return j;
+      })
+    );
+    showDemoNotification(`Customer declined quote ${job.quote.externalMyobRef}. Follow-ups cancelled.`, 'info');
+    return { success: true, message: 'Quote declined.' };
+  };
+
   const prepareInvoiceForJob = (jobId: string, amount: number) => {
     const access = verifyPersonaAccess(persona, 'financial_writes');
     if (!access.allowed) {
@@ -2885,13 +3144,60 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateBrandConfig = (updated: BrandConfig) => {
+    const callerPersona = authoritativePersonaRef.current;
+    if (callerPersona !== 'super_admin' && callerPersona !== 'owner_admin') {
+      showDemoNotification('Unauthorized: Brand configuration edits require Admin authority.', 'error');
+      return;
+    }
+
+    if (callerPersona === 'owner_admin') {
+      if (updated.id !== activeBrandId) {
+        showDemoNotification('Unauthorized: Admins may only modify the active workspace brand.', 'error');
+        return;
+      }
+      const existing = brands[updated.id];
+      if (existing) {
+        if (
+          existing.legalIssuerName !== updated.legalIssuerName ||
+          existing.abnPlaceholder !== updated.abnPlaceholder ||
+          existing.electricalLicencePlaceholder !== updated.electricalLicencePlaceholder ||
+          existing.acmaCablerPlaceholder !== updated.acmaCablerPlaceholder ||
+          existing.qbccLicencePlaceholder !== updated.qbccLicencePlaceholder ||
+          existing.quoteTemplateName !== updated.quoteTemplateName ||
+          existing.invoiceTemplateName !== updated.invoiceTemplateName ||
+          existing.calendarMappingName !== updated.calendarMappingName
+        ) {
+          showDemoNotification('Unauthorized: Legal entity edits require Super Admin authority.', 'error');
+          return;
+        }
+      }
+    }
+
     setBrands(prev => ({ ...prev, [updated.id]: updated }));
     showDemoNotification(`Brand profile "${updated.name}" updated.`, 'success');
   };
 
   const addNewBrandProfile = (newBrand: BrandConfig) => {
+    const callerPersona = authoritativePersonaRef.current;
+    if (callerPersona !== 'super_admin') {
+      showDemoNotification('Unauthorized: Adding new brand profiles requires Super Admin authority.', 'error');
+      return;
+    }
     setBrands(prev => ({ ...prev, [newBrand.id]: newBrand }));
     showDemoNotification(`New configurable profile "${newBrand.name}" added for demonstration.`, 'success');
+  };
+
+  const setMyobStatus = (status: 'CONNECTED' | 'DISCONNECTED' | 'FAILED') => {
+    const callerPersona = authoritativePersonaRef.current;
+    if (callerPersona !== 'super_admin') {
+      showDemoNotification('Unauthorized: Modifying technical integration settings requires Super Admin authority.', 'error');
+      return;
+    }
+    setMyobConnection(prev => ({
+      ...prev,
+      status,
+      errorMessage: status === 'FAILED' ? 'Simulated MYOB Connection Error 504' : undefined,
+    }));
   };
 
   const simulateSignIn = (role: Persona) => {
@@ -2920,6 +3226,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         brands,
         appearance,
         setAppearance,
+        brandingMode,
+        setBrandingMode,
+        visualPreset,
+        setVisualPreset,
         technicians: INITIAL_TECHNICIANS,
         updateBrandConfig,
         addNewBrandProfile,
@@ -2938,12 +3248,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         selectedJobId,
         setSelectedJobId,
         myobConnection,
-        setMyobStatus: status =>
-          setMyobConnection(prev => ({
-            ...prev,
-            status,
-            errorMessage: status === 'FAILED' ? 'Simulated MYOB Connection Error 504' : undefined,
-          })),
+        setMyobStatus,
         customers,
         simulateCustomerWriteThrough,
         reconcileUncertainCustomer,
@@ -2981,6 +3286,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         removeSampleFromJobForm,
         prepareQuoteForJob,
         simulateQuoteAcceptance,
+        revokeQuote,
+        refuseQuote,
         prepareInvoiceForJob,
         reconcileInvoiceSync,
         triggerReviewRequest,

@@ -11,6 +11,7 @@ import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
+  faArrowLeft,
   faArrowUpRightFromSquare,
   faCalendar,
   faCamera,
@@ -50,6 +51,8 @@ export const ComplianceFormsView: React.FC = () => {
     jobs,
     selectedJobId,
     setSelectedJobId,
+    setActiveTab,
+    setActiveBrandId,
     brands,
     persona,
     getOrCreateJsa,
@@ -260,8 +263,21 @@ export const ComplianceFormsView: React.FC = () => {
             </p>
           </div>
 
-          {/* Print/Preview Demo PDF Action */}
-          <div className="flex items-center space-x-2">
+          {/* Header Actions */}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              data-testid="return-to-job-btn"
+              onClick={() => {
+                setSelectedJobId(currentJob.id);
+                setActiveBrandId(currentJob.brandId);
+                setActiveTab('jobs');
+              }}
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-sky-950/60 hover:bg-sky-900/80 border border-sky-700/60 text-sky-200 text-xs font-semibold rounded-lg transition cursor-pointer"
+            >
+              <FontAwesomeIcon icon={faArrowLeft} className="w-3.5 h-3.5" />
+              <span>Return to Job {currentJob.id}</span>
+            </button>
+
             <button
               onClick={() => setShowPrintModal(true)}
               className="flex items-center space-x-1.5 px-3.5 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer"

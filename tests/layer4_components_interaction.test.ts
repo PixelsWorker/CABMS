@@ -541,6 +541,7 @@ test('LAYER 4: WIN-CR-02 — Navigation topbar renders operational brand pill fa
 
     // 3. Fallback verification: Add an operational brand without a predefined label mapping
     await act(async () => {
+      ctx.setPersona('super_admin');
       ctx.addNewBrandProfile({
         id: 'custom_av' as any,
         name: 'Brisbane Audio Visual',
@@ -555,6 +556,7 @@ test('LAYER 4: WIN-CR-02 — Navigation topbar renders operational brand pill fa
         qbccLicencePlaceholder: 'QBCC 99999',
         contactEmail: 'info@bav.example.invalid',
         contactPhone: '07 5555 1234',
+        holidayRegion: 'brisbane',
         reviewUrlPlaceholder: 'https://g.page/r/example/review',
         calendarMappingName: 'bav_primary',
         quoteTemplateName: 'bav_quote_v1',
@@ -674,37 +676,228 @@ test('LAYER 4: CR-01 — Add Customer modal always uses activeBrandId at open ti
   });
 });
 
-test('LAYER 4: Gate T — Appearance mode switcher updates context state and synchronizes data-appearance attribute on DOM', async () => {
+test('LAYER 4: Gate T — Visual Preset switcher updates context state and synchronizes data-appearance and data-branding attributes on DOM', async () => {
   await mountView(React.createElement(DemoControlsBar), async (ctx, container, window) => {
-    // Initial state check
+    // Initial state check: Preset 2 — Dark + Company Branding
+    assert.equal(ctx.visualPreset, 'dark_company', 'Initial visual preset is dark_company');
+    assert.equal(ctx.brandingMode, 'company', 'Initial branding mode is company');
     assert.equal(ctx.appearance, 'default_dark', 'Initial appearance mode is default_dark');
     assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark', 'DOM data-appearance synced to default_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-branding'), 'company', 'DOM data-branding synced to company');
 
-    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Appearance Mode Selector"]');
-    assert.ok(select, 'Appearance Mode Selector select dropdown found in DemoControlsBar');
-    assert.equal(select.value, 'default_dark');
+    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Visual Preset Selector"]');
+    assert.ok(select, 'Visual Preset Selector select dropdown found in DemoControlsBar');
+    assert.equal(select.value, 'dark_company');
 
-    // Switch to High Visibility Light
+    // Switch to Preset 1 — All Dark (Neutral)
     await act(async () => {
-      select.value = 'high_visibility_light';
+      select.value = 'dark_neutral';
       select.dispatchEvent(new window.Event('change', { bubbles: true }));
     });
-    assert.equal(ctx.appearance, 'high_visibility_light', 'Context appearance switched to high_visibility_light');
-    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light', 'DOM data-appearance synced to high_visibility_light');
+    assert.equal(ctx.visualPreset, 'dark_neutral');
+    assert.equal(ctx.brandingMode, 'neutral');
+    assert.equal(ctx.appearance, 'default_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-branding'), 'neutral');
 
-    // Switch to High Visibility Dark
+    // Switch to Preset 4 — Light + Company Branding
+    await act(async () => {
+      select.value = 'light_company';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(ctx.visualPreset, 'light_company');
+    assert.equal(ctx.brandingMode, 'company');
+    assert.equal(ctx.appearance, 'high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-branding'), 'company');
+
+    // Switch to Preset 3 — All Light (Neutral)
+    await act(async () => {
+      select.value = 'light_neutral';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(ctx.visualPreset, 'light_neutral');
+    assert.equal(ctx.brandingMode, 'neutral');
+    assert.equal(ctx.appearance, 'high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-branding'), 'neutral');
+
+    // Switch to Preset 5 — High Visibility Dark (OLED)
     await act(async () => {
       select.value = 'high_visibility_dark';
       select.dispatchEvent(new window.Event('change', { bubbles: true }));
     });
-    assert.equal(ctx.appearance, 'high_visibility_dark', 'Context appearance switched to high_visibility_dark');
-    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_dark', 'DOM data-appearance synced to high_visibility_dark');
+    assert.equal(ctx.visualPreset, 'high_visibility_dark');
+    assert.equal(ctx.appearance, 'high_visibility_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_dark');
 
-    // Reset Demo restores default_dark
+    // Reset Demo restores dark_company
     await act(async () => {
       ctx.resetDemo();
     });
+    assert.equal(ctx.visualPreset, 'dark_company', 'Reset demo restores dark_company preset');
+    assert.equal(ctx.brandingMode, 'company', 'Reset demo restores company branding mode');
     assert.equal(ctx.appearance, 'default_dark', 'Reset demo restores default_dark appearance');
-    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark', 'DOM data-appearance restored to default_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-branding'), 'company');
+  });
+});
+
+test('LAYER 4: Dashboard — clicking cross-company outstanding job switches brand, selects job, and navigates to Jobs tab', async () => {
+  await mountView(React.createElement(DashboardView), async (ctx, container, window) => {
+    // Active brand is solarcell
+    assert.equal(ctx.activeBrandId, 'solarcell');
+
+    // Find JOB-2026-104 (a CCTV job with status NEEDS_REVISIT) in consolidated queue
+    const cctvJobEl = container.querySelector<HTMLElement>('[data-testid="consolidated-job-JOB-2026-104"]');
+    assert.ok(cctvJobEl, 'CCTV job JOB-2026-104 element rendered in cross-company queue');
+
+    await act(async () => {
+      cctvJobEl.click();
+    });
+
+    assert.equal(ctx.activeBrandId, 'cctv', 'Active brand automatically switched to cctv');
+    assert.equal(ctx.selectedJobId, 'JOB-2026-104', 'Selected job set to JOB-2026-104');
+    assert.equal(ctx.activeTab, 'jobs', 'Active tab navigated to jobs');
+  });
+});
+
+test('LAYER 4: JobsView — defaults statusFilter to open, filters completed jobs, and provides interactive compliance checklist', async () => {
+  await mountView(React.createElement(JobsView), async (ctx, container, window) => {
+    const statusSelect = container.querySelector<HTMLSelectElement>('select.cabms-card-subtle')!;
+    assert.ok(statusSelect, 'Status filter select found');
+    assert.equal(statusSelect.value, 'open', 'Status filter defaults to open');
+
+    // Open modal to create job
+    const createBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      b => b.textContent?.includes('Create New Job')
+    );
+    assert.ok(createBtn, 'Create New Job button found');
+    await act(async () => {
+      createBtn.click();
+    });
+
+    // Check mandatory vs optional checkboxes
+    const jsaCheckbox = container.querySelector<HTMLInputElement>('[data-testid="form-checkbox-JSA"]');
+    assert.ok(jsaCheckbox, 'JSA checkbox found');
+    assert.equal(jsaCheckbox.disabled, true, 'Mandatory form checkbox is locked (disabled)');
+    assert.equal(jsaCheckbox.checked, true, 'Mandatory form checkbox is checked');
+
+    const tca1Checkbox = container.querySelector<HTMLInputElement>('[data-testid="form-checkbox-TCA1"]');
+    assert.ok(tca1Checkbox, 'TCA1 optional checkbox found');
+    assert.equal(tca1Checkbox.disabled, false, 'Optional form checkbox is interactive');
+
+    // Toggle optional TCA1
+    await act(async () => {
+      tca1Checkbox.click();
+    });
+    assert.equal(tca1Checkbox.checked, true, 'Optional form is now checked');
+  });
+});
+
+test('LAYER 4: ComplianceFormsView — Return to Job button returns operator to Jobs view with correct context', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+    // Set activeTab to compliance
+    await act(async () => {
+      ctx.setActiveTab('compliance');
+    });
+    assert.equal(ctx.activeTab, 'compliance');
+
+    const returnBtn = container.querySelector<HTMLButtonElement>('[data-testid="return-to-job-btn"]');
+    assert.ok(returnBtn, 'Return to Job button found in Compliance header');
+    assert.ok(returnBtn.textContent?.includes('Return to Job JOB-2026-101'));
+
+    await act(async () => {
+      returnBtn.click();
+    });
+
+    assert.equal(ctx.activeTab, 'jobs', 'Active tab navigated back to jobs');
+    assert.equal(ctx.selectedJobId, 'JOB-2026-101', 'Selected job retained as JOB-2026-101');
+    assert.equal(ctx.activeBrandId, 'solarcell', 'Active brand matches job brand');
+  });
+});
+
+test('LAYER 4: Quotes — accepting quote cancels scheduled follow-ups and records acceptance', async () => {
+  await mountView(React.createElement(QuotesAcceptanceView), async (ctx, container, window) => {
+    // Prepare quote for JOB-2026-101
+    await act(async () => {
+      ctx.prepareQuoteForJob('JOB-2026-101', 'Solar Inverter Replacement', [
+        { id: '1', description: 'Solar Inverter Replacement', quantity: 1, unitPrice: 3200, total: 3200 },
+      ]);
+    });
+
+    const job = ctx.jobs.find(j => j.id === 'JOB-2026-101');
+    assert.ok(job?.quote, 'Quote prepared for JOB-2026-101');
+    assert.equal(job.quote.acceptanceStatus, 'SENT');
+    assert.ok(job.quote.followUps && job.quote.followUps.length > 0, 'Follow-ups scheduled');
+    assert.ok(job.quote.followUps.some(f => f.status === 'SCHEDULED'), 'At least one follow-up scheduled');
+
+    // Accept quote via simulateQuoteAcceptance
+    await act(async () => {
+      ctx.simulateQuoteAcceptance('JOB-2026-101', 'valid');
+    });
+
+    const acceptedJob = ctx.jobs.find(j => j.id === 'JOB-2026-101')!;
+    assert.equal(acceptedJob.quote?.acceptanceStatus, 'ACCEPTED');
+    assert.ok(acceptedJob.quote?.followUps?.every(f => f.status === 'CANCELLED'), 'All follow-ups cancelled upon quote acceptance');
+  });
+});
+
+test('LAYER 4: Security — prepareQuoteForJob with nonexistent job triggers error notification and leaves state intact', async () => {
+  await mountView(React.createElement(QuotesAcceptanceView), async (ctx, container, window) => {
+    const initialJobs = structuredClone(ctx.jobs);
+
+    await act(async () => {
+      assert.throws(() => {
+        ctx.prepareQuoteForJob('INVALID-JOB-999', 'Missing Job Title', [
+          { id: '1', description: 'Missing item', quantity: 1, unitPrice: 100, total: 100 },
+        ]);
+      }, /not found/);
+    });
+
+    assert.equal(ctx.jobs.length, initialJobs.length, 'No new jobs added');
+    assert.equal(ctx.demoNotification?.type, 'error', 'Error notification displayed for invalid job');
+    assert.ok(ctx.demoNotification?.message.includes('not found'), 'Notification mentions not found');
+  });
+});
+
+test('LAYER 4: Security — role mutation guards block unauthorized legal and system modifications by non-Super-Admin', async () => {
+  await mountView(React.createElement(DashboardView), async (ctx, container, window) => {
+    // Default persona is owner_admin
+    assert.equal(ctx.persona, 'owner_admin');
+    const originalLegal = ctx.brands.solarcell.legalIssuerName;
+
+    // 1. owner_admin attempts to mutate legalIssuerName via updateBrandConfig
+    await act(async () => {
+      ctx.updateBrandConfig({
+        ...ctx.brands.solarcell,
+        legalIssuerName: 'Hacked Solarcell Legal Name Pty Ltd',
+      });
+    });
+    assert.equal(ctx.brands.solarcell.legalIssuerName, originalLegal, 'legalIssuerName unmodified for owner_admin');
+    assert.equal(ctx.demoNotification?.type, 'error', 'Error notification shown for unauthorized legal change');
+
+    // 2. owner_admin attempts to change MYOB status
+    const originalMyob = ctx.myobConnection.status;
+    await act(async () => {
+      ctx.setMyobStatus(originalMyob === 'CONNECTED' ? 'FAILED' : 'CONNECTED');
+    });
+    assert.equal(ctx.myobConnection.status, originalMyob, 'MYOB status unmodified for owner_admin');
+    assert.equal(ctx.demoNotification?.type, 'error', 'Error notification shown for unauthorized MYOB change');
+
+    // 3. Switch to super_admin and verify mutation is permitted
+    await act(async () => {
+      ctx.simulateSignIn('super_admin');
+      ctx.setMyobStatus('FAILED');
+    });
+    assert.equal(ctx.myobConnection.status, 'FAILED', 'MYOB status updated successfully by super_admin');
+
+    await act(async () => {
+      ctx.updateBrandConfig({
+        ...ctx.brands.solarcell,
+        legalIssuerName: 'Solarcell Authorised Legal Name Pty Ltd',
+      });
+    });
+    assert.equal(ctx.brands.solarcell.legalIssuerName, 'Solarcell Authorised Legal Name Pty Ltd', 'legalIssuerName updated by super_admin');
   });
 });

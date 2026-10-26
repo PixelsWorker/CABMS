@@ -108,7 +108,7 @@ test('LAYER 7: SSR markup — default compliance form in a labelled mobile fixtu
 test('LAYER 7: Mounted persona matrix exercises four actual roles and denied views', async () => {
   await mountView(React.createElement(React.Fragment, null, React.createElement(Navigation), React.createElement(QuotesAcceptanceView)), async (ctx, container, window) => {
     const states = new Set<string>();
-    const expectedVisible = { super_admin: 10, owner_admin: 9, office_staff: 8, technician: 4 };
+    const expectedVisible = { super_admin: 10, owner_admin: 10, office_staff: 8, technician: 4 };
     for (const persona of ['super_admin', 'owner_admin', 'office_staff', 'technician'] as Persona[]) {
       await act(async () => { ctx.simulateSignIn(persona); });
       assert.equal(ctx.persona, persona);
@@ -133,8 +133,9 @@ test('LAYER 7: Mounted brand matrix changes identity and filters operational job
     for (const brand of ['solarcell', 'smart_home', 'cctv'] as BrandId[]) {
       await act(async () => { ctx.setActiveBrandId(brand); });
       assert.equal(container.querySelector('h1')?.textContent, ctx.brands[brand].name);
+      const operationalJobsEl = container.querySelector('[data-testid="operational-jobs-panel"]') || container;
       for (const job of ctx.jobs) {
-        assert.equal(container.textContent?.includes(job.id), job.brandId === brand, `job ${job.id} belongs to ${brand}`);
+        assert.equal(operationalJobsEl.textContent?.includes(job.id), job.brandId === brand, `job ${job.id} belongs to ${brand}`);
       }
       assert.equal(container.querySelector('.cabms-brand-mark')?.textContent?.trim(), ctx.brands[brand].name.charAt(0));
       states.add(container.innerHTML);

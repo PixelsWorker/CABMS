@@ -150,7 +150,7 @@ test('LAYER 3: Gate S — hidden destinations remain denied by the actual App bo
   const destinations = ['dashboard', 'jobs', 'schedule', 'compliance', 'customers', 'quotes', 'communications', 'website_inbox', 'templates', 'super_admin_setup'];
   const expected = {
     super_admin: destinations,
-    owner_admin: destinations.slice(0, 9),
+    owner_admin: destinations,
     office_staff: destinations.slice(0, 8),
     technician: destinations.slice(0, 4),
   };

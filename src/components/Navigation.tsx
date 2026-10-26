@@ -43,9 +43,15 @@ export const CORE_DESTINATIONS: readonly Destination[] = [
   { id: 'communications', label: 'Communications & Reviews', icon: faComment, roles: office, section: 'Operations' },
   { id: 'website_inbox', label: 'Website Enquiries', icon: faInbox, roles: office, section: 'Operations' },
   { id: 'templates', label: 'Templates & Content', icon: faSliders, roles: ['super_admin', 'owner_admin'], section: 'Administration' },
-  { id: 'super_admin_setup', label: 'Integration Settings', icon: faGear, roles: ['super_admin'], section: 'Administration' },
+  { id: 'super_admin_setup', label: 'System & Workspace Settings', icon: faGear, roles: ['super_admin', 'owner_admin'], section: 'Administration' },
 ];
 
+export function getDestinationLabel(item: Destination, persona: Persona): string {
+  if (item.id === 'super_admin_setup') {
+    return persona === 'super_admin' ? 'System & Workspace Settings' : 'Workspace Settings';
+  }
+  return item.label;
+}
 export function canAccessDestination(persona: Persona, destinationId: string): boolean {
   return CORE_DESTINATIONS.some(item => item.id === destinationId && item.roles.includes(persona));
 }
@@ -227,24 +233,34 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
     if (!items.length) return null;
     return <section className="cabms-nav-section" key={section} aria-label={section}>
       <h2 className={`cabms-nav-section-title ${!isDrawer && collapsed ? 'cabms-sr-only' : ''}`}>{section}</h2>
-      {items.map(item => <button
-        key={item.id} type="button" className="cabms-nav-link"
-        aria-label={
-          item.id === 'website_inbox' && pendingEnquiries > 0
-            ? `${item.label} (${pendingEnquiries} pending ${pendingEnquiries === 1 ? 'enquiry' : 'enquiries'})`
-            : item.label
-        } aria-current={activeTab === item.id ? 'page' : undefined}
-        title={item.label} onClick={() => selectDestination(item.id)}
-        onFocus={event => { if (!isDrawer) showHint(event.currentTarget, item.label); }}
-        onBlur={() => setHint(null)}
-        onMouseEnter={event => { if (!isDrawer) showHint(event.currentTarget, item.label); }}
-        onMouseLeave={event => { if (document.activeElement !== event.currentTarget) setHint(null); }}
-      >
-        <FontAwesomeIcon icon={item.icon} aria-hidden="true" className="cabms-nav-icon" />
-        <span className={!isDrawer && collapsed ? 'cabms-sr-only' : 'cabms-nav-label'}>{item.label}</span>
-        {item.id === 'website_inbox' && pendingEnquiries > 0 &&
-          <span className="cabms-nav-badge" aria-hidden="true">{pendingEnquiries}</span>}
-      </button>)}
+      {items.map(item => {
+        const displayLabel = getDestinationLabel(item, persona);
+        return (
+          <button
+            key={item.id}
+            type="button"
+            className="cabms-nav-link"
+            aria-label={
+              item.id === 'website_inbox' && pendingEnquiries > 0
+                ? `${displayLabel} (${pendingEnquiries} pending ${pendingEnquiries === 1 ? 'enquiry' : 'enquiries'})`
+                : displayLabel
+            }
+            aria-current={activeTab === item.id ? 'page' : undefined}
+            title={displayLabel}
+            onClick={() => selectDestination(item.id)}
+            onFocus={event => { if (!isDrawer) showHint(event.currentTarget, displayLabel); }}
+            onBlur={() => setHint(null)}
+            onMouseEnter={event => { if (!isDrawer) showHint(event.currentTarget, displayLabel); }}
+            onMouseLeave={event => { if (document.activeElement !== event.currentTarget) setHint(null); }}
+          >
+            <FontAwesomeIcon icon={item.icon} aria-hidden="true" className="cabms-nav-icon" />
+            <span className={!isDrawer && collapsed ? 'cabms-sr-only' : 'cabms-nav-label'}>{displayLabel}</span>
+            {item.id === 'website_inbox' && pendingEnquiries > 0 && (
+              <span className="cabms-nav-badge" aria-hidden="true">{pendingEnquiries}</span>
+            )}
+          </button>
+        );
+      })}
     </section>;
   });
 

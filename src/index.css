@@ -161,6 +161,52 @@
   --cabms-logo-lens: #000000;
 }
 
+
+/* Orthogonal Company Branding Tokens & Multi-Business Identity Presets */
+:root,
+[data-branding="neutral"] {
+  --cabms-branding-mode: 'neutral';
+}
+
+[data-branding="company"] {
+  --cabms-branding-mode: 'company';
+}
+
+/* Per-panel company identity tokens */
+[data-company-panel="solarcell"] {
+  --cabms-brand-primary: #ea580c;
+  --cabms-brand-accent: #fbbf24;
+  --cabms-brand-border: #ea580c;
+}
+
+[data-company-panel="smart_home"] {
+  --cabms-brand-primary: #0284c7;
+  --cabms-brand-accent: #38bdf8;
+  --cabms-brand-border: #0284c7;
+}
+
+[data-company-panel="cctv"] {
+  --cabms-brand-primary: #059669;
+  --cabms-brand-accent: #34d399;
+  --cabms-brand-border: #059669;
+}
+
+/* Subtle brand accent border for cross-company panels when company branding is active */
+[data-branding="company"] .cabms-company-surface[data-company-panel="solarcell"] {
+  border-left: 3px solid #ea580c;
+}
+[data-branding="company"] .cabms-company-surface[data-company-panel="smart_home"] {
+  border-left: 3px solid #0284c7;
+}
+[data-branding="company"] .cabms-company-surface[data-company-panel="cctv"] {
+  border-left: 3px solid #059669;
+}
+
+/* High-visibility OLED Dark preserves clean contrast without heavy wash */
+[data-appearance="high_visibility_dark"][data-branding="company"] .cabms-company-surface {
+  background-color: var(--cabms-surface);
+}
+
 /* Universal semantic styling helpers */
 .cabms-app-shell {
   min-height: 100vh;

@@ -27,6 +27,8 @@ export const DashboardView: React.FC = () => {
   const {
     activeBrand,
     activeBrandId,
+    setActiveBrandId,
+    brands,
     persona,
     jobs,
     customers,
@@ -46,6 +48,12 @@ export const DashboardView: React.FC = () => {
   const inProgressJobs = brandJobs.filter(j => j.status === 'IN_PROGRESS').length;
   const needsRevisitJobs = brandJobs.filter(j => j.status === 'NEEDS_REVISIT').length;
   const completedJobs = brandJobs.filter(j => j.status === 'COMPLETED' && isInBusinessWeek(j.completedAt, demoClock)).length;
+  const isTechnician = persona === 'technician';
+  const outstandingJobs = jobs.filter(j =>
+    j.status !== 'COMPLETED' &&
+    j.status !== 'CANCELLED' &&
+    (!isTechnician || j.assignedTechId === 'TECH-001')
+  );
 
   const getStatusBadge = (status: JobStatus) => {
     switch (status) {
@@ -117,8 +125,9 @@ export const DashboardView: React.FC = () => {
 
       {/* Two-Column Section: Operational Jobs & Quick Simulation Flows */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Jobs Table */}
-        <div className="lg:col-span-2 cabms-card p-6">
+        {/* Left Column: Jobs Table & Cross-Company Queue (2 cols on lg) */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="cabms-card p-6" data-testid="operational-jobs-panel">
           <div className="flex items-center justify-between mb-5">
             <div>
               <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
@@ -183,6 +192,78 @@ export const DashboardView: React.FC = () => {
               </div>
             ))}
           </div>
+        </div>
+
+          {/* Consolidated Cross-Company Outstanding Jobs (Admin/Office/Super Admin only) */}
+          {!isTechnician && (
+          <div className="cabms-card p-6" data-testid="consolidated-jobs-panel">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
+                  Cross-Company Outstanding Jobs
+                </h2>
+                <p className="text-sm text-(--cabms-text-secondary) mt-1">
+                  Consolidated queue across Solarcell, Smart Home, and CCTV
+                </p>
+              </div>
+              <span className="text-xs px-2.5 py-1 rounded-full font-mono font-semibold bg-sky-950/60 text-sky-300 border border-sky-800/60">
+                {outstandingJobs.length} Outstanding
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {outstandingJobs.length === 0 ? (
+                <div className="p-4 text-center text-sm text-(--cabms-text-secondary)">
+                  No outstanding jobs at this time.
+                </div>
+              ) : (
+                outstandingJobs.map(job => {
+                  const jobBrand = brands[job.brandId] || brands.solarcell;
+                  return (
+                    <div
+                      key={job.id}
+                      data-testid={`consolidated-job-${job.id}`}
+                      onClick={() => {
+                        if (job.brandId !== activeBrandId) {
+                          setActiveBrandId(job.brandId);
+                        }
+                        setSelectedJobId(job.id);
+                        setActiveTab('jobs');
+                      }}
+                      className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-3.5 rounded-lg cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-(--cabms-border-base)"
+                    >
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-sky-400">{job.id}</span>
+                          <span
+                            className="text-[11px] font-semibold px-2 py-0.5 rounded font-mono uppercase"
+                            style={{ backgroundColor: `${jobBrand.primaryColor}22`, color: jobBrand.accentColor || jobBrand.primaryColor }}
+                          >
+                            {jobBrand.name}
+                          </span>
+                          <span className="text-(--cabms-text-primary) font-bold text-sm truncate">{job.title}</span>
+                          {getStatusBadge(job.status)}
+                        </div>
+                        <div className="text-xs text-(--cabms-text-secondary) truncate">
+                          {job.siteAddress} • Contact: {job.siteContact} • Tech: {job.assignedTechName || 'Unassigned'}
+                        </div>
+                      </div>
+
+                      <div className="text-right sm:self-center shrink-0 space-y-0.5">
+                        <div className="text-xs font-semibold text-(--cabms-text-primary)">
+                          {job.scheduledDate} {job.scheduledTime}
+                        </div>
+                        <span className="text-xs font-semibold text-sky-400 hover:underline inline-block">
+                          Switch & View →
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          )}
         </div>
 
         {/* Right Column: Guided Demo Scenarios & Quick Actions */}

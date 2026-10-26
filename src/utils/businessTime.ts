@@ -1,3 +1,4 @@
+import { HolidayRegion } from '../types/cabms.ts';
 /** Brisbane has no daylight saving: all demo business dates use AEST (UTC+10). */
 export const BUSINESS_TIME_ZONE = 'Australia/Brisbane';
 const BUSINESS_OFFSET_MS = 10 * 60 * 60 * 1000;
@@ -86,4 +87,110 @@ export function isInBusinessWeek(completedAt: string | undefined, clock: string)
   const bounds = businessWeekBounds(clock);
   const completed = completedAt ? instant(completedAt) : NaN;
   return !!bounds && Number.isFinite(completed) && completed >= bounds.start && completed < bounds.end;
+}
+
+// QLD Statewide Public Holidays 2026 + 2027 Rollover
+export const QUEENSLAND_STATEWIDE_HOLIDAYS_2026: readonly string[] = [
+  '2026-01-01', // New Year's Day
+  '2026-01-26', // Australia Day
+  '2026-04-03', // Good Friday
+  '2026-04-04', // Easter Saturday
+  '2026-04-05', // Easter Sunday
+  '2026-04-06', // Easter Monday
+  '2026-04-25', // Anzac Day
+  '2026-05-04', // Labour Day
+  '2026-10-05', // King's Birthday
+  '2026-12-25', // Christmas Day
+  '2026-12-26', // Boxing Day
+  '2026-12-28', // Boxing Day (Observed Public Holiday)
+  // Safe 2027 Rollover
+  '2027-01-01', // New Year's Day 2027
+  '2027-01-26', // Australia Day 2027
+];
+
+// Regional Show Days 2026
+export const BRISBANE_EKKA_2026 = '2026-08-12'; // Royal Queensland Show (Brisbane Area)
+export const GOLD_COAST_SHOW_2026 = '2026-08-28'; // Gold Coast Show Day
+
+export const BRISBANE_METRO_PUBLIC_HOLIDAYS_2026 = new Set<string>([
+  ...QUEENSLAND_STATEWIDE_HOLIDAYS_2026,
+  BRISBANE_EKKA_2026,
+]);
+
+export const GOLD_COAST_PUBLIC_HOLIDAYS_2026 = new Set<string>([
+  ...QUEENSLAND_STATEWIDE_HOLIDAYS_2026,
+  GOLD_COAST_SHOW_2026,
+]);
+
+export function getPublicHolidays(region: HolidayRegion = 'brisbane'): Set<string> {
+  return region === 'gold_coast' ? GOLD_COAST_PUBLIC_HOLIDAYS_2026 : BRISBANE_METRO_PUBLIC_HOLIDAYS_2026;
+}
+
+/** Check if dateStr ('YYYY-MM-DD') is a business day (Mon-Fri and not a public holiday in region). */
+export function isBusinessDay(dateStr: string, region: HolidayRegion = 'brisbane'): boolean {
+  if (typeof dateStr !== 'string') return false;
+  const match = dateStr.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const day = parseInt(match[3], 10);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+  const d = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
+    return false;
+  }
+  const dow = d.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  if (dow === 0 || dow === 6) return false;
+
+  const holidays = getPublicHolidays(region);
+  return !holidays.has(dateStr);
+}
+
+/**
+ * Add a number of business days to a starting date or instant, skipping weekends and regional public holidays.
+ * Returns the resulting calendar date in 'YYYY-MM-DD' format.
+ */
+export function addBusinessDays(
+  startInstantOrDate: string,
+  days: number,
+  region: HolidayRegion = 'brisbane'
+): string {
+  if (days < 0 || !Number.isInteger(days)) {
+    throw new RangeError('days must be a non-negative integer');
+  }
+  let currentYMD = startInstantOrDate.includes('T')
+    ? businessCalendarDate(startInstantOrDate)
+    : startInstantOrDate;
+
+  let [year, month, day] = currentYMD.split('-').map(Number);
+  let added = 0;
+  while (added < days) {
+    const nextDate = new Date(Date.UTC(year, month - 1, day + 1, 12, 0, 0));
+    year = nextDate.getUTCFullYear();
+    month = nextDate.getUTCMonth() + 1;
+    day = nextDate.getUTCDate();
+    currentYMD = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    if (isBusinessDay(currentYMD, region)) {
+      added++;
+    }
+  }
+  return currentYMD;
+}
+
+/** Calculate quote follow-up dates (Stage 1 @ 3 business days, Stage 2 @ 7 business days, Expiration @ 14 calendar days). */
+export function calculateQuoteFollowUpDates(
+  issuedAt: string,
+  region: HolidayRegion = 'brisbane'
+): { stage1Date: string; stage2Date: string; expiresAtDate: string } {
+  const stage1Date = addBusinessDays(issuedAt, 3, region);
+  const stage2Date = addBusinessDays(issuedAt, 7, region);
+  const expiresAtInstant = advanceBusinessClock(issuedAt, 14 * 24);
+  const expiresAtDate = businessCalendarDate(expiresAtInstant);
+  return { stage1Date, stage2Date, expiresAtDate };
+}
+
+/** Calculate quote expiration timestamp (14 calendar days after issuance). */
+export function calculateQuoteExpiration(issuedAt: string): string {
+  return advanceBusinessClock(issuedAt, 14 * 24);
 }

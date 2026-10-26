@@ -286,6 +286,43 @@ export const QuotesAcceptanceView: React.FC = () => {
               </div>
             </div>
 
+            {/* Follow-Up Schedule & Expiry Badge */}
+            <div className="cabms-card-subtle p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs border-l-4 border-l-amber-500" data-testid="quote-followup-badge">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-(--cabms-text-primary)">Quotation Follow-Up Timeline & 14-Day Expiry</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/60">
+                    Standard Terms
+                  </span>
+                </div>
+                <p className="text-(--cabms-text-secondary) text-[11px]">
+                  Stage 1 (3 business days courtesy) • Stage 2 (7 business days expiry warning) • Strict 14-calendar-day validity cap.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {quote.followUps && quote.followUps.length > 0 ? (
+                  quote.followUps.map(fu => (
+                    <span
+                      key={fu.id}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold border ${
+                        fu.status === 'SENT'
+                          ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800/60'
+                          : fu.status === 'CANCELLED'
+                          ? 'bg-slate-800 text-slate-400 border-slate-700 line-through'
+                          : 'bg-sky-950/60 text-sky-300 border-sky-800/60'
+                      }`}
+                    >
+                      {fu.stage === 'STAGE_1_COURTESY' ? 'Stage 1 (3d)' : 'Stage 2 (7d)'}: {fu.status} ({fu.scheduledDate})
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-[11px] text-(--cabms-text-secondary) italic">
+                    {quote.acceptanceStatus === 'ACCEPTED' ? 'Follow-ups concluded (Accepted)' : 'No pending follow-ups'}
+                  </span>
+                )}
+              </div>
+            </div>
+
             {/* Schedule of Items & Unified Subtotal/GST Breakdown */}
             <div className="space-y-2">
               <span className="text-xs font-bold text-(--cabms-text-secondary) uppercase tracking-wider block">

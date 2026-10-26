@@ -8,6 +8,17 @@ export type BrandId = 'solarcell' | 'smart_home' | 'cctv';
 
 export type AppearanceMode = 'default_dark' | 'high_visibility_light' | 'high_visibility_dark';
 
+export type BrandingMode = 'neutral' | 'company';
+
+export type VisualPreset =
+  | 'dark_neutral'
+  | 'dark_company'
+  | 'light_neutral'
+  | 'light_company'
+  | 'high_visibility_dark';
+
+export type HolidayRegion = 'brisbane' | 'gold_coast';
+
 export interface DraftBusinessProfile {
   id: string; // e.g. DRAFT-BIZ-001
   slug?: string;
@@ -51,6 +62,10 @@ export interface BrandConfig {
   qbccLicencePlaceholder: string;
   contactEmail: string;
   contactPhone: string;
+  holidayRegion: HolidayRegion;
+  operationalAddress?: string;
+  operatingHours?: string;
+  preferredPreset?: VisualPreset;
   reviewUrlPlaceholder: string;
   calendarMappingName: string;
   quoteTemplateName: string;
@@ -129,6 +144,16 @@ export interface Job {
   activityHistory: ActivityLogEntry[];
 }
 
+export interface QuoteFollowUp {
+  id: string;
+  quoteId: string;
+  stage: 'STAGE_1_COURTESY' | 'STAGE_2_EXPIRY';
+  scheduledDate: string; // YYYY-MM-DD
+  status: 'SCHEDULED' | 'SENT' | 'CANCELLED';
+  sentAt?: string;
+  channel: 'EMAIL_SIMULATED';
+}
+
 export interface Quote {
   id: string; // e.g. QUOTE-2026-042
   jobId: string;
@@ -152,7 +177,11 @@ export interface Quote {
   acceptanceStatus: 'DRAFT' | 'SENT' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED' | 'SUPERSEDED';
   linkScenario: 'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted';
   acceptedAt?: string;
-  acceptedByName?: string;
+    acceptedByName?: string;
+  issuedAt?: string;
+  expiresAt?: string;
+  refusalReason?: string;
+  followUps?: QuoteFollowUp[];
   acceptanceHistory: ActivityLogEntry[];
 }
 
@@ -442,7 +471,7 @@ export interface TemplateRevision {
 export interface TemplateSetting {
   id: string;
   name: string;
-  type: 'TERMS' | 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2' | 'EMAIL_CONFIRMATION' | 'REVIEW_REQUEST';
+  type: 'TERMS' | 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2' | 'EMAIL_CONFIRMATION' | 'REVIEW_REQUEST' | 'QUOTE_FOLLOWUP';
   currentVersion: string;
   activeStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED';
   content: string;

@@ -24,7 +24,7 @@ import { QuotesAcceptanceView } from './views/QuotesAcceptanceView.tsx';
 import { CommunicationsView } from './views/CommunicationsView.tsx';
 import { WebsiteInboxView } from './views/WebsiteInboxView.tsx';
 import { TemplatesSettingsView } from './views/TemplatesSettingsView.tsx';
-import { SuperAdminSetupView } from './views/SuperAdminSetupView.tsx';
+import { SystemWorkspaceSettingsView } from './views/SystemWorkspaceSettingsView.tsx';
 
 import { SignInScreen } from './components/SignInScreen.tsx';
 import { AccessDeniedView } from './components/AccessDeniedView.tsx';
@@ -80,7 +80,7 @@ export const AppContent: React.FC = () => {
           {permitted && activeTab === 'communications' && <CommunicationsView />}
           {permitted && activeTab === 'website_inbox' && <WebsiteInboxView />}
           {permitted && activeTab === 'templates' && <TemplatesSettingsView />}
-          {permitted && activeTab === 'super_admin_setup' && <SuperAdminSetupView />}
+          {permitted && activeTab === 'super_admin_setup' && <SystemWorkspaceSettingsView />}
         </main>
 
         {/* 5. Footer with Persistent Isolation Disclosure */}

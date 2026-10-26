@@ -8,6 +8,12 @@ import {
   formatBusinessCalendarDate,
   isInBusinessWeek,
   serializeBusinessInstant,
+  isBusinessDay,
+  addBusinessDays,
+  calculateQuoteFollowUpDates,
+  calculateQuoteExpiration,
+  BRISBANE_EKKA_2026,
+  GOLD_COAST_SHOW_2026,
 } from '../src/utils/businessTime.ts';
 
 test('Business time is identical under Brisbane and Kolkata host timezones, including midnight', () => {
@@ -127,4 +133,52 @@ test('FC-13: formatBusinessCalendarDate strictly enforces Australia/Brisbane tim
     month: 'short',
   } as any);
   assert.equal(resultOverrideUTC, expectedShortOct23, 'Forced Australia/Brisbane despite UTC override');
+});
+
+test('Regional holidays: Brisbane Ekka (12 Aug) vs Gold Coast Show (28 Aug)', () => {
+  // Brisbane Ekka: holiday in Brisbane, business day in Gold Coast
+  assert.equal(isBusinessDay(BRISBANE_EKKA_2026, 'brisbane'), false, 'Brisbane Ekka is holiday in Brisbane');
+  assert.equal(isBusinessDay(BRISBANE_EKKA_2026, 'gold_coast'), true, 'Brisbane Ekka is normal business day on Gold Coast');
+
+  // Gold Coast Show: holiday in Gold Coast, business day in Brisbane
+  assert.equal(isBusinessDay(GOLD_COAST_SHOW_2026, 'gold_coast'), false, 'Gold Coast Show is holiday on Gold Coast');
+  assert.equal(isBusinessDay(GOLD_COAST_SHOW_2026, 'brisbane'), true, 'Gold Coast Show is normal business day in Brisbane');
+
+  // Statewide holiday: Boxing Day Observed (28 Dec 2026) is holiday in both
+  assert.equal(isBusinessDay('2026-12-28', 'brisbane'), false, '28 Dec 2026 is holiday in Brisbane');
+  assert.equal(isBusinessDay('2026-12-28', 'gold_coast'), false, '28 Dec 2026 is holiday on Gold Coast');
+
+  // 2027 Rollover: New Year's Day (1 Jan 2027) and Australia Day (26 Jan 2027)
+  assert.equal(isBusinessDay('2027-01-01', 'brisbane'), false, '1 Jan 2027 is holiday');
+  assert.equal(isBusinessDay('2027-01-26', 'brisbane'), false, '26 Jan 2027 is holiday');
+
+  // Weekends are never business days
+  assert.equal(isBusinessDay('2026-11-07', 'brisbane'), false, 'Saturday is not business day');
+  assert.equal(isBusinessDay('2026-11-08', 'brisbane'), false, 'Sunday is not business day');
+  assert.equal(isBusinessDay('2026-11-09', 'brisbane'), true, 'Monday is business day');
+});
+
+test('addBusinessDays correctly skips weekends and regional public holidays', () => {
+  // Start Monday 2026-11-02 -> +3 business days should be Thursday 2026-11-05
+  assert.equal(addBusinessDays('2026-11-02', 3, 'brisbane'), '2026-11-05');
+
+  // Start Thursday 2026-11-05 -> +2 business days should skip Fri/Sat/Sun -> Mon 2026-11-09
+  assert.equal(addBusinessDays('2026-11-05', 2, 'brisbane'), '2026-11-09');
+
+  // Over Ekka week in Brisbane (Mon 10 Aug to Thu 13 Aug):
+  // 2026-08-10 (Mon) + 3 business days: Tue (day 1), Wed is Ekka (skipped in BNE), Thu (day 2), Fri (day 3) -> 2026-08-14
+  assert.equal(addBusinessDays('2026-08-10', 3, 'brisbane'), '2026-08-14');
+  // On Gold Coast, Wed is not a holiday -> Wed (day 2), Thu (day 3) -> 2026-08-13
+  assert.equal(addBusinessDays('2026-08-10', 3, 'gold_coast'), '2026-08-13');
+});
+
+test('calculateQuoteFollowUpDates computes Stage 1 (3 business days), Stage 2 (7 business days), and 14 calendar day expiry', () => {
+  const issuedAt = '2026-11-02T09:00:00+10:00'; // Monday
+  const dates = calculateQuoteFollowUpDates(issuedAt, 'brisbane');
+  assert.equal(dates.stage1Date, '2026-11-05', 'Stage 1 @ 3 business days');
+  assert.equal(dates.stage2Date, '2026-11-11', 'Stage 2 @ 7 business days');
+  assert.equal(dates.expiresAtDate, '2026-11-16', 'Expires at 14 calendar days');
+
+  const expiryInstant = calculateQuoteExpiration(issuedAt);
+  assert.equal(expiryInstant, '2026-11-16T09:00:00.000+10:00');
 });

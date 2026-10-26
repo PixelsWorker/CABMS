@@ -6,7 +6,7 @@
 import React from 'react';
 import { formatBusinessTime } from '../utils/businessTime.ts';
 import { useCabms, DemoScenario } from '../context/CabmsContext.tsx';
-import { Persona, BrandId, AppearanceMode } from '../types/cabms.ts';
+import { Persona, BrandId, AppearanceMode, VisualPreset } from '../types/cabms.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBuilding,
@@ -30,6 +30,8 @@ export const DemoControlsBar: React.FC = () => {
     brands,
     appearance,
     setAppearance,
+    visualPreset,
+    setVisualPreset,
     demoClock,
     advanceClock,
     resetDemo,
@@ -115,19 +117,21 @@ export const DemoControlsBar: React.FC = () => {
             </select>
           </div>
 
-          {/* Appearance Mode Selector */}
+          {/* Visual Preset Selector */}
           <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
             <FontAwesomeIcon icon={faPalette} className="w-3.5 h-3.5 text-purple-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Theme:</span>
             <select
-              value={appearance}
-              onChange={e => setAppearance(e.target.value as AppearanceMode)}
+              value={visualPreset}
+              onChange={e => setVisualPreset(e.target.value as VisualPreset)}
               className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
-              aria-label="Appearance Mode Selector"
+              aria-label="Visual Preset Selector"
             >
-              <option value="default_dark" className="bg-slate-900 text-white">Default Dark</option>
-              <option value="high_visibility_light" className="bg-slate-900 text-white">High Visibility Light</option>
-              <option value="high_visibility_dark" className="bg-slate-900 text-white">High Visibility Dark</option>
+              <option value="dark_company" className="bg-slate-900 text-white">Preset 2 — Dark + Company</option>
+              <option value="dark_neutral" className="bg-slate-900 text-white">Preset 1 — All Dark</option>
+              <option value="light_company" className="bg-slate-900 text-white">Preset 4 — Light + Company</option>
+              <option value="light_neutral" className="bg-slate-900 text-white">Preset 3 — All Light</option>
+              <option value="high_visibility_dark" className="bg-slate-900 text-white">High Visibility Dark (OLED)</option>
             </select>
           </div>
         </div>

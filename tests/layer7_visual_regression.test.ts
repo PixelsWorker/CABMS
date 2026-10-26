@@ -137,7 +137,8 @@ test('LAYER 7: Mounted brand matrix changes identity and filters operational job
       for (const job of ctx.jobs) {
         assert.equal(operationalJobsEl.textContent?.includes(job.id), job.brandId === brand, `job ${job.id} belongs to ${brand}`);
       }
-      assert.equal(container.querySelector('.cabms-brand-mark')?.textContent?.trim(), ctx.brands[brand].name.charAt(0));
+      const expectedBadge = brand === 'solarcell' ? 'SC' : brand === 'smart_home' ? 'SHS' : 'C';
+      assert.equal(container.querySelector('.cabms-brand-mark')?.textContent?.trim(), expectedBadge);
       states.add(container.innerHTML);
     }
     assert.equal(states.size, 3, 'three different rendered business states');

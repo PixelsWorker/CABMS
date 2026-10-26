@@ -61,6 +61,19 @@ const personaLabels: Record<Persona, string> = {
   office_staff: 'Office Staff', technician: 'Technician (Dave Miller)',
 };
 
+export const getBrandBadgeConfig = (brandId: string) => {
+  if (brandId === 'solarcell' || brandId === 'solar_cell') {
+    return { text: 'SC', bg: '#ffae14', fg: '#020617' };
+  }
+  if (brandId === 'smart_home' || brandId === 'smarthome') {
+    return { text: 'SHS', bg: '#0284c7', fg: '#ffffff' };
+  }
+  if (brandId === 'cctv' || brandId === 'gold_coast_cctv') {
+    return { text: 'C', bg: '#0ba3ad', fg: '#ffffff' };
+  }
+  return { text: brandId.slice(0, 2).toUpperCase(), bg: '#334155', fg: '#ffffff' };
+};
+
 export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { activeTab, setActiveTab, activeBrand, activeBrandId, setActiveBrandId, brands, persona, websiteEnquiries,
     demoNotification, clearDemoNotification, simulateSignOut } = useCabms();
@@ -298,10 +311,18 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
             aria-controls="cabms-brand-dropdown-menu"
             onClick={() => setBrandDropdownOpen(open => !open)}
           >
-            <div className="cabms-brand-mark" style={{ backgroundColor: activeBrand.primaryColor }} aria-hidden="true">
-              <span className="cabms-sr-only">{activeBrand.name.charAt(0)}</span>
-              <BrandLogo brandId={activeBrandId} variant="mark" alt={`${activeBrand.name} mark`} ariaHidden={true} className="cabms-brand-mark-svg" />
-            </div>
+            {(() => {
+              const badge = getBrandBadgeConfig(activeBrandId);
+              return (
+                <div
+                  className="cabms-brand-mark font-black text-sm tracking-wide select-none"
+                  style={{ backgroundColor: badge.bg, color: badge.fg }}
+                  aria-hidden="true"
+                >
+                  {badge.text}
+                </div>
+              );
+            })()}
             <FontAwesomeIcon icon={faChevronDown} className="cabms-brand-chevron" aria-hidden="true" />
           </button>
           {brandDropdownOpen && (
@@ -326,10 +347,18 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
                     }}
                     className={`cabms-brand-dropdown-option ${activeBrandId === b.id ? 'is-active' : ''}`}
                   >
-                    <span className="cabms-brand-option-mark" style={{ backgroundColor: b.primaryColor }} aria-hidden="true">
-                      <span className="cabms-sr-only">{b.name.charAt(0)}</span>
-                      <BrandLogo brandId={b.id} variant="mark" alt={`${b.name} mark`} ariaHidden={true} className="cabms-brand-mark-svg" />
-                    </span>
+                    {(() => {
+                      const badge = getBrandBadgeConfig(b.id);
+                      return (
+                        <span
+                          className="cabms-brand-option-mark font-black text-xs tracking-wide select-none"
+                          style={{ backgroundColor: badge.bg, color: badge.fg }}
+                          aria-hidden="true"
+                        >
+                          {badge.text}
+                        </span>
+                      );
+                    })()}
                     <div className="cabms-brand-option-info">
                       <span className="cabms-brand-option-name">
                         {b.name || 'Unnamed business'}
@@ -344,8 +373,8 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
           )}
         </div>
         <div className="cabms-topbar-identity">
-          <div className="flex items-center gap-3 min-w-0">
-            <h1 className="cabms-business-name m-0 p-0 text-base font-bold flex items-center">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <h1 className="cabms-business-name m-0 p-0 flex items-center shrink-0">
               <span className="cabms-sr-only">{activeBrand.name}</span>
               <BrandLogo
                 brandId={activeBrandId}
@@ -355,9 +384,15 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
                 className="cabms-topbar-logo"
               />
             </h1>
-            <span className="cabms-active-area font-medium text-sm">
-              • {activeDestination ? getDestinationLabel(activeDestination, persona) : 'Restricted destination'}
-            </span>
+            <div className="cabms-topbar-divider" aria-hidden="true" />
+            <div className="flex flex-col justify-center min-w-0">
+              <span className="cabms-active-area font-extrabold text-base sm:text-lg tracking-tight leading-none text-(--cabms-text-primary)">
+                {activeDestination ? getDestinationLabel(activeDestination, persona) : 'Restricted destination'}
+              </span>
+              <span className="cabms-topbar-company-subtitle text-xs text-(--cabms-text-secondary) font-medium mt-1 truncate">
+                {activeBrand.name} &bull; {activeBrand.abnPlaceholder}
+              </span>
+            </div>
           </div>
         </div>
         <span className="cabms-persona">{personaLabels[persona]}</span>

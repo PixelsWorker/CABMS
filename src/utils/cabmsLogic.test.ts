@@ -95,7 +95,7 @@ test('validateJobCompletion: direct-to-invoice job completes without forms', () 
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: 'https://demo.reviews.invalid/smart-home',
-      brandName: 'Gold Coast Smart Home Solutions',
+      brandName: 'Smart Home Solutions',
       channel: 'EMAIL_SIMULATED',
       history: [],
     },

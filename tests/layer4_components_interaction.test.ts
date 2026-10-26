@@ -17,6 +17,7 @@ import { QuotesAcceptanceView } from '../src/views/QuotesAcceptanceView.tsx';
 import { ScheduleView } from '../src/views/ScheduleView.tsx';
 import { CommunicationsView } from '../src/views/CommunicationsView.tsx';
 import { TemplatesSettingsView } from '../src/views/TemplatesSettingsView.tsx';
+import { WorkspaceSettingsView } from '../src/views/WorkspaceSettingsView.tsx';
 import { INITIAL_TEMPLATES } from '../src/data/seedData.ts';
 
 test('LAYER 4: Components — DashboardView renders KPI metrics and workflow queues', () => {
@@ -722,14 +723,8 @@ test('LAYER 4: Gate T — Visual Preset switcher updates context state and synch
     assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light');
     assert.equal(window.document.documentElement.getAttribute('data-branding'), 'neutral');
 
-    // Switch to Preset 5 — High Visibility Dark (OLED)
-    await act(async () => {
-      select.value = 'high_visibility_dark';
-      select.dispatchEvent(new window.Event('change', { bubbles: true }));
-    });
-    assert.equal(ctx.visualPreset, 'high_visibility_dark');
-    assert.equal(ctx.appearance, 'high_visibility_dark');
-    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_dark');
+    // High visibility dark is removed from dropdown; only Presets 1-4 are selectable options
+    assert.equal(select.querySelector('option[value="high_visibility_dark"]'), null, 'OLED option removed from dropdown');
 
     // Reset Demo restores dark_company
     await act(async () => {
@@ -909,6 +904,17 @@ test('LAYER 4: Security — role mutation guards block unauthorized legal and sy
     assert.equal(ctx.brands.solarcell.legalIssuerName, originalLegal, 'legalIssuerName unmodified for owner_admin');
     assert.equal(ctx.demoNotification?.type, 'error', 'Error notification shown for unauthorized legal change');
 
+    // owner_admin attempts to mutate holidayRegion
+    const originalRegion = ctx.brands.solarcell.holidayRegion;
+    await act(async () => {
+      ctx.updateBrandConfig({
+        ...ctx.brands.solarcell,
+        holidayRegion: 'gold_coast',
+      });
+    });
+    assert.equal(ctx.brands.solarcell.holidayRegion, originalRegion, 'holidayRegion unmodified for owner_admin');
+    assert.equal(ctx.demoNotification?.type, 'error', 'Error notification shown for unauthorized holidayRegion change');
+
     // 2. owner_admin attempts to change MYOB status
     const originalMyob = ctx.myobConnection.status;
     await act(async () => {
@@ -931,6 +937,14 @@ test('LAYER 4: Security — role mutation guards block unauthorized legal and sy
       });
     });
     assert.equal(ctx.brands.solarcell.legalIssuerName, 'Solarcell Authorised Legal Name Pty Ltd', 'legalIssuerName updated by super_admin');
+
+    await act(async () => {
+      ctx.updateBrandConfig({
+        ...ctx.brands.solarcell,
+        holidayRegion: 'gold_coast',
+      });
+    });
+    assert.equal(ctx.brands.solarcell.holidayRegion, 'gold_coast', 'holidayRegion updated by super_admin');
   });
 });
 test('LAYER 4: CommunicationsView — scopes job to active brand and synchronizes active brand on cross-brand selection', async () => {
@@ -1024,5 +1038,36 @@ test('LAYER 4: Security — revokeQuote enforces financial_writes persona and si
     });
     assert.equal(acceptResult.success, false, 'Acceptance rejected when clock exceeds 14 days');
     assert.ok(acceptResult.message.includes('expired'), 'Message indicates link expired');
+  });
+});
+
+test('LAYER 4: WorkspaceSettings — switching active workspace applies its saved visual preset', async () => {
+  await mountView(React.createElement(WorkspaceSettingsView), async (ctx, container, window) => {
+    assert.equal(ctx.activeBrandId, 'solarcell');
+    assert.equal(ctx.visualPreset, 'dark_company');
+
+    // 1. Configure smart_home with a different preferredPreset: light_company (using super_admin)
+    await act(async () => {
+      ctx.simulateSignIn('super_admin');
+      ctx.updateBrandConfig({
+        ...ctx.brands.smart_home,
+        preferredPreset: 'light_company',
+      });
+      ctx.simulateSignIn('owner_admin');
+    });
+
+    // 2. Switch active workspace to smart_home
+    await act(async () => {
+      ctx.setActiveBrandId('smart_home');
+    });
+    assert.equal(ctx.activeBrandId, 'smart_home');
+    assert.equal(ctx.visualPreset, 'light_company', 'smart_home saved preset applied on workspace activation');
+
+    // 3. Switch back to solarcell
+    await act(async () => {
+      ctx.setActiveBrandId('solarcell');
+    });
+    assert.equal(ctx.activeBrandId, 'solarcell');
+    assert.equal(ctx.visualPreset, 'dark_company', 'solarcell saved preset restored on workspace activation');
   });
 });

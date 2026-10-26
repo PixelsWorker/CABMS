@@ -60,7 +60,7 @@ export const WorkspaceSettingsView: React.FC = () => {
     setOperationalAddress(currentBrand.operationalAddress || '');
     setOperatingHours(currentBrand.operatingHours || '');
     setPreferredPreset(currentBrand.preferredPreset || 'dark_company');
-  }, [activeBrandId, currentBrand]);
+  }, [activeBrandId]);
 
   useEffect(() => {
     setSavedFeedback(false);
@@ -270,7 +270,6 @@ export const WorkspaceSettingsView: React.FC = () => {
                 <option value="dark_company">Preset 2 — Dark + Company Branding (Recommended)</option>
                 <option value="light_neutral">Preset 3 — All Light (Neutral Panels)</option>
                 <option value="light_company">Preset 4 — Light + Company Branding</option>
-                <option value="high_visibility_dark">Preset 5 — High Visibility Dark (OLED Pure Black)</option>
               </select>
               <p className="text-[11px] text-(--cabms-text-secondary) mt-1">
                 Active theme preset: <span className="font-mono">{visualPreset}</span>.

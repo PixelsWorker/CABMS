@@ -53,11 +53,11 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
   },
   smart_home: {
     id: 'smart_home',
-    name: 'Gold Coast Smart Home Solutions',
+    name: 'Smart Home Solutions',
     tagline: 'Home Automation, Intelligent Lighting & Smoke Safety',
     primaryColor: '#0284c7', // sky-600
     accentColor: '#38bdf8', // sky-400
-    logoGlyph: 'G',
+    logoGlyph: 'SHS',
     legalIssuerName: 'Gold Coast Smart Home Systems Pty Ltd (Fictional Placeholder)',
     abnPlaceholder: 'ABN 23 456 789 012 (Fictional)',
     electricalLicencePlaceholder: 'Q-ELEC-77341 (Fictional Demo)',
@@ -68,7 +68,6 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     holidayRegion: 'gold_coast',
     operationalAddress: '44 Innovation Boulevard, Bundall QLD 4217',
     operatingHours: 'Mon-Fri 8:00 AM - 5:30 PM AEST',
-    preferredPreset: 'dark_company',
     reviewUrlPlaceholder: 'https://demo.google-reviews.invalid/gc-smarthome',
     calendarMappingName: 'Smart Home Automation Technicians Calendar',
     quoteTemplateName: 'MYOB-TPL-SMARTHOME-2026',
@@ -91,7 +90,6 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     holidayRegion: 'gold_coast',
     operationalAddress: '8 Gateway Drive, Molendinar QLD 4214',
     operatingHours: 'Mon-Fri 7:30 AM - 5:00 PM AEST',
-    preferredPreset: 'dark_company',
     reviewUrlPlaceholder: 'https://demo.google-reviews.invalid/gc-cctv',
     calendarMappingName: 'GC CCTV Security & Cabling Fleet Calendar',
     quoteTemplateName: 'MYOB-TPL-CCTV-ENTERPRISE',
@@ -804,7 +802,7 @@ export const INITIAL_JOBS: Job[] = [
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/gc-smarthome',
-      brandName: 'Gold Coast Smart Home Solutions',
+      brandName: 'Smart Home Solutions',
       channel: 'EMAIL_SIMULATED',
       history: [],
     },
@@ -1001,7 +999,7 @@ export const INITIAL_JOBS: Job[] = [
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: 'https://demo.google-reviews.invalid/gc-smarthome',
-      brandName: 'Gold Coast Smart Home Solutions',
+      brandName: 'Smart Home Solutions',
       channel: 'EMAIL_SIMULATED',
       history: [],
     },

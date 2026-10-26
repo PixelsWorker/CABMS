@@ -103,7 +103,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
         className={`cabms-brand-svg cabms-brand-full-svg ${className}`}
         {...accessibleProps}
       >
-        {!ariaHidden && <title>{alt || "Gold Coast Smart Home Solutions Logo"}</title>}
+        {!ariaHidden && <title>{alt || "Smart Home Solutions Logo"}</title>}
         <defs>
           <linearGradient id={gradientId} x1="15%" y1="0%" x2="85%" y2="100%">
             <stop offset="0%" stopColor="var(--cabms-logo-grad-top, var(--grad-top, #147a4d))" />

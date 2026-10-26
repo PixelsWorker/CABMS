@@ -267,7 +267,15 @@ let seqCounters = {
 export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // Navigation & Personas
   const [persona, setPersona] = useState<Persona>('owner_admin');
-  const [activeBrandId, setActiveBrandId] = useState<BrandId>('solarcell');
+  const [activeBrandId, setActiveBrandIdState] = useState<BrandId>('solarcell');
+
+  const handleSetActiveBrandId = (b: BrandId) => {
+    setActiveBrandIdState(b);
+    const targetBrand = authoritativeBrandsRef.current[b] || brands[b];
+    if (targetBrand?.preferredPreset) {
+      setVisualPreset(targetBrand.preferredPreset, false);
+    }
+  };
   const [brands, setBrands] = useState<Record<string, BrandConfig>>(INITIAL_BRANDS);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [selectedJobId, setSelectedJobId] = useState<string | null>('JOB-2026-101');
@@ -290,7 +298,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const setVisualPreset = (preset: VisualPreset) => {
+  const setVisualPreset = (preset: VisualPreset, syncActiveBrand: boolean = true) => {
     setVisualPresetState(preset);
     switch (preset) {
       case 'dark_neutral':
@@ -312,6 +320,22 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       case 'high_visibility_dark':
         setAppearanceState('high_visibility_dark');
         break;
+    }
+    if (syncActiveBrand && activeBrandId) {
+      authoritativeBrandsRef.current = {
+        ...authoritativeBrandsRef.current,
+        [activeBrandId]: {
+          ...(authoritativeBrandsRef.current[activeBrandId] || brands[activeBrandId]),
+          preferredPreset: preset,
+        },
+      };
+      setBrands(prev => ({
+        ...prev,
+        [activeBrandId]: {
+          ...prev[activeBrandId],
+          preferredPreset: preset,
+        },
+      }));
     }
   };
 
@@ -335,8 +359,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('data-appearance', appearance);
       document.documentElement.setAttribute('data-branding', brandingMode);
+      document.documentElement.setAttribute('data-company-panel', activeBrandId);
     }
-  }, [appearance, brandingMode]);
+  }, [appearance, brandingMode, activeBrandId]);
 
   // Clock
   const [demoClock, setDemoClock] = useState<string>(INITIAL_DEMO_CLOCK);
@@ -521,6 +546,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Authoritative synchronous refs for indivisible state transitions and test harnesses
   const authoritativeJobsRef = React.useRef<Job[]>(INITIAL_JOBS);
+  const authoritativeBrandsRef = React.useRef<Record<string, BrandConfig>>(INITIAL_BRANDS);
   const authoritativeAuditRecordsRef = React.useRef<Record<string, Tca2AuditRecord>>({ ...INITIAL_TCA2_AUDIT });
   const authoritativeDraftBusinessesRef = React.useRef<DraftBusinessProfile[]>([]);
   const authoritativePersonaRef = React.useRef<Persona>('owner_admin');
@@ -657,9 +683,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     authoritativeDraftBusinessesRef.current = [];
     authoritativePersonaRef.current = 'owner_admin';
     authoritativeSessionRef.current = true;
+    authoritativeBrandsRef.current = INITIAL_BRANDS;
     setDraftBusinesses([]);
     setPersona('owner_admin');
-    setActiveBrandId('solarcell');
+    setActiveBrandIdState('solarcell');
     setAppearance('default_dark');
     setBrandingMode('company');
     setVisualPreset('dark_company');
@@ -3189,7 +3216,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           existing.qbccLicencePlaceholder !== updated.qbccLicencePlaceholder ||
           existing.quoteTemplateName !== updated.quoteTemplateName ||
           existing.invoiceTemplateName !== updated.invoiceTemplateName ||
-          existing.calendarMappingName !== updated.calendarMappingName
+          existing.calendarMappingName !== updated.calendarMappingName ||
+          existing.holidayRegion !== updated.holidayRegion
         ) {
           showDemoNotification('Unauthorized: Legal entity edits require Super Admin authority.', 'error');
           return { success: false, message: 'Unauthorized' };
@@ -3197,6 +3225,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
+    authoritativeBrandsRef.current = { ...authoritativeBrandsRef.current, [updated.id]: updated };
     setBrands(prev => ({ ...prev, [updated.id]: updated }));
     showDemoNotification(`Brand profile "${updated.name}" updated.`, 'success');
     return { success: true };
@@ -3246,7 +3275,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         persona,
         setPersona: handleSetPersona,
         activeBrandId,
-        setActiveBrandId,
+        setActiveBrandId: handleSetActiveBrandId,
         activeBrand: brands[activeBrandId] || INITIAL_BRANDS.solarcell,
         brands,
         appearance,

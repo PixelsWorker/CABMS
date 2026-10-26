@@ -290,3 +290,38 @@ test('LAYER 3: Navigation — business switcher accessible disclosure and keyboa
     assert.equal(window.document.activeElement, trigger);
   });
 });
+
+test('LAYER 3: Navigation — brand switcher badge initials and company-panel theme activation', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
+    const trigger = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    const markBadge = trigger.querySelector('.cabms-brand-mark')!;
+
+    // 1. Initial brand: Solarcell -> badge "SC", no SVG mark in button, document data-company-panel is solarcell
+    assert.equal(trigger.querySelector('svg.cabms-brand-mark-svg'), null, 'No SVG mark in brand mark button');
+    assert.equal(markBadge.textContent?.trim(), 'SC', 'Solarcell displays SC badge');
+    assert.equal(window.document.documentElement.getAttribute('data-company-panel'), 'solarcell');
+
+    // Topbar identity contains enlarged full logo and business identity pill
+    const topbarIdentity = container.querySelector('.cabms-topbar-identity')!;
+    assert.ok(topbarIdentity, 'topbar-identity exists');
+    assert.ok(topbarIdentity.querySelector('.cabms-topbar-logo'), 'Full brand logo rendered in topbar identity');
+    assert.ok(topbarIdentity.textContent?.includes('Solarcell'), 'Solarcell identity rendered');
+
+    // 2. Switch to Smart Home Solutions -> badge "SHS", name "Smart Home Solutions"
+    await act(async () => {
+      ctx.setActiveBrandId('smart_home');
+    });
+    assert.equal(markBadge.textContent?.trim(), 'SHS', 'Smart Home Solutions displays SHS badge');
+    assert.equal(window.document.documentElement.getAttribute('data-company-panel'), 'smart_home', 'documentElement data-company-panel updated to smart_home');
+    assert.equal(ctx.brands.smart_home.name, 'Smart Home Solutions', 'Brand name is Smart Home Solutions');
+    assert.ok(topbarIdentity.textContent?.includes('Smart Home Solutions'), 'Smart Home Solutions identity rendered');
+
+    // 3. Switch to CCTV -> badge "C", document data-company-panel is cctv
+    await act(async () => {
+      ctx.setActiveBrandId('cctv');
+    });
+    assert.equal(markBadge.textContent?.trim(), 'C', 'CCTV displays C badge');
+    assert.equal(window.document.documentElement.getAttribute('data-company-panel'), 'cctv', 'documentElement data-company-panel updated to cctv');
+    assert.ok(topbarIdentity.textContent?.includes('CCTV'), 'CCTV identity rendered');
+  });
+});

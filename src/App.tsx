@@ -32,13 +32,13 @@ import { AccessDeniedView } from './components/AccessDeniedView.tsx';
 config.autoAddCss = false;
 
 export const AppContent: React.FC = () => {
-  const { activeTab, isSimulatedSignedIn, persona } = useCabms();
+  const { activeTab, isSimulatedSignedIn, persona, activeBrandId } = useCabms();
   const destination = CORE_DESTINATIONS.find(item => item.id === activeTab);
   const permitted = canAccessDestination(persona, activeTab);
 
   if (!isSimulatedSignedIn) {
     return (
-      <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950">
+      <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
         <DemoBanner />
         <DemoControlsBar />
         <main id="cabms-main-content" tabIndex={-1} className="cabms-main flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
@@ -59,7 +59,7 @@ export const AppContent: React.FC = () => {
   }
 
   return (
-    <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950">
+    <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
       {/* 1. Mandatory Persistent Demo Banner */}
       <DemoBanner />
 

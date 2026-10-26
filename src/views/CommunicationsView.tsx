@@ -33,6 +33,7 @@ export const CommunicationsView: React.FC = () => {
     jobs,
     selectedJobId,
     setSelectedJobId,
+    activeBrand,
     activeBrandId,
     setActiveBrandId,
     brands,
@@ -59,12 +60,10 @@ export const CommunicationsView: React.FC = () => {
   // Scoped jobs for active business
   const brandJobs = jobs.filter(j => j.brandId === activeBrandId);
 
-  // Selected job (prefers active-brand selection matching selectedJobId, falls back to first active-brand job, or global fallback)
+  // Selected job (prefers active-brand selection matching selectedJobId, falls back to first active-brand job)
   const currentJob =
     (selectedJobId ? brandJobs.find(j => j.id === selectedJobId) : undefined) ||
-    brandJobs[0] ||
-    (selectedJobId ? jobs.find(j => j.id === selectedJobId) : undefined) ||
-    jobs[0];
+    brandJobs[0];
 
   // Synchronize selectedJobId with the active brand's currentJob (always above early return for Rules of Hooks)
   useEffect(() => {
@@ -84,14 +83,14 @@ export const CommunicationsView: React.FC = () => {
     );
   }
 
-  // Empty-state guard if no jobs exist in the system
+  // Empty-state guard if no jobs exist in the active business
   if (!currentJob) {
     return (
       <div className="cabms-card p-8 text-center space-y-3">
         <FontAwesomeIcon icon={faTriangleExclamation} className="w-8 h-8 text-amber-400 mx-auto" />
-        <h2 className="text-base font-bold text-(--cabms-text-primary)">No Work Orders Found</h2>
+        <h2 className="text-base font-bold text-(--cabms-text-primary)">No Work Orders in Active Business</h2>
         <p className="text-xs text-(--cabms-text-secondary)">
-          There are no active or historical work orders in the system.
+          There are no active or historical work orders for {activeBrand.name}. Switch to another business context or create a new job.
         </p>
       </div>
     );

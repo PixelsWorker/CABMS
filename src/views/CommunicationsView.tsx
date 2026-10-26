@@ -72,6 +72,11 @@ export const CommunicationsView: React.FC = () => {
     }
   }, [persona, currentJob?.id, selectedJobId, setSelectedJobId]);
 
+  // Reset review feedback when the active job changes to avoid showing stale dispatch state
+  useEffect(() => {
+    setReviewFeedback(null);
+  }, [currentJob?.id]);
+
   // Persona boundary: Technician is restricted
   if (persona === 'technician') {
     return (

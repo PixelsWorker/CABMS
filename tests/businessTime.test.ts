@@ -183,6 +183,9 @@ test('addBusinessDays correctly skips weekends and regional public holidays', ()
   assert.throws(() => addBusinessDays('not-a-date', 3), RangeError);
   assert.throws(() => addBusinessDays('2026-02-31', 3), RangeError);
 
+  // Padded holiday dates are normalized and recognized as holidays
+  assert.equal(isBusinessDay(' 2026-04-03 ', 'brisbane'), false, 'Padded Good Friday is detected as holiday');
+
   // Unsupported years (> 2027 or < 2026) throw RangeError to prevent unpopulated holiday miscalculations
   assert.throws(() => isBusinessDay('2028-12-25', 'brisbane'), RangeError);
   assert.throws(() => addBusinessDays('2028-12-20', 3, 'brisbane'), RangeError);

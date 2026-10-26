@@ -163,7 +163,7 @@ export function isBusinessDay(dateStr: string, region: HolidayRegion = 'brisbane
   if (dow === 0 || dow === 6) return false;
 
   const holidays = getPublicHolidays(region);
-  return !holidays.has(dateStr);
+  return !holidays.has(match[0]);
 }
 
 /**

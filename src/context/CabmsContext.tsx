@@ -92,7 +92,7 @@ interface CabmsContextType {
   revokeQuote: (jobId: string, reason?: string) => { success: boolean; message: string };
   refuseQuote: (jobId: string, reason?: string) => { success: boolean; message: string };
   technicians: typeof INITIAL_TECHNICIANS;
-  updateBrandConfig: (brand: BrandConfig) => void;
+  updateBrandConfig: (brand: BrandConfig) => { success: boolean; message?: string };
   addNewBrandProfile: (brand: BrandConfig) => void;
   draftBusinesses: DraftBusinessProfile[];
   createDraftBusiness: (profile: Omit<DraftBusinessProfile, 'id' | 'isDraft' | 'createdAt'>) => {
@@ -2204,7 +2204,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       throw new Error(access.reason);
     }
-    const job = jobs.find(j => j.id === jobId);
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job) {
       const message = 'Cannot prepare quote: work order not found.';
       showDemoNotification(message, 'error');
@@ -3143,17 +3143,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showDemoNotification(`Enquiry ${enquiryId} dismissed.`, 'info');
   };
 
-  const updateBrandConfig = (updated: BrandConfig) => {
+  const updateBrandConfig = (updated: BrandConfig): { success: boolean; message?: string } => {
     const callerPersona = authoritativePersonaRef.current;
     if (callerPersona !== 'super_admin' && callerPersona !== 'owner_admin') {
       showDemoNotification('Unauthorized: Brand configuration edits require Admin authority.', 'error');
-      return;
+      return { success: false, message: 'Unauthorized' };
     }
 
     if (callerPersona === 'owner_admin') {
       if (updated.id !== activeBrandId) {
         showDemoNotification('Unauthorized: Admins may only modify the active workspace brand.', 'error');
-        return;
+        return { success: false, message: 'Unauthorized' };
       }
       const existing = brands[updated.id];
       if (existing) {
@@ -3168,13 +3168,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           existing.calendarMappingName !== updated.calendarMappingName
         ) {
           showDemoNotification('Unauthorized: Legal entity edits require Super Admin authority.', 'error');
-          return;
+          return { success: false, message: 'Unauthorized' };
         }
       }
     }
 
     setBrands(prev => ({ ...prev, [updated.id]: updated }));
     showDemoNotification(`Brand profile "${updated.name}" updated.`, 'success');
+    return { success: true };
   };
 
   const addNewBrandProfile = (newBrand: BrandConfig) => {

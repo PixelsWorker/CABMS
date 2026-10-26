@@ -60,8 +60,11 @@ export const WorkspaceSettingsView: React.FC = () => {
     setOperationalAddress(currentBrand.operationalAddress || '');
     setOperatingHours(currentBrand.operatingHours || '');
     setPreferredPreset(currentBrand.preferredPreset || 'dark_company');
-    setSavedFeedback(false);
   }, [activeBrandId, currentBrand]);
+
+  useEffect(() => {
+    setSavedFeedback(false);
+  }, [activeBrandId]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -74,7 +77,8 @@ export const WorkspaceSettingsView: React.FC = () => {
       operatingHours,
       preferredPreset,
     };
-    updateBrandConfig(updated);
+    const result = updateBrandConfig(updated);
+    if (result && !result.success) return;
     if (preferredPreset) {
       setVisualPreset(preferredPreset);
     }

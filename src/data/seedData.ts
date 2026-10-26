@@ -32,7 +32,7 @@ export const INITIAL_BRANDS: Record<string, BrandConfig> = {
     id: 'solarcell',
     name: 'Solarcell',
     tagline: 'Commercial & Residential Solar Energy Systems',
-    primaryColor: '#ea580c', // orange-600
+    primaryColor: '#ffae14', // exact Solarcell Orange
     accentColor: '#fbbf24', // amber-400
     logoGlyph: 'S',
     legalIssuerName: 'Solarcell Technologies Pty Ltd (Fictional Placeholder)',

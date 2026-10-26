@@ -173,33 +173,132 @@
 }
 
 /* Per-panel company identity tokens */
-[data-company-panel="solarcell"] {
-  --cabms-brand-primary: #ea580c;
+[data-company-panel="solarcell"],
+[data-company-panel="solar_cell"] {
+  --cabms-brand-primary: #ffae14;
   --cabms-brand-accent: #fbbf24;
-  --cabms-brand-border: #ea580c;
+  --cabms-brand-border: #ffae14;
 }
 
-[data-company-panel="smart_home"] {
+[data-company-panel="smart_home"],
+[data-company-panel="smarthome"] {
   --cabms-brand-primary: #0284c7;
   --cabms-brand-accent: #38bdf8;
   --cabms-brand-border: #0284c7;
 }
 
-[data-company-panel="cctv"] {
+[data-company-panel="cctv"],
+[data-company-panel="gold_coast_cctv"] {
   --cabms-brand-primary: #059669;
   --cabms-brand-accent: #34d399;
   --cabms-brand-border: #059669;
 }
 
 /* Subtle brand accent border for cross-company panels when company branding is active */
-[data-branding="company"] .cabms-company-surface[data-company-panel="solarcell"] {
-  border-left: 3px solid #ea580c;
+[data-branding="company"] .cabms-company-surface:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]) {
+  border-left: 3px solid #ffae14;
 }
-[data-branding="company"] .cabms-company-surface[data-company-panel="smart_home"] {
+[data-branding="company"] .cabms-company-surface:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
   border-left: 3px solid #0284c7;
 }
-[data-branding="company"] .cabms-company-surface[data-company-panel="cctv"] {
+[data-branding="company"] .cabms-company-surface:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
   border-left: 3px solid #059669;
+}
+
+/* DARK + COMPANY BRANDED: SOLARCELL PTY LTD (ORANGE #ffae14 THEME) */
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"] :is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"]) [data-branding="company"]:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]) {
+  --cabms-surface: #1a1107;
+  --cabms-surface-subtle: #291a0b;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #fde68a;
+  --cabms-border-base: #ffae14;
+  --cabms-border-focus: #ffae14;
+  --cabms-brand-primary: #ffae14;
+  --cabms-brand-hover: #ffc14d;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #ffae14;
+  --cabms-signoff-text: #020617;
+}
+
+/* DARK + COMPANY BRANDED: GOLD COAST CCTV (SECURITY CYAN/TEAL THEME) */
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"] :is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"]) [data-branding="company"]:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
+  --cabms-surface: #071f33;
+  --cabms-surface-subtle: #092942;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #a5f3fc;
+  --cabms-border-base: #0ba3ad;
+  --cabms-border-focus: #22d3ee;
+  --cabms-brand-primary: #22d3ee;
+  --cabms-brand-hover: #67e8f9;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #38bdf8;
+  --cabms-signoff-text: #020617;
+}
+
+/* DARK + COMPANY BRANDED: GOLD COAST SMART HOME SOLUTIONS (AUTOMATION EMERALD THEME) */
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"] :is([data-company-panel="smart_home"], [data-company-panel="smarthome"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"]) [data-branding="company"]:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
+  --cabms-surface: #071f15;
+  --cabms-surface-subtle: #0c3322;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #bbf7d0;
+  --cabms-border-base: #3dae49;
+  --cabms-border-focus: #4be196;
+  --cabms-brand-primary: #4be196;
+  --cabms-brand-hover: #86efac;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #34d399;
+  --cabms-signoff-text: #020617;
+}
+
+/* LIGHT + COMPANY BRANDED: SOLARCELL PTY LTD (ORANGE #ffae14 THEME) */
+[data-appearance="high_visibility_light"][data-branding="company"] :is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]),
+[data-appearance="high_visibility_light"] [data-branding="company"]:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]) {
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #fffbeb;
+  --cabms-text-primary: #451a03;
+  --cabms-text-secondary: #78350f;
+  --cabms-border-base: #b45309;
+  --cabms-border-focus: #92400e;
+  --cabms-brand-primary: #ffae14;
+  --cabms-brand-hover: #f59e0b;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #ffae14;
+  --cabms-signoff-text: #020617;
+}
+
+/* LIGHT + COMPANY BRANDED: GOLD COAST CCTV (SECURITY CYAN/TEAL THEME) */
+[data-appearance="high_visibility_light"][data-branding="company"] :is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]),
+[data-appearance="high_visibility_light"] [data-branding="company"]:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #ecfeff;
+  --cabms-text-primary: #092e49;
+  --cabms-text-secondary: #164e63;
+  --cabms-border-base: #0e7490;
+  --cabms-border-focus: #092e49;
+  --cabms-brand-primary: #155e75;
+  --cabms-brand-hover: #164e63;
+  --cabms-brand-text: #ffffff;
+  --cabms-signoff-bg: #22d3ee;
+  --cabms-signoff-text: #020617;
+}
+
+/* LIGHT + COMPANY BRANDED: GOLD COAST SMART HOME SOLUTIONS (AUTOMATION EMERALD THEME) */
+[data-appearance="high_visibility_light"][data-branding="company"] :is([data-company-panel="smart_home"], [data-company-panel="smarthome"]),
+[data-appearance="high_visibility_light"] [data-branding="company"]:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #ecfdf5;
+  --cabms-text-primary: #124024;
+  --cabms-text-secondary: #14532d;
+  --cabms-border-base: #065f46;
+  --cabms-border-focus: #124024;
+  --cabms-brand-primary: #065f46;
+  --cabms-brand-hover: #124024;
+  --cabms-brand-text: #ffffff;
+  --cabms-signoff-bg: #34d399;
+  --cabms-signoff-text: #020617;
 }
 
 /* High-visibility OLED Dark preserves clean contrast without heavy wash */

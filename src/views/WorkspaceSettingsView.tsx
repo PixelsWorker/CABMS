@@ -137,8 +137,8 @@ export const WorkspaceSettingsView: React.FC = () => {
             <span
               className={`text-xs px-2 py-0.5 rounded font-mono font-semibold flex items-center gap-1.5 ${
                 myobConnection.status === 'CONNECTED'
-                  ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-700/50'
-                  : 'bg-rose-950/40 text-rose-300 border border-rose-700/50'
+                  ? 'cabms-badge-completed'
+                  : 'cabms-badge-danger'
               }`}
             >
               <FontAwesomeIcon
@@ -151,7 +151,7 @@ export const WorkspaceSettingsView: React.FC = () => {
 
           <div className="flex items-center justify-between p-2.5 rounded bg-(--cabms-surface) border border-(--cabms-border-base)">
             <span className="text-xs font-medium text-(--cabms-text-secondary)">SMTP Email Relay:</span>
-            <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold bg-emerald-950/40 text-emerald-300 border border-emerald-700/50 flex items-center gap-1.5">
+            <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold cabms-badge-completed flex items-center gap-1.5">
               <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" />
               ONLINE (Simulated)
             </span>
@@ -159,7 +159,7 @@ export const WorkspaceSettingsView: React.FC = () => {
 
           <div className="flex items-center justify-between p-2.5 rounded bg-(--cabms-surface) border border-(--cabms-border-base)">
             <span className="text-xs font-medium text-(--cabms-text-secondary)">Calendar Mapping:</span>
-            <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold bg-emerald-950/40 text-emerald-300 border border-emerald-700/50 flex items-center gap-1.5">
+            <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold cabms-badge-completed flex items-center gap-1.5">
               <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" />
               SYNCED
             </span>

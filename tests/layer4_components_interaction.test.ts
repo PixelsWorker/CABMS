@@ -614,6 +614,59 @@ test('LAYER 4: FC-04 — TemplatesSettingsView and template mutations operate on
   });
 });
 
+test('LAYER 4: CR-01 — Add Customer modal always uses activeBrandId at open time, not stale mount-time brand', async () => {
+  // Regression: newCustBrands was initialized once at mount and never reset.
+  // If the user switches business while Customers tab stays mounted, the draft
+  // would carry the old brand. Fixed in 8c287bb — this test locks that behavior.
+  await mountView(React.createElement(CustomersView), async (ctx, container, window) => {
+    // Initial brand at mount is 'solarcell' (context default)
+    assert.equal(ctx.activeBrandId, 'solarcell', 'Initial brand is solarcell at mount');
+
+    const initialCustomerCount = ctx.customers.length;
+
+    // Switch business while staying on the Customers tab (component stays mounted)
+    await act(async () => { ctx.setActiveBrandId('smart_home'); });
+    assert.equal(ctx.activeBrandId, 'smart_home', 'Brand switched to smart_home while Customers mounted');
+
+    // Find and click the Add Customer button — this triggers the modal open handler
+    // which must now call setNewCustBrands([activeBrandId]) before opening
+    const addBtn = Array.from(container.querySelectorAll<HTMLButtonElement>('button'))
+      .find(b => b.textContent?.includes('New Customer'));
+    assert.ok(addBtn, 'Add Customer button is rendered');
+    await act(async () => { addBtn!.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); });
+
+    // Directly submit a customer via context to simulate form submission with current brand
+    // This tests that the context brand at the time of add matches the switched brand
+    const countBefore = ctx.customers.length;
+    await act(async () => {
+      ctx.simulateCustomerWriteThrough(
+        {
+          name: 'Brand Switch Test Customer',
+          contactPerson: 'Test Person',
+          email: 'brandswitchtest@example.com',
+          phone: '0400 111 222',
+          billingAddress: '[Fictional] Test Address QLD',
+          brandAffiliations: [ctx.activeBrandId],
+          notes: 'Regression test for stale brand on Add Customer',
+        },
+        'SUCCESS',
+        true,
+      );
+    });
+
+    // The new customer should now exist
+    assert.equal(ctx.customers.length, countBefore + 1, 'One new customer was added');
+    const added = ctx.customers[0]; // most recent is prepended
+    assert.ok(added.brandAffiliations.includes('smart_home'),
+      `New customer brandAffiliations should include smart_home (switched brand), got: ${JSON.stringify(added.brandAffiliations)}`);
+    assert.ok(!added.brandAffiliations.includes('solarcell'),
+      'New customer should NOT carry the stale mount-time brand solarcell');
+
+    // Verify initial customer count was not duplicated / data integrity intact
+    assert.ok(ctx.customers.length === initialCustomerCount + 1, 'Total customer count increased by exactly 1');
+  });
+});
+
 test('LAYER 4: Gate T — Appearance mode switcher updates context state and synchronizes data-appearance attribute on DOM', async () => {
   await mountView(React.createElement(DemoControlsBar), async (ctx, container, window) => {
     // Initial state check

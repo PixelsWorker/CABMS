@@ -156,6 +156,9 @@ export function isBusinessDay(dateStr: string, region: HolidayRegion = 'brisbane
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
     return false;
   }
+  if (year < 2026 || year > 2027) {
+    throw new RangeError(`Holiday calendar is only populated for 2026-2027; received year ${year}.`);
+  }
   const dow = d.getUTCDay(); // 0 = Sunday, 6 = Saturday
   if (dow === 0 || dow === 6) return false;
 
@@ -185,6 +188,9 @@ export function addBusinessDays(
   const check = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
   if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
     throw new RangeError('A valid calendar date is required.');
+  }
+  if (year < 2026 || year > 2027) {
+    throw new RangeError(`Supported business calendar range is 2026-2027; received year ${year}.`);
   }
   let added = 0;
   while (added < days) {

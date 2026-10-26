@@ -182,6 +182,12 @@ test('addBusinessDays correctly skips weekends and regional public holidays', ()
   assert.throws(() => addBusinessDays('', 3), RangeError);
   assert.throws(() => addBusinessDays('not-a-date', 3), RangeError);
   assert.throws(() => addBusinessDays('2026-02-31', 3), RangeError);
+
+  // Unsupported years (> 2027 or < 2026) throw RangeError to prevent unpopulated holiday miscalculations
+  assert.throws(() => isBusinessDay('2028-12-25', 'brisbane'), RangeError);
+  assert.throws(() => addBusinessDays('2028-12-20', 3, 'brisbane'), RangeError);
+  assert.throws(() => isBusinessDay('2025-12-25', 'brisbane'), RangeError);
+  assert.throws(() => addBusinessDays('2025-12-20', 3, 'brisbane'), RangeError);
 });
 
 test('calculateQuoteFollowUpDates computes Stage 1 (3 business days), Stage 2 (7 business days), and 14 calendar day expiry', () => {

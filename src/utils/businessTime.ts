@@ -89,7 +89,7 @@ export function isInBusinessWeek(completedAt: string | undefined, clock: string)
   return !!bounds && Number.isFinite(completed) && completed >= bounds.start && completed < bounds.end;
 }
 
-// QLD Statewide Public Holidays 2026 + 2027 Rollover
+// QLD Statewide Public Holidays (2026 + 2027)
 export const QUEENSLAND_STATEWIDE_HOLIDAYS_2026: readonly string[] = [
   '2026-01-01', // New Year's Day
   '2026-01-26', // Australia Day
@@ -103,23 +103,39 @@ export const QUEENSLAND_STATEWIDE_HOLIDAYS_2026: readonly string[] = [
   '2026-12-25', // Christmas Day
   '2026-12-26', // Boxing Day
   '2026-12-28', // Boxing Day (Observed Public Holiday)
-  // Safe 2027 Rollover
+  // Complete 2027 Queensland Public Holiday Calendar
   '2027-01-01', // New Year's Day 2027
   '2027-01-26', // Australia Day 2027
+  '2027-03-26', // Good Friday 2027
+  '2027-03-27', // Easter Saturday 2027
+  '2027-03-28', // Easter Sunday 2027
+  '2027-03-29', // Easter Monday 2027
+  '2027-04-25', // Anzac Day 2027
+  '2027-04-26', // Anzac Day (Observed) 2027
+  '2027-05-03', // Labour Day 2027
+  '2027-10-04', // King's Birthday 2027
+  '2027-12-25', // Christmas Day 2027
+  '2027-12-26', // Boxing Day 2027
+  '2027-12-27', // Christmas Day (Observed) 2027
+  '2027-12-28', // Boxing Day (Observed) 2027
 ];
 
-// Regional Show Days 2026
+// Regional Show Days (2026 + 2027)
 export const BRISBANE_EKKA_2026 = '2026-08-12'; // Royal Queensland Show (Brisbane Area)
 export const GOLD_COAST_SHOW_2026 = '2026-08-28'; // Gold Coast Show Day
+export const BRISBANE_EKKA_2027 = '2027-08-11';
+export const GOLD_COAST_SHOW_2027 = '2027-08-27';
 
 export const BRISBANE_METRO_PUBLIC_HOLIDAYS_2026 = new Set<string>([
   ...QUEENSLAND_STATEWIDE_HOLIDAYS_2026,
   BRISBANE_EKKA_2026,
+  BRISBANE_EKKA_2027,
 ]);
 
 export const GOLD_COAST_PUBLIC_HOLIDAYS_2026 = new Set<string>([
   ...QUEENSLAND_STATEWIDE_HOLIDAYS_2026,
   GOLD_COAST_SHOW_2026,
+  GOLD_COAST_SHOW_2027,
 ]);
 
 export function getPublicHolidays(region: HolidayRegion = 'brisbane'): Set<string> {

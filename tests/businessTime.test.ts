@@ -148,9 +148,13 @@ test('Regional holidays: Brisbane Ekka (12 Aug) vs Gold Coast Show (28 Aug)', ()
   assert.equal(isBusinessDay('2026-12-28', 'brisbane'), false, '28 Dec 2026 is holiday in Brisbane');
   assert.equal(isBusinessDay('2026-12-28', 'gold_coast'), false, '28 Dec 2026 is holiday on Gold Coast');
 
-  // 2027 Rollover: New Year's Day (1 Jan 2027) and Australia Day (26 Jan 2027)
+  // 2027 Calendar: Full Public Holiday Coverage
   assert.equal(isBusinessDay('2027-01-01', 'brisbane'), false, '1 Jan 2027 is holiday');
   assert.equal(isBusinessDay('2027-01-26', 'brisbane'), false, '26 Jan 2027 is holiday');
+  assert.equal(isBusinessDay('2027-03-26', 'brisbane'), false, 'Good Friday 2027 is holiday');
+  assert.equal(isBusinessDay('2027-03-29', 'brisbane'), false, 'Easter Monday 2027 is holiday');
+  assert.equal(isBusinessDay('2027-04-26', 'brisbane'), false, 'Anzac Day Observed 2027 is holiday');
+  assert.equal(isBusinessDay('2027-05-03', 'brisbane'), false, 'Labour Day 2027 is holiday');
 
   // Weekends are never business days
   assert.equal(isBusinessDay('2026-11-07', 'brisbane'), false, 'Saturday is not business day');
@@ -170,6 +174,9 @@ test('addBusinessDays correctly skips weekends and regional public holidays', ()
   assert.equal(addBusinessDays('2026-08-10', 3, 'brisbane'), '2026-08-14');
   // On Gold Coast, Wed is not a holiday -> Wed (day 2), Thu (day 3) -> 2026-08-13
   assert.equal(addBusinessDays('2026-08-10', 3, 'gold_coast'), '2026-08-13');
+
+  // Over Easter 2027 (Wed 24 March + 3 business days -> skips Good Friday & Easter Mon -> Wed 31 March)
+  assert.equal(addBusinessDays('2027-03-24', 3, 'brisbane'), '2027-03-31');
 });
 
 test('calculateQuoteFollowUpDates computes Stage 1 (3 business days), Stage 2 (7 business days), and 14 calendar day expiry', () => {

@@ -109,6 +109,7 @@ interface CabmsContextType {
   // Demo Controls & Clock
   demoClock: string; // ISO string
   advanceClock: (hours: number) => void;
+  setDemoClock: (clock: string) => void;
   resetDemo: () => void;
   activeScenario: DemoScenario;
   setActiveScenario: (s: DemoScenario) => void;
@@ -734,6 +735,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       activityHistory: [...job.activityHistory, { timestamp, action: activity, actor }],
     };
+  };
+
+  const setDemoClockExplicit = (instant: string) => {
+    setDemoClock(serializeBusinessInstant(instant));
   };
 
   // Clock Advancement with Deterministic Event Processor (G00-020)
@@ -2223,7 +2228,19 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const issuedAt = serializeBusinessInstant(demoClock);
     const expiresAt = calculateQuoteExpiration(demoClock);
     const region = brand?.holidayRegion || 'brisbane';
-    const { stage1Date, stage2Date } = calculateQuoteFollowUpDates(demoClock, region);
+
+    let stage1Date: string;
+    let stage2Date: string;
+    try {
+      const dates = calculateQuoteFollowUpDates(demoClock, region);
+      stage1Date = dates.stage1Date;
+      stage2Date = dates.stage2Date;
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : 'Date is outside the supported business calendar.';
+      const message = `Cannot prepare quote: ${errMessage}`;
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
 
     const followUps: QuoteFollowUp[] = [
       {
@@ -2297,7 +2314,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (scenario === 'invalid') {
       return { success: false, message: 'Invalid or broken quotation acceptance token.' };
     }
-    if (scenario === 'expired' || job.quote.acceptanceStatus === 'EXPIRED') {
+    const isPastExpiry = Boolean(job.quote.expiresAt)
+      && new Date(demoClock).getTime() >= new Date(job.quote.expiresAt!).getTime();
+    if (scenario === 'expired' || job.quote.acceptanceStatus === 'EXPIRED' || isPastExpiry) {
       return { success: false, message: 'This quotation link has expired (14-day validity exceeded).' };
     }
     if (scenario === 'revoked' || job.quote.acceptanceStatus === 'REVOKED') {
@@ -2351,6 +2370,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Invoices (G00-018: Checks MYOB status for real failure/uncertain states)
 
   const revokeQuote = (jobId: string, reason: string = 'Revoked by CABMS administration'): { success: boolean; message: string } => {
+    const access = verifyPersonaAccess(authoritativePersonaRef.current, 'financial_writes');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, message: access.reason || 'Unauthorized' };
+    }
     const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job || !job.quote) {
       showDemoNotification('Cannot revoke quote: work order or quote not found.', 'error');
@@ -3241,6 +3265,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         simulateSignOut,
         demoClock,
         advanceClock,
+        setDemoClock: setDemoClockExplicit,
         resetDemo,
         activeScenario,
         setActiveScenario,

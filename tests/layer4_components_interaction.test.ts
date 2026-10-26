@@ -933,3 +933,96 @@ test('LAYER 4: Security — role mutation guards block unauthorized legal and sy
     assert.equal(ctx.brands.solarcell.legalIssuerName, 'Solarcell Authorised Legal Name Pty Ltd', 'legalIssuerName updated by super_admin');
   });
 });
+test('LAYER 4: CommunicationsView — scopes job to active brand and synchronizes active brand on cross-brand selection', async () => {
+  await mountView(React.createElement(CommunicationsView), async (ctx, container, window) => {
+    // Initial state: default active brand is solarcell, initial jobs include JOB-2026-101 (solarcell)
+    assert.equal(ctx.activeBrandId, 'solarcell');
+    const workOrderSelect = container.querySelector<HTMLSelectElement>('#communications-work-order')!;
+    assert.ok(workOrderSelect, 'Work order dropdown is rendered');
+    assert.equal(workOrderSelect.value, 'JOB-2026-101', 'Initial selection matches active brand');
+
+    // 1. Switch active brand via context to smart_home
+    await act(async () => {
+      ctx.setActiveBrandId('smart_home');
+    });
+    // CommunicationsView re-scopes currentJob to first job in smart_home (JOB-2026-102)
+    assert.equal(ctx.selectedJobId, 'JOB-2026-102', 'selectedJobId synchronizes to active brand job');
+    assert.equal(workOrderSelect.value, 'JOB-2026-102', 'Work order select reflects new active brand job');
+
+    // 2. Selecting a cross-brand work order in the select updates activeBrandId
+    await act(async () => {
+      workOrderSelect.value = 'JOB-2026-104'; // CCTV job
+      workOrderSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(ctx.activeBrandId, 'cctv', 'Active brand automatically switched to match selected job');
+    assert.equal(ctx.selectedJobId, 'JOB-2026-104', 'Selected job updated');
+  });
+});
+
+test('LAYER 4: Quotes — prepareQuoteForJob handles 2027 cross-year follow-ups and rejects out-of-bounds calendar dates', async () => {
+  await mountView(React.createElement(DashboardView), async (ctx, container, window) => {
+    // Advance clock to late December 2027
+    await act(async () => {
+      ctx.setDemoClock('2027-12-24T09:00:00+10:00');
+    });
+
+    let lateQuote: any;
+    await act(async () => {
+      lateQuote = ctx.prepareQuoteForJob('JOB-2026-101', 'Late 2027 Inverter Replacement', [
+        { id: 'item-1', description: 'Inverter', quantity: 1, unitPrice: 2000, total: 2000 },
+      ]);
+    });
+    assert.ok(lateQuote, 'Quote prepared across calendar boundary');
+    assert.equal(lateQuote.followUps[0].scheduledDate, '2027-12-31', 'Stage 1 @ 3 business days scheduled in 2027');
+    assert.equal(lateQuote.followUps[1].scheduledDate, '2028-01-06', 'Stage 2 @ 7 business days scheduled on last business day before expiry');
+
+    // Advance clock beyond supported calendar (2030)
+    await act(async () => {
+      ctx.setDemoClock('2030-01-01T09:00:00+10:00');
+    });
+    await act(async () => {
+      assert.throws(() => {
+        ctx.prepareQuoteForJob('JOB-2026-101', 'Unsupported Year Quote', [
+          { id: 'item-1', description: 'Item', quantity: 1, unitPrice: 500, total: 500 },
+        ]);
+      }, /Cannot prepare quote/);
+    });
+    assert.equal(ctx.demoNotification?.type, 'error', 'Error notification displayed for out-of-bounds calendar');
+  });
+});
+
+test('LAYER 4: Security — revokeQuote enforces financial_writes persona and simulateQuoteAcceptance rejects expired quotes', async () => {
+  await mountView(React.createElement(DashboardView), async (ctx, container, window) => {
+    // Prepare quote as owner_admin
+    let quote: any;
+    await act(async () => {
+      quote = ctx.prepareQuoteForJob('JOB-2026-101', 'Solar Maintenance Quote', [
+        { id: 'item-1', description: 'Inspection', quantity: 1, unitPrice: 300, total: 300 },
+      ]);
+    });
+    assert.ok(quote);
+
+    // 1. Technician cannot revoke quote
+    await act(async () => {
+      ctx.simulateSignIn('technician');
+    });
+    let revokeResult: any;
+    await act(async () => {
+      revokeResult = ctx.revokeQuote('JOB-2026-101');
+    });
+    assert.equal(revokeResult.success, false, 'Technician cannot revoke quote');
+    assert.equal(ctx.demoNotification?.type, 'error', 'Error notification shown to technician');
+
+    // 2. Advance clock past expiration date and verify customer acceptance is rejected
+    await act(async () => {
+      ctx.simulateSignIn('owner_admin');
+      ctx.setDemoClock('2026-11-20T12:00:00+10:00'); // > 14 calendar days after Nov 2
+    });
+    let acceptResult: any;
+    await act(async () => {
+      acceptResult = ctx.simulateQuoteAcceptance('JOB-2026-101', 'valid');
+    });
+    assert.equal(acceptResult.success, false, 'Acceptance rejected when clock exceeds 14 days');
+    assert.ok(acceptResult.message.includes('expired'), 'Message indicates link expired');
+  });
+});

@@ -118,6 +118,19 @@ export const QUEENSLAND_STATEWIDE_HOLIDAYS_2026: readonly string[] = [
   '2027-12-26', // Boxing Day 2027
   '2027-12-27', // Christmas Day (Observed) 2027
   '2027-12-28', // Boxing Day (Observed) 2027
+  // Complete 2028 Queensland Public Holiday Calendar
+  '2028-01-01', // New Year's Day 2028
+  '2028-01-03', // New Year's Day (Observed) 2028
+  '2028-01-26', // Australia Day 2028
+  '2028-04-14', // Good Friday 2028
+  '2028-04-15', // Easter Saturday 2028
+  '2028-04-16', // Easter Sunday 2028
+  '2028-04-17', // Easter Monday 2028
+  '2028-04-25', // Anzac Day 2028
+  '2028-05-01', // Labour Day 2028
+  '2028-10-02', // King's Birthday 2028
+  '2028-12-25', // Christmas Day 2028
+  '2028-12-26', // Boxing Day 2028
 ];
 
 // Regional Show Days (2026 + 2027)
@@ -125,17 +138,21 @@ export const BRISBANE_EKKA_2026 = '2026-08-12'; // Royal Queensland Show (Brisba
 export const GOLD_COAST_SHOW_2026 = '2026-08-28'; // Gold Coast Show Day
 export const BRISBANE_EKKA_2027 = '2027-08-11';
 export const GOLD_COAST_SHOW_2027 = '2027-08-27';
+export const BRISBANE_EKKA_2028 = '2028-08-16';
+export const GOLD_COAST_SHOW_2028 = '2028-09-01';
 
 export const BRISBANE_METRO_PUBLIC_HOLIDAYS_2026 = new Set<string>([
   ...QUEENSLAND_STATEWIDE_HOLIDAYS_2026,
   BRISBANE_EKKA_2026,
   BRISBANE_EKKA_2027,
+  BRISBANE_EKKA_2028,
 ]);
 
 export const GOLD_COAST_PUBLIC_HOLIDAYS_2026 = new Set<string>([
   ...QUEENSLAND_STATEWIDE_HOLIDAYS_2026,
   GOLD_COAST_SHOW_2026,
   GOLD_COAST_SHOW_2027,
+  GOLD_COAST_SHOW_2028,
 ]);
 
 export function getPublicHolidays(region: HolidayRegion = 'brisbane'): Set<string> {
@@ -156,8 +173,8 @@ export function isBusinessDay(dateStr: string, region: HolidayRegion = 'brisbane
   if (d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) {
     return false;
   }
-  if (year < 2026 || year > 2027) {
-    throw new RangeError(`Holiday calendar is only populated for 2026-2027; received year ${year}.`);
+  if (year < 2026 || year > 2028) {
+    throw new RangeError(`Holiday calendar is only populated for 2026-2028; received year ${year}.`);
   }
   const dow = d.getUTCDay(); // 0 = Sunday, 6 = Saturday
   if (dow === 0 || dow === 6) return false;
@@ -189,8 +206,8 @@ export function addBusinessDays(
   if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
     throw new RangeError('A valid calendar date is required.');
   }
-  if (year < 2026 || year > 2027) {
-    throw new RangeError(`Supported business calendar range is 2026-2027; received year ${year}.`);
+  if (year < 2026 || year > 2028) {
+    throw new RangeError(`Supported business calendar range is 2026-2028; received year ${year}.`);
   }
   let added = 0;
   while (added < days) {
@@ -212,9 +229,27 @@ export function calculateQuoteFollowUpDates(
   region: HolidayRegion = 'brisbane'
 ): { stage1Date: string; stage2Date: string; expiresAtDate: string } {
   const stage1Date = addBusinessDays(issuedAt, 3, region);
-  const stage2Date = addBusinessDays(issuedAt, 7, region);
+  let stage2Date = addBusinessDays(issuedAt, 7, region);
   const expiresAtInstant = advanceBusinessClock(issuedAt, 14 * 24);
   const expiresAtDate = businessCalendarDate(expiresAtInstant);
+
+  // If 7 business days falls on or after expiration date (e.g. over holiday clusters),
+  // schedule Stage 2 warning on the last business day strictly prior to expiration date.
+  if (stage2Date >= expiresAtDate) {
+    let prev = expiresAtDate;
+    for (let i = 0; i < 7; i++) {
+      const match = prev.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) break;
+      const [y, m, d] = match.slice(1).map(Number);
+      const dt = new Date(Date.UTC(y, m - 1, d - 1, 12, 0, 0));
+      prev = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+      if (isBusinessDay(prev, region)) {
+        stage2Date = prev;
+        break;
+      }
+    }
+  }
+
   return { stage1Date, stage2Date, expiresAtDate };
 }
 

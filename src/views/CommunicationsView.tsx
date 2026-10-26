@@ -5,7 +5,7 @@
  * and uncertain dispatch reconciliation.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { formatBusinessTime } from '../utils/businessTime.ts';
 import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
@@ -34,6 +34,7 @@ export const CommunicationsView: React.FC = () => {
     selectedJobId,
     setSelectedJobId,
     activeBrandId,
+    setActiveBrandId,
     brands,
     persona,
     triggerReviewRequest,
@@ -55,6 +56,23 @@ export const CommunicationsView: React.FC = () => {
   const [reviewFeedback, setReviewFeedback] = useState<{ success: boolean; message: string } | null>(null);
   const [selectedCertType, setSelectedCertType] = useState<'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2'>('JSA');
 
+  // Scoped jobs for active business
+  const brandJobs = jobs.filter(j => j.brandId === activeBrandId);
+
+  // Selected job (prefers active-brand selection matching selectedJobId, falls back to first active-brand job, or global fallback)
+  const currentJob =
+    (selectedJobId ? brandJobs.find(j => j.id === selectedJobId) : undefined) ||
+    brandJobs[0] ||
+    (selectedJobId ? jobs.find(j => j.id === selectedJobId) : undefined) ||
+    jobs[0];
+
+  // Synchronize selectedJobId with the active brand's currentJob (always above early return for Rules of Hooks)
+  useEffect(() => {
+    if (persona !== 'technician' && currentJob && currentJob.id !== selectedJobId) {
+      setSelectedJobId(currentJob.id);
+    }
+  }, [persona, currentJob?.id, selectedJobId, setSelectedJobId]);
+
   // Persona boundary: Technician is restricted
   if (persona === 'technician') {
     return (
@@ -65,12 +83,6 @@ export const CommunicationsView: React.FC = () => {
       />
     );
   }
-
-  // Selected job (honours selectedJobId, falls back to active brand job, then first job)
-  const currentJob =
-    (selectedJobId ? jobs.find(j => j.id === selectedJobId) : undefined) ||
-    jobs.find(j => j.brandId === activeBrandId) ||
-    jobs[0];
 
   // Empty-state guard if no jobs exist in the system
   if (!currentJob) {
@@ -189,8 +201,14 @@ export const CommunicationsView: React.FC = () => {
                 title={`${currentJob.id} — ${currentJob.title}`}
                 value={selectedJobId || ''}
                 onChange={e => {
-                  setSelectedJobId(e.target.value);
-                  setReviewFeedback(null);
+                  const chosen = jobs.find(j => j.id === e.target.value);
+                  if (chosen) {
+                    if (chosen.brandId !== activeBrandId) {
+                      setActiveBrandId(chosen.brandId);
+                    }
+                    setSelectedJobId(chosen.id);
+                    setReviewFeedback(null);
+                  }
                 }}
                 className="w-full min-w-0 max-w-full cabms-card-subtle rounded px-2.5 py-1 text-(--cabms-text-primary) font-mono text-xs font-bold cursor-pointer"
               >

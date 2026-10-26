@@ -635,27 +635,34 @@ test('LAYER 4: CR-01 — Add Customer modal always uses activeBrandId at open ti
     assert.ok(addBtn, 'Add Customer button is rendered');
     await act(async () => { addBtn!.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); });
 
-    // Directly submit a customer via context to simulate form submission with current brand
-    // This tests that the context brand at the time of add matches the switched brand
+    // Fill the mounted modal's required fields and submit through its form handler
+    // rather than calling ctx.simulateCustomerWriteThrough directly, ensuring
+    // that the component's internal newCustBrands state is exercised and verified.
+    const nameInput = container.querySelector<HTMLInputElement>('input[placeholder="e.g. Oceanic Resort Group"]');
+    assert.ok(nameInput, 'Name input rendered in Add Customer modal');
+    const emailInput = container.querySelector<HTMLInputElement>('input[placeholder="accounts@example.com"]');
+    assert.ok(emailInput, 'Email input rendered in Add Customer modal');
+
+    const getReactProps = (el: Element): any => {
+      const key = Object.keys(el).find(k => k.startsWith('__reactProps'));
+      return key ? (el as any)[key] : null;
+    };
+
+    await act(async () => {
+      getReactProps(nameInput!)?.onChange({ target: { value: 'Brand Switch Modal Test Customer' } });
+      getReactProps(emailInput!)?.onChange({ target: { value: 'brandswitchmodal@example.com' } });
+    });
+
+    const form = container.querySelector<HTMLFormElement>('form');
+    assert.ok(form, 'Add Customer form rendered in modal');
+
     const countBefore = ctx.customers.length;
     await act(async () => {
-      ctx.simulateCustomerWriteThrough(
-        {
-          name: 'Brand Switch Test Customer',
-          contactPerson: 'Test Person',
-          email: 'brandswitchtest@example.com',
-          phone: '0400 111 222',
-          billingAddress: '[Fictional] Test Address QLD',
-          brandAffiliations: [ctx.activeBrandId],
-          notes: 'Regression test for stale brand on Add Customer',
-        },
-        'SUCCESS',
-        true,
-      );
+      getReactProps(form!)?.onSubmit({ preventDefault: () => {} });
     });
 
     // The new customer should now exist
-    assert.equal(ctx.customers.length, countBefore + 1, 'One new customer was added');
+    assert.equal(ctx.customers.length, countBefore + 1, 'One new customer was added through modal');
     const added = ctx.customers[0]; // most recent is prepended
     assert.ok(added.brandAffiliations.includes('smart_home'),
       `New customer brandAffiliations should include smart_home (switched brand), got: ${JSON.stringify(added.brandAffiliations)}`);

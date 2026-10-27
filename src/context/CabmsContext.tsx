@@ -687,9 +687,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDraftBusinesses([]);
     setPersona('owner_admin');
     setActiveBrandIdState('solarcell');
-    setAppearance('default_dark');
-    setBrandingMode('company');
-    setVisualPreset('dark_company');
+    setVisualPreset('dark_company', false);
     setBrands(INITIAL_BRANDS);
     setJobTypes(INITIAL_JOB_TYPES);
     setDemoClock(INITIAL_DEMO_CLOCK);

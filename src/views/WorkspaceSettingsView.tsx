@@ -36,13 +36,13 @@ interface WorkspaceDraft {
   preferredPreset: VisualPreset;
 }
 
-const getBrandDefaults = (brand: BrandConfig): WorkspaceDraft => ({
+const getBrandDefaults = (brand: BrandConfig, fallbackPreset: VisualPreset): WorkspaceDraft => ({
   tagline: brand.tagline || '',
   contactPhone: brand.contactPhone || '',
   contactEmail: brand.contactEmail || '',
   operationalAddress: brand.operationalAddress || '',
   operatingHours: brand.operatingHours || '',
-  preferredPreset: brand.preferredPreset || 'dark_company',
+  preferredPreset: brand.preferredPreset || fallbackPreset,
 });
 
 export const WorkspaceSettingsView: React.FC = () => {
@@ -63,13 +63,13 @@ export const WorkspaceSettingsView: React.FC = () => {
   const [drafts, setDrafts] = useState<Record<string, WorkspaceDraft>>({});
 
   // Active form values fall back to current brand config if no draft exists
-  const currentFormValues: WorkspaceDraft = drafts[activeBrandId] ?? getBrandDefaults(currentBrand);
+  const currentFormValues: WorkspaceDraft = drafts[activeBrandId] ?? getBrandDefaults(currentBrand, visualPreset);
 
   const updateDraftField = <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => {
     setDrafts(prev => ({
       ...prev,
       [activeBrandId]: {
-        ...(prev[activeBrandId] ?? getBrandDefaults(currentBrand)),
+        ...(prev[activeBrandId] ?? getBrandDefaults(currentBrand, visualPreset)),
         [key]: value,
       },
     }));

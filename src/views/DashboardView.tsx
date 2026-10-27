@@ -15,11 +15,9 @@ import {
   faCircleCheck,
   faClock,
   faDatabase,
-  faFileCircleCheck,
   faFileLines,
   faInbox,
   faTriangleExclamation,
-  faUsers,
 } from '@fortawesome/free-solid-svg-icons';
 import { JobStatus } from '../types/cabms.ts';
 
@@ -123,10 +121,8 @@ export const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {/* Two-Column Section: Operational Jobs & Quick Simulation Flows */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Jobs Table & Cross-Company Queue (2 cols on lg) */}
-        <div className="lg:col-span-2 space-y-6">
+      {/* Operational Jobs & Cross-Company Queue */}
+      <div className="space-y-6">
           <div className="cabms-card p-6" data-testid="operational-jobs-panel">
           <div className="flex items-center justify-between mb-5">
             <div>
@@ -276,103 +272,6 @@ export const DashboardView: React.FC = () => {
             </div>
           </div>
           )}
-        </div>
-
-        {/* Right Column: Guided Demo Scenarios & Quick Actions */}
-        <div className="space-y-5">
-          {/* Quick Actions Panel */}
-          <div className="cabms-card p-5">
-            <h2 className="text-sm font-bold text-(--cabms-text-primary) uppercase tracking-wider mb-4">
-              Guided Demo Journeys (A–J)
-            </h2>
-            <div className="space-y-3.5">
-              <button
-                onClick={() => {
-                  setSelectedJobId('JOB-2026-101');
-                  setActiveTab('jobs');
-                }}
-                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
-              >
-                <FontAwesomeIcon icon={faFileCircleCheck} className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
-                <div className="space-y-1">
-                  <div className="font-bold text-(--cabms-text-primary) text-sm">1. Complete Job Journey</div>
-                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
-                    Walkthrough JSA & Smoke Alarm sign-off, completion validation, quote acceptance & review automation.
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => {
-                  setSelectedJobId('JOB-2026-102');
-                  setActiveTab('jobs');
-                }}
-                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
-              >
-                <FontAwesomeIcon icon={faCircleCheck} className="w-5 h-5 text-emerald-400 mt-0.5 shrink-0" />
-                <div className="space-y-1">
-                  <div className="font-bold text-(--cabms-text-primary) text-sm">2. Direct-to-Invoice Journey</div>
-                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
-                    Emergency service job with 0 compliance forms, completing immediately into MYOB invoice draft.
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => {
-                  setSelectedJobId('JOB-2026-104');
-                  setActiveTab('jobs');
-                }}
-                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
-              >
-                <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
-                <div className="space-y-1">
-                  <div className="font-bold text-(--cabms-text-primary) text-sm">3. TCA1/TCA2 Cabling Defect</div>
-                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
-                    High-risk defect logging with photo attachment, customer ack and office rectification review.
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('customers')}
-                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
-              >
-                <FontAwesomeIcon icon={faUsers} className="w-5 h-5 text-sky-400 mt-0.5 shrink-0" />
-                <div className="space-y-1">
-                  <div className="font-bold text-(--cabms-text-primary) text-sm">4. MYOB Write-Through Simulation</div>
-                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
-                    Single MYOB customer master shared across brands with duplicate detection & reconciliation.
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setActiveTab('website_inbox')}
-                className="w-full text-left p-3.5 rounded-lg cabms-card-subtle hover:bg-(--cabms-surface) flex items-start space-x-3 transition cursor-pointer"
-              >
-                <FontAwesomeIcon icon={faInbox} className="w-5 h-5 text-purple-400 mt-0.5 shrink-0" />
-                <div className="space-y-1">
-                  <div className="font-bold text-(--cabms-text-primary) text-sm">5. Existing-Site Submission (Handoff)</div>
-                  <div className="text-(--cabms-text-secondary) text-xs leading-relaxed">
-                    Simulate public website enquiry, office duplicate check and manual conversion to draft job.
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          {/* Compliance & Isolation Card */}
-          <div className="cabms-card border-amber-700/60 p-5 text-(--cabms-text-secondary) space-y-2">
-            <div className="flex items-center space-x-2 text-amber-400 font-bold text-sm">
-              <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4" />
-              <span>G00 Strict Demo Isolation</span>
-            </div>
-            <p className="text-xs text-(--cabms-text-secondary) leading-relaxed">
-              All records, appointments, quotes, and customer accounts are deterministic synthetic fixtures. Electronic signatures are visibly deferred to the working test system without amount-based legal routing.
-            </p>
-          </div>
-        </div>
       </div>
     </div>
   );

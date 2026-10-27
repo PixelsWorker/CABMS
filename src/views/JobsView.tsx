@@ -7,29 +7,30 @@
  * and activity history audit trail (G00-018).
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Briefcase,
-  Search,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  MapPin,
-  Phone,
-  FileCheck2,
-  FileText,
-  DollarSign,
-  Plus,
-  ArrowRight,
-  ExternalLink,
-  ShieldAlert,
-  Send,
-  RotateCcw,
-  XCircle,
-  History,
-  User,
-} from 'lucide-react';
+  faArrowRight,
+  faArrowUpRightFromSquare,
+  faBriefcase,
+  faCircleCheck,
+  faCircleXmark,
+  faClock,
+  faClockRotateLeft,
+  faDollarSign,
+  faFileCircleCheck,
+  faFileLines,
+  faLocationDot,
+  faMagnifyingGlass,
+  faPaperPlane,
+  faPhone,
+  faPlus,
+  faRotateLeft,
+  faShieldHalved,
+  faTriangleExclamation,
+  faUser,
+} from '@fortawesome/free-solid-svg-icons';
 import { Job, JobStatus, ActivityLogEntry } from '../types/cabms.ts';
 import { CompletionValidationResult } from '../utils/cabmsLogic.ts';
 
@@ -58,11 +59,30 @@ export const JobsView: React.FC = () => {
     demoClock,
   } = useCabms();
 
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  // Resolve selection only inside the active business/persona boundary. A stale id
+  // after a brand or persona switch must never select an out-of-scope record.
+  const authorizedJobs = jobs.filter(j =>
+    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
+  );
+
+  const [statusFilter, setStatusFilter] = useState<string>(() => {
+    const initialJob = authorizedJobs.find(j => j.id === selectedJobId);
+    return initialJob && (initialJob.status === 'COMPLETED' || initialJob.status === 'CANCELLED') ? 'all' : 'open';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [validationModalResult, setValidationModalResult] = useState<CompletionValidationResult | null>(null);
   const [isNewJobModalOpen, setIsNewJobModalOpen] = useState(false);
   const [activeJobDetailTab, setActiveJobDetailTab] = useState<'details' | 'history'>('details');
+
+  const lastSelectedJobIdRef = useRef<string | null>(selectedJobId);
+  const previousSelectionRef = useRef({
+    id: selectedJobId,
+    status: authorizedJobs.find(j => j.id === selectedJobId)?.status,
+    brandId: activeBrandId,
+    persona,
+    statusFilter,
+    searchQuery,
+  });
 
   // New Job Form State
   const [newTitle, setNewTitle] = useState('');
@@ -70,6 +90,13 @@ export const JobsView: React.FC = () => {
   const [selectedJobTypeId, setSelectedJobTypeId] = useState<string>(jobTypes[0]?.id || '');
   const brandJobTypes = jobTypes.filter(jobType => jobType.brandId === activeBrandId);
   const selectedJobType = brandJobTypes.find(jobType => jobType.id === selectedJobTypeId) || brandJobTypes[0];
+
+  useEffect(() => {
+    if (selectedJobType) {
+      setNewIsDirectToInvoice(selectedJobType.isDirectToInvoice);
+      setNewForms(selectedJobType.isDirectToInvoice ? [] : selectedJobType.formsRequired);
+    }
+  }, [activeBrandId]);
   const [newSiteAddress, setNewSiteAddress] = useState('[Fictional] 50 Cavill Avenue, Surfers Paradise QLD 4217');
   const [newSiteContact, setNewSiteContact] = useState('John Citizen');
   const [newSitePhone, setNewSitePhone] = useState('0400 000 001');
@@ -78,16 +105,9 @@ export const JobsView: React.FC = () => {
   const [newIsDirectToInvoice, setNewIsDirectToInvoice] = useState(false);
   const [newForms, setNewForms] = useState<('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[]>(['JSA']);
 
-  // Resolve selection only inside the active business/persona boundary. A stale id
-  // after a brand or persona switch must never select an out-of-scope record.
-  const authorizedJobs = jobs.filter(j =>
-    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
-  );
-  const selectedJob = authorizedJobs.find(j => j.id === selectedJobId) || authorizedJobs[0];
-
   // Filter jobs by active brand & status
   const filteredJobs = authorizedJobs.filter(j => {
-    const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
+    const matchesStatus = statusFilter === 'all' ? true : statusFilter === 'open' ? (j.status !== 'COMPLETED' && j.status !== 'CANCELLED') : j.status === statusFilter;
     const matchesSearch =
       j.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       j.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -95,6 +115,57 @@ export const JobsView: React.FC = () => {
       j.siteAddress.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesStatus && matchesSearch;
   });
+
+  const selectedJob = (selectedJobId ? filteredJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
+
+  useEffect(() => {
+    const target = authorizedJobs.find(j => j.id === selectedJobId);
+    const previous = previousSelectionRef.current;
+    previousSelectionRef.current = {
+      id: selectedJobId, status: target?.status, brandId: activeBrandId, persona, statusFilter, searchQuery,
+    };
+    if (
+      target && previous.id === selectedJobId && previous.brandId === activeBrandId && previous.persona === persona &&
+      previous.status && previous.status !== 'COMPLETED' && previous.status !== 'CANCELLED' &&
+      (target.status === 'COMPLETED' || target.status === 'CANCELLED') &&
+      statusFilter === 'open' && previous.statusFilter === statusFilter && previous.searchQuery === searchQuery &&
+      [target.id, target.title, target.siteContact, target.siteAddress].some(value => value.toLowerCase().includes(searchQuery.toLowerCase()))
+    ) {
+      setStatusFilter('all');
+      return;
+    }
+    // If selectedJobId just changed to an authorized job that is outside the current filter or search,
+    // widen statusFilter to 'all' and clear search query so the newly selected job remains visible and selected.
+    if (selectedJobId && selectedJobId !== lastSelectedJobIdRef.current) {
+      lastSelectedJobIdRef.current = selectedJobId;
+      const target = authorizedJobs.find(j => j.id === selectedJobId);
+      if (target) {
+        const matchesFilter =
+          statusFilter === 'all'
+            ? true
+            : statusFilter === 'open'
+            ? target.status !== 'COMPLETED' && target.status !== 'CANCELLED'
+            : target.status === statusFilter;
+        const matchesSearch =
+          !searchQuery ||
+          target.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          target.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          target.siteContact.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          target.siteAddress.toLowerCase().includes(searchQuery.toLowerCase());
+        if (!matchesFilter || !matchesSearch) {
+          if (!matchesFilter) setStatusFilter('all');
+          if (!matchesSearch) setSearchQuery('');
+          return;
+        }
+      }
+    }
+    lastSelectedJobIdRef.current = selectedJobId;
+
+    // Synchronize context state with fallback job if current selection is not in filtered list
+    if (selectedJob && selectedJob.id !== selectedJobId) {
+      setSelectedJobId(selectedJob.id);
+    }
+  }, [selectedJob?.id, selectedJobId, statusFilter, searchQuery, authorizedJobs, setSelectedJobId]);
 
   const handleCompleteAttempt = () => {
     if (!selectedJob) return;
@@ -107,7 +178,7 @@ export const JobsView: React.FC = () => {
     const jt = brandJobTypes.find(t => t.id === typeId);
     if (jt) {
       setNewIsDirectToInvoice(jt.isDirectToInvoice);
-      setNewForms(jt.formsRequired);
+      setNewForms(jt.isDirectToInvoice ? [] : jt.formsRequired);
       if (!newTitle) {
         setNewTitle(jt.name);
       }
@@ -136,7 +207,9 @@ export const JobsView: React.FC = () => {
       siteContact: newSiteContact,
       sitePhone: newSitePhone,
       isDirectToInvoice: selectedJt.isDirectToInvoice,
-      formsRequired: selectedJt.formsRequired,
+      formsRequired: selectedJt.isDirectToInvoice
+        ? []
+        : Array.from(new Set([...(selectedJt.formsRequired || []), ...newForms])),
       unresolvedWarnings: [],
     });
 
@@ -147,25 +220,25 @@ export const JobsView: React.FC = () => {
   const getStatusBadge = (status: JobStatus) => {
     switch (status) {
       case 'NEW':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-950 text-purple-400 border border-purple-800">NEW / POOL</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-badge-info">NEW / POOL</span>;
       case 'SCHEDULED':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 text-sky-400 border border-sky-800">SCHEDULED</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-badge-info">SCHEDULED</span>;
       case 'IN_PROGRESS':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-400 border border-amber-800">IN PROGRESS</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-badge-warning">IN PROGRESS</span>;
       case 'NEEDS_REVISIT':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-950 text-orange-400 border border-orange-800">NEEDS REVISIT</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-badge-danger">NEEDS REVISIT</span>;
       case 'COMPLETED':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">COMPLETED</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-badge-completed">COMPLETED</span>;
       case 'CANCELLED':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-950 text-red-400 border border-red-800">CANCELLED</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-badge-danger">CANCELLED</span>;
       default:
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">{status}</span>;
+        return <span className="px-2.5 py-1 rounded text-xs font-bold cabms-surface-subtle text-(--cabms-text-secondary) border cabms-border">{status}</span>;
     }
   };
 
-  if (!selectedJob) {
+  if (authorizedJobs.length === 0) {
     return (
-      <div role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-300">
+      <div role="status" className="cabms-card p-6 text-sm text-(--cabms-text-secondary)">
         No work orders are available for this business and your current access.
       </div>
     );
@@ -174,15 +247,15 @@ export const JobsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="cabms-card p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center space-x-2">
-            <Briefcase className="w-5 h-5 text-amber-400" />
-            <h1 className="text-xl font-bold text-white tracking-tight">
+            <FontAwesomeIcon icon={faBriefcase} className="w-5 h-5 text-amber-400" />
+            <h1 className="text-xl font-bold text-(--cabms-text-primary) tracking-tight">
               Operational Work Orders & Compliance Journey
             </h1>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="text-xs text-(--cabms-text-secondary) mt-1">
             Dispatch, technician execution, structured form validation, and direct-to-invoice completion.
           </p>
         </div>
@@ -192,7 +265,7 @@ export const JobsView: React.FC = () => {
             onClick={() => setIsNewJobModalOpen(true)}
             className="flex items-center space-x-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded-lg transition shadow-sm cursor-pointer self-start sm:self-auto"
           >
-            <Plus className="w-4 h-4" />
+            <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
             <span>Create New Job</span>
           </button>
         )}
@@ -203,24 +276,25 @@ export const JobsView: React.FC = () => {
         {/* Left Pane: Job Directory / List (5 cols) */}
         <div className="lg:col-span-5 space-y-3">
           {/* Search and Status Filter */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 space-y-2">
+          <div className="cabms-card p-3 space-y-2">
             <div className="relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-(--cabms-text-secondary) absolute left-3 top-2.5" />
               <input
                 type="text"
                 placeholder="Search jobs..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                className="w-full pl-9 pr-3 py-1.5 cabms-card-subtle text-xs text-(--cabms-text-primary) placeholder-slate-500 focus:outline-none focus:border-amber-500"
               />
             </div>
-            <div className="flex items-center justify-between text-xs text-slate-400">
+            <div className="flex items-center justify-between text-xs text-(--cabms-text-secondary)">
               <span>Status:</span>
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-white text-xs font-medium cursor-pointer"
+                className="cabms-card-subtle rounded px-2 py-1 text-(--cabms-text-primary) text-xs font-medium cursor-pointer"
               >
+                <option value="open">Open (Active &amp; Scheduled)</option>
                 <option value="all">All Statuses</option>
                 <option value="NEW">New (Unassigned Pool)</option>
                 <option value="SCHEDULED">Scheduled</option>
@@ -233,52 +307,52 @@ export const JobsView: React.FC = () => {
           </div>
 
           {/* Job List Items */}
-          <div className="space-y-2 max-h-[700px] overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-175 overflow-y-auto pr-1">
             {filteredJobs.map(job => {
               const isSelected = selectedJob?.id === job.id;
               return (
                 <div
                   key={job.id}
                   onClick={() => setSelectedJobId(job.id)}
-                  className={`p-3.5 rounded-xl border transition cursor-pointer ${
+                  className={`cabms-card p-4 transition cursor-pointer ${
                     isSelected
-                      ? 'bg-slate-800 border-amber-500 shadow-md'
-                      : 'bg-slate-900 border-slate-800 hover:bg-slate-800/60'
+                      ? 'border-amber-500 shadow-md ring-1 ring-amber-500/50'
+                      : 'hover:border-(--cabms-border-focus)'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="flex items-center space-x-1.5">
-                        <span className="font-mono text-xs font-bold text-amber-400">{job.id}</span>
+                      <div className="flex items-center space-x-2">
+                        <span className="font-mono text-sm font-bold text-amber-400">{job.id}</span>
                         {getStatusBadge(job.status)}
                       </div>
-                      <h3 className="font-bold text-white text-xs md:text-sm mt-1">{job.title}</h3>
+                      <h3 className="font-bold text-(--cabms-text-primary) text-sm md:text-base mt-1.5">{job.title}</h3>
                     </div>
                   </div>
 
-                  <div className="text-[11px] text-slate-400 mt-1.5 space-y-0.5">
+                  <div className="text-xs md:text-sm text-(--cabms-text-secondary) mt-2 space-y-1.5 leading-relaxed">
                     <div>Site: {job.siteAddress}</div>
-                    <div className="flex items-center justify-between text-slate-300">
+                    <div className="flex items-center justify-between text-(--cabms-text-secondary)">
                       <span>Tech: {job.assignedTechName || 'Unassigned (Pool)'}</span>
-                      <span className="font-mono text-slate-400">
+                      <span className="font-mono text-(--cabms-text-secondary)">
                         {job.scheduledDate ? `${job.scheduledDate} ${job.scheduledTime || ''}` : 'Unscheduled'}
                       </span>
                     </div>
                   </div>
 
-                  <div className="mt-2 pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
+                  <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
                     {job.appointmentStatus && job.appointmentStatus !== 'SCHEDULED' && (
-                      <span className="text-[10px] bg-slate-900 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 font-mono">
+                      <span className="text-xs cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) px-2 py-0.5 rounded font-mono">
                         {job.appointmentStatus}
                       </span>
                     )}
                     {job.isDirectToInvoice ? (
-                      <span className="text-[10px] bg-slate-950 text-slate-300 px-1.5 py-0.5 rounded border border-slate-700">
+                      <span className="text-xs cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) px-2 py-0.5 rounded">
                         Direct-to-Invoice (No Forms)
                       </span>
                     ) : (
                       job.formsRequired.map(f => (
-                        <span key={f} className="text-[10px] bg-amber-950/80 text-amber-300 px-1.5 py-0.5 rounded border border-amber-800">
+                        <span key={f} className="text-xs bg-amber-950/80 text-amber-300 px-2 py-0.5 rounded border border-amber-800">
                           {f}
                         </span>
                       ))
@@ -291,48 +365,48 @@ export const JobsView: React.FC = () => {
         </div>
 
         {/* Right Pane: Selected Job Detail (7 cols) */}
-        {selectedJob && (
-          <div className="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6">
+        {selectedJob ? (
+          <div className="lg:col-span-7 cabms-card p-6 space-y-6">
             {/* Top Job Action Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-800 gap-3">
               <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-mono text-sm font-bold text-amber-400">{selectedJob.id}</span>
+                <div className="flex items-center space-x-2.5">
+                  <span className="font-mono text-base font-bold text-amber-400">{selectedJob.id}</span>
                   {getStatusBadge(selectedJob.status)}
                   {selectedJob.appointmentStatus && (
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    <span className={`px-2.5 py-1 rounded text-xs font-bold border ${
                       selectedJob.appointmentStatus === 'SCHEDULED'
                         ? 'bg-sky-950 text-sky-400 border-sky-800'
                         : selectedJob.appointmentStatus === 'RESCHEDULED'
                         ? 'bg-amber-950 text-amber-400 border-amber-800'
                         : selectedJob.appointmentStatus === 'UNSCHEDULED'
-                        ? 'bg-slate-800 text-slate-400 border-slate-700'
+                        ? 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary)'
                         : 'bg-red-950 text-red-400 border-red-800'
                     }`}>
                       {selectedJob.appointmentStatus}
                     </span>
                   )}
                 </div>
-                <h2 className="text-lg font-bold text-white mt-1">{selectedJob.title}</h2>
+                <h2 className="text-xl md:text-2xl font-bold text-(--cabms-text-primary) mt-1.5">{selectedJob.title}</h2>
               </div>
 
               {/* Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2.5">
                 {selectedJob.status === 'CANCELLED' ? (
                   <button
                     onClick={() => reopenCancelledJob(selectedJob.id)}
-                    className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition shadow-sm cursor-pointer flex items-center space-x-1"
+                    className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold rounded-lg transition shadow-sm cursor-pointer flex items-center space-x-1.5"
                   >
-                    <RotateCcw className="w-3.5 h-3.5" />
+                    <FontAwesomeIcon icon={faRotateLeft} className="w-4 h-4" />
                     <span>Reopen Cancelled Job</span>
                   </button>
                 ) : selectedJob.status !== 'COMPLETED' ? (
                   <>
                     <button
                       onClick={handleCompleteAttempt}
-                      className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-xs font-bold rounded-lg transition shadow-sm cursor-pointer flex items-center space-x-1"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 text-sm font-bold rounded-lg transition shadow-sm cursor-pointer flex items-center space-x-1.5"
                     >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
                       <span>Complete Work Order</span>
                     </button>
 
@@ -340,14 +414,14 @@ export const JobsView: React.FC = () => {
                       <>
                         <button
                           onClick={() => cancelJobAppointment(selectedJob.id, 'Rescheduling requested')}
-                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg transition cursor-pointer"
+                          className="px-3.5 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-sm font-medium rounded-lg transition cursor-pointer"
                           title="Cancels appointment visit while keeping work order active"
                         >
                           Cancel Visit
                         </button>
                         <button
                           onClick={() => cancelWholeJob(selectedJob.id, 'Order cancelled by customer')}
-                          className="px-2.5 py-1.5 bg-red-950/60 hover:bg-red-900 text-red-300 border border-red-800 text-xs font-medium rounded-lg transition cursor-pointer"
+                          className="px-3.5 py-2 bg-red-950/60 hover:bg-red-900 text-red-300 border border-red-800 text-sm font-medium rounded-lg transition cursor-pointer"
                           title="Cancels entire work order"
                         >
                           Cancel Job
@@ -356,8 +430,8 @@ export const JobsView: React.FC = () => {
                     )}
                   </>
                 ) : (
-                  <div className="flex items-center space-x-1.5 text-emerald-400 text-xs font-bold bg-emerald-950/80 border border-emerald-800 px-3 py-1.5 rounded-lg">
-                    <CheckCircle2 className="w-4 h-4" />
+                  <div className="flex items-center space-x-2 text-emerald-400 text-sm font-bold bg-emerald-950/80 border border-emerald-800 px-3.5 py-2 rounded-lg">
+                    <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
                     <span>Work Order Completed</span>
                   </div>
                 )}
@@ -371,7 +445,7 @@ export const JobsView: React.FC = () => {
                 className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
                   activeJobDetailTab === 'details'
                     ? 'bg-amber-600 text-slate-950'
-                    : 'bg-slate-950 text-slate-400 hover:text-white'
+                    : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
                 }`}
               >
                 Work Order Details
@@ -381,19 +455,19 @@ export const JobsView: React.FC = () => {
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition ${
                   activeJobDetailTab === 'history'
                     ? 'bg-amber-600 text-slate-950'
-                    : 'bg-slate-950 text-slate-400 hover:text-white'
+                    : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
                 }`}
               >
-                <History className="w-3.5 h-3.5" />
+                <FontAwesomeIcon icon={faClockRotateLeft} className="w-3.5 h-3.5" />
                 <span>Audit Trail ({selectedJob.activityHistory?.length || 0})</span>
               </button>
             </div>
 
             {activeJobDetailTab === 'history' ? (
               /* Activity & Audit History Trail (G00-018) */
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
-                  <History className="w-3.5 h-3.5 text-sky-400" />
+              <div className="cabms-card-subtle p-4 space-y-3">
+                <h3 className="text-xs font-bold text-(--cabms-text-secondary) uppercase tracking-wider flex items-center space-x-1.5">
+                  <FontAwesomeIcon icon={faClockRotateLeft} className="w-3.5 h-3.5 text-sky-400" />
                   <span>Activity & Status Change History</span>
                 </h3>
                 <div className="space-y-2">
@@ -401,13 +475,13 @@ export const JobsView: React.FC = () => {
                     selectedJob.activityHistory.map((entry: ActivityLogEntry, idx: number) => (
                       <div
                         key={idx}
-                        className="p-2.5 rounded bg-slate-900 border border-slate-800 text-xs space-y-1"
+                        className="p-2.5 rounded cabms-card text-xs space-y-1"
                       >
                         <div className="flex items-center justify-between text-[11px]">
-                          <span className="font-bold text-white">{entry.action}</span>
+                          <span className="font-bold text-(--cabms-text-primary)">{entry.action}</span>
                           <span className="font-mono text-slate-500">{entry.timestamp}</span>
                         </div>
-                        {entry.notes && <p className="text-slate-300 text-[11px]">{entry.notes}</p>}
+                        {entry.notes && <p className="text-(--cabms-text-secondary) text-[11px]">{entry.notes}</p>}
                         <div className="text-[10px] text-slate-500">By: {entry.actor}</div>
                       </div>
                     ))
@@ -420,15 +494,15 @@ export const JobsView: React.FC = () => {
               </div>
             ) : (
               /* Work Order Details Tab */
-              <div className="space-y-5">
+              <div className="space-y-6">
                 {/* Site & Contact Information */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs">
-                    <h3 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div className="cabms-card-subtle p-5 space-y-3">
+                    <h3 className="font-bold text-(--cabms-text-secondary) uppercase tracking-wider text-xs">
                       Site Information (Physical Location)
                     </h3>
-                    <div className="flex items-start space-x-2 text-white font-medium">
-                      <MapPin className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="flex items-start space-x-2.5 text-(--cabms-text-primary) font-medium text-sm md:text-base leading-relaxed">
+                      <FontAwesomeIcon icon={faLocationDot} className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
                       <span>{selectedJob.siteAddress}</span>
                     </div>
                     <div className="pt-2">
@@ -436,66 +510,66 @@ export const JobsView: React.FC = () => {
                         href="https://www.google.com/maps/dir/?api=1&destination=Sydney+Opera+House"
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center space-x-1 text-sky-400 hover:text-sky-300 text-[11px] font-semibold"
+                        className="inline-flex items-center space-x-1.5 text-sky-400 hover:text-sky-300 text-xs md:text-sm font-semibold"
                       >
                         <span>Navigate via Google Maps (Public Demo)</span>
-                        <ExternalLink className="w-3 h-3" />
+                        <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3.5 h-3.5" />
                       </a>
                     </div>
                   </div>
 
-                  <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs">
-                    <h3 className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">
+                  <div className="cabms-card-subtle p-5 space-y-3">
+                    <h3 className="font-bold text-(--cabms-text-secondary) uppercase tracking-wider text-xs">
                       Site Contact Details
                     </h3>
-                    <div className="space-y-1 text-white">
-                      <div className="font-bold">{selectedJob.siteContact}</div>
-                      <div className="flex items-center space-x-1 text-slate-300">
-                        <Phone className="w-3.5 h-3.5 text-slate-500" />
+                    <div className="space-y-1.5 text-(--cabms-text-primary)">
+                      <div className="font-bold text-base">{selectedJob.siteContact}</div>
+                      <div className="flex items-center space-x-2 text-(--cabms-text-secondary) text-sm">
+                        <FontAwesomeIcon icon={faPhone} className="w-4 h-4 text-slate-500" />
                         <span>{selectedJob.sitePhone}</span>
                       </div>
                     </div>
-                    <div className="text-slate-400 text-[11px] pt-1">
-                      Technician assigned: <strong className="text-white">{selectedJob.assignedTechName || 'Unassigned (Dispatch Pool)'}</strong>
+                    <div className="text-(--cabms-text-secondary) text-xs md:text-sm pt-2 leading-relaxed">
+                      Technician assigned: <strong className="text-(--cabms-text-primary)">{selectedJob.assignedTechName || 'Unassigned (Dispatch Pool)'}</strong>
                     </div>
                   </div>
                 </div>
 
                 {/* Scope Description */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-1 text-xs">
-                  <span className="font-bold text-slate-400 uppercase text-[11px] block">
+                <div className="cabms-card-subtle p-5 space-y-2">
+                  <span className="font-bold text-(--cabms-text-secondary) uppercase tracking-wider text-xs block">
                     Job Scope / Work Instructions
                   </span>
-                  <p className="text-slate-300 leading-relaxed">{selectedJob.description}</p>
+                  <p className="text-(--cabms-text-primary) text-sm leading-relaxed">{selectedJob.description}</p>
                 </div>
 
                 {/* Required Forms Badge Panel */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2 text-xs">
+                <div className="cabms-card-subtle p-5 space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-400 uppercase text-[11px]">
+                    <span className="font-bold text-(--cabms-text-secondary) uppercase tracking-wider text-xs">
                       Compliance Requirements
                     </span>
                     <button
                       onClick={() => setActiveTab('compliance')}
-                      className="text-amber-400 hover:text-amber-300 text-xs font-semibold flex items-center space-x-1 cursor-pointer"
+                      className="text-amber-400 hover:text-amber-300 text-sm font-semibold flex items-center space-x-1 cursor-pointer"
                     >
                       <span>Open Forms Tab</span>
-                      <ArrowRight className="w-3 h-3" />
+                      <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
                     </button>
                   </div>
 
                   {selectedJob.isDirectToInvoice ? (
-                    <div className="text-slate-300 text-xs bg-slate-900 p-2.5 rounded border border-slate-800">
+                    <div className="text-(--cabms-text-secondary) text-sm cabms-card-subtle p-3 leading-relaxed">
                       ✓ <strong>Direct-to-Invoice Service:</strong> This work order does not require statutory compliance certificates. Complete anytime to bill customer.
                     </div>
                   ) : (
-                    <div className="flex flex-wrap gap-2 pt-1">
+                    <div className="flex flex-wrap gap-2.5 pt-1">
                       {selectedJob.formsRequired.map(f => (
                         <div
                           key={f}
-                          className="flex items-center space-x-1.5 px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-xs text-white"
+                          className="flex items-center space-x-2 px-3 py-1.5 rounded-lg cabms-card text-sm text-(--cabms-text-primary)"
                         >
-                          <FileCheck2 className="w-3.5 h-3.5 text-amber-400" />
+                          <FontAwesomeIcon icon={faFileCircleCheck} className="w-4 h-4 text-amber-400" />
                           <span>{f} Form</span>
                         </div>
                       ))}
@@ -504,20 +578,20 @@ export const JobsView: React.FC = () => {
                 </div>
 
                 {/* MYOB Invoice Panel */}
-                <div className="bg-slate-950 rounded-xl p-4 border border-slate-800 space-y-3">
+                <div className="cabms-card-subtle p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
-                      <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
+                    <h3 className="text-sm font-bold text-(--cabms-text-primary) uppercase tracking-wider flex items-center space-x-2">
+                      <FontAwesomeIcon icon={faDollarSign} className="w-4 h-4 text-emerald-400" />
                       <span>MYOB Invoice & Billing Status</span>
                     </h3>
                     {selectedJob.invoice ? (
-                      <span className="text-xs font-bold text-emerald-400 font-mono">
+                      <span className="text-sm md:text-base font-bold text-emerald-400 font-mono">
                         ${selectedJob.invoice.amount.toFixed(2)} AUD
                       </span>
                     ) : (
                       <button
                         onClick={() => prepareInvoiceForJob(selectedJob.id, 1450)}
-                        className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-[11px] font-bold cursor-pointer"
+                        className="px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold cursor-pointer"
                       >
                         Prepare MYOB Invoice ($1,450.00)
                       </button>
@@ -525,26 +599,26 @@ export const JobsView: React.FC = () => {
                   </div>
 
                   {selectedJob.invoice ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                      <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                        <span className="text-[10px] text-slate-500 block">MYOB Invoice Ref:</span>
-                        <span className="font-mono text-sky-400 font-bold">{selectedJob.invoice.externalMyobRef}</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="cabms-card-subtle p-3 space-y-1">
+                        <span className="text-xs text-(--cabms-text-secondary) block font-medium">MYOB Invoice Ref:</span>
+                        <span className="font-mono text-sky-400 font-bold text-sm">{selectedJob.invoice.externalMyobRef}</span>
                       </div>
-                      <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                        <span className="text-[10px] text-slate-500 block">Status:</span>
-                        <span className="font-semibold text-white">{selectedJob.invoice.status}</span>
+                      <div className="cabms-card-subtle p-3 space-y-1">
+                        <span className="text-xs text-(--cabms-text-secondary) block font-medium">Status:</span>
+                        <span className="font-semibold text-(--cabms-text-primary) text-sm">{selectedJob.invoice.status}</span>
                       </div>
-                      <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                        <span className="text-[10px] text-slate-500 block">Issued:</span>
-                        <span className="text-slate-300">{selectedJob.invoice.issuedDate}</span>
+                      <div className="cabms-card-subtle p-3 space-y-1">
+                        <span className="text-xs text-(--cabms-text-secondary) block font-medium">Issued:</span>
+                        <span className="text-(--cabms-text-primary) text-sm font-mono">{selectedJob.invoice.issuedDate}</span>
                       </div>
-                      <div className="bg-slate-900 p-2 rounded border border-slate-800">
-                        <span className="text-[10px] text-slate-500 block">Due:</span>
-                        <span className="text-slate-300">{selectedJob.invoice.dueDate}</span>
+                      <div className="cabms-card-subtle p-3 space-y-1">
+                        <span className="text-xs text-(--cabms-text-secondary) block font-medium">Due:</span>
+                        <span className="text-(--cabms-text-primary) text-sm font-mono">{selectedJob.invoice.dueDate}</span>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-slate-400 text-xs">
+                    <div className="text-(--cabms-text-secondary) text-sm leading-relaxed">
                       No invoice prepared yet. Completed jobs can be invoiced directly to the shared MYOB file.
                     </div>
                   )}
@@ -552,31 +626,35 @@ export const JobsView: React.FC = () => {
               </div>
             )}
           </div>
+        ) : (
+          <div className="lg:col-span-7 cabms-card p-8 text-center text-sm text-(--cabms-text-secondary) flex items-center justify-center min-h-[300px]">
+            No work order matches the selected filter.
+          </div>
         )}
       </div>
 
       {/* Structured Completion Validation Dialog (Area G) */}
       {validationModalResult && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+          <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center space-x-3">
               {validationModalResult.canComplete ? (
                 <div className="w-10 h-10 bg-emerald-950 text-emerald-400 rounded-full flex items-center justify-center border border-emerald-800">
-                  <CheckCircle2 className="w-6 h-6" />
+                  <FontAwesomeIcon icon={faCircleCheck} className="w-6 h-6" />
                 </div>
               ) : (
                 <div className="w-10 h-10 bg-red-950 text-red-400 rounded-full flex items-center justify-center border border-red-800">
-                  <ShieldAlert className="w-6 h-6" />
+                  <FontAwesomeIcon icon={faShieldHalved} className="w-6 h-6" />
                 </div>
               )}
 
               <div>
-                <h3 className="text-base font-bold text-white">
+                <h3 className="text-base font-bold text-(--cabms-text-primary)">
                   {validationModalResult.canComplete
-                    ? 'Job Completion Approved (Simulated)'
+                    ? 'Job Completion Approved & Recorded in Preview'
                     : 'Job Completion Blocked — Requirements Missing'}
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-(--cabms-text-secondary)">
                   {validationModalResult.canComplete
                     ? 'All compliance rules satisfied. Status updated to COMPLETED.'
                     : 'Status remains unchanged until all required forms are executed and signed.'}
@@ -623,7 +701,7 @@ export const JobsView: React.FC = () => {
               )}
               <button
                 onClick={() => setValidationModalResult(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg transition cursor-pointer"
+                className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer"
               >
                 Close
               </button>
@@ -635,12 +713,12 @@ export const JobsView: React.FC = () => {
       {/* New Job Modal with Job Type & Tech Selection (G00-013) */}
       {isNewJobModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+          <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-white">Create New Work Order</h3>
+              <h3 className="text-base font-bold text-(--cabms-text-primary)">Create New Work Order</h3>
               <button
                 onClick={() => setIsNewJobModalOpen(false)}
-                className="text-slate-400 hover:text-white text-lg font-bold"
+                className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold"
               >
                 ✕
               </button>
@@ -648,11 +726,11 @@ export const JobsView: React.FC = () => {
 
             <form onSubmit={handleCreateJob} className="space-y-3 text-xs">
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Standard Job Type (Template)</label>
+                <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Standard Job Type (Template)</label>
                 <select
                   value={selectedJobType?.id || ''}
                   onChange={e => handleJobTypeChange(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white cursor-pointer"
+                  className="w-full p-2 cabms-input rounded text-(--cabms-text-primary) cursor-pointer"
                 >
                   {brandJobTypes.map(jt => (
                     <option key={jt.id} value={jt.id}>
@@ -663,24 +741,24 @@ export const JobsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Job Title *</label>
+                <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Job Title *</label>
                 <input
                   type="text"
                   required
                   placeholder="e.g. 5kW Solar Array Inverter Replacement"
                   value={newTitle}
                   onChange={e => setNewTitle(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white focus:outline-none focus:border-amber-500"
+                  className="w-full p-2 cabms-input rounded text-(--cabms-text-primary) focus:outline-none focus:border-amber-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Customer</label>
+                  <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Customer</label>
                   <select
                     value={newCustId}
                     onChange={e => setNewCustId(e.target.value)}
-                    className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white cursor-pointer"
+                    className="w-full p-2 cabms-input rounded text-(--cabms-text-primary) cursor-pointer"
                   >
                     {customers.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
@@ -689,11 +767,11 @@ export const JobsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Assigned Technician</label>
+                  <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Assigned Technician</label>
                   <select
                     value={newAssignedTechId || ''}
                     onChange={e => setNewAssignedTechId(e.target.value ? e.target.value : null)}
-                    className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white cursor-pointer"
+                    className="w-full p-2 cabms-input rounded text-(--cabms-text-primary) cursor-pointer"
                   >
                     <option value="">Unassigned (Dispatch Pool)</option>
                     {technicians.map(t => (
@@ -704,64 +782,99 @@ export const JobsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Site Address (Physical Location)</label>
+                <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Site Address (Physical Location)</label>
                 <input
                   type="text"
                   required
                   value={newSiteAddress}
                   onChange={e => setNewSiteAddress(e.target.value)}
-                  className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white"
+                  className="w-full p-2 cabms-input rounded text-(--cabms-text-primary)"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Site Contact</label>
+                  <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Site Contact</label>
                   <input
                     type="text"
                     value={newSiteContact}
                     onChange={e => setNewSiteContact(e.target.value)}
-                    className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white"
+                    className="w-full p-2 cabms-input rounded text-(--cabms-text-primary)"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-300 font-semibold mb-1">Site Phone</label>
+                  <label className="block text-(--cabms-text-secondary) font-semibold mb-1">Site Phone</label>
                   <input
                     type="text"
                     value={newSitePhone}
                     onChange={e => setNewSitePhone(e.target.value)}
-                    className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-white"
+                    className="w-full p-2 cabms-input rounded text-(--cabms-text-primary)"
                   />
                 </div>
               </div>
 
-              <div className="bg-slate-950 p-3 rounded border border-slate-800 space-y-2">
+              <div className="cabms-card-subtle p-3 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-white font-semibold">Job Type Compliance Policy</span>
+                  <span className="text-(--cabms-text-primary) font-semibold">Job Type Compliance Policy</span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                     selectedJobType?.isDirectToInvoice
-                      ? 'bg-sky-950 text-sky-400 border border-sky-800'
-                      : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                      ? 'cabms-badge-info'
+                      : 'cabms-badge-completed'
                   }`}>
                     {selectedJobType?.isDirectToInvoice ? 'Direct to Invoice' : 'Compliance Documents Required'}
                   </span>
                 </div>
 
                 {selectedJobType?.isDirectToInvoice ? (
-                  <p className="text-slate-400 text-[11px]">
+                  <p className="text-(--cabms-text-secondary) text-[11px]">
                     Direct-to-invoice service: no compliance documentation required for operational completion.
                   </p>
                 ) : (
-                  <div>
-                    <span className="block text-slate-400 font-semibold mb-1">
-                      Mandatory Forms (governed by {selectedJobType?.name} {selectedJobType?.version}):
+                  <div className="space-y-2">
+                    <span className="block text-(--cabms-text-secondary) font-semibold">
+                      Compliance Forms Checklist (Job Type Mandatory + Optional):
                     </span>
-                    <div className="flex flex-wrap gap-2">
-                      {selectedJobType?.formsRequired.map(ft => (
-                        <span key={ft} className="px-2 py-0.5 bg-slate-900 border border-slate-700 rounded text-sky-300 font-mono text-[11px] font-bold">
-                          {ft}
-                        </span>
-                      ))}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      {(('JSA,ELECTRICAL,SMOKE_ALARM,TCA1,TCA2').split(',') as ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[]).map(formType => {
+                        const isMandatory = selectedJobType?.formsRequired.includes(formType);
+                        const isChecked = isMandatory || newForms.includes(formType);
+                        return (
+                          <label
+                            key={formType}
+                            className={`flex items-center space-x-2 p-2 rounded border text-xs cursor-pointer ${
+                              isMandatory
+                                ? 'bg-slate-900/80 border-sky-800/60 text-sky-300'
+                                : isChecked
+                                ? 'bg-amber-950/40 border-amber-700/60 text-amber-200'
+                                : 'bg-slate-950 border-slate-800 text-slate-400'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              data-testid={`form-checkbox-${formType}`}
+                              checked={isChecked}
+                              disabled={isMandatory}
+                              onChange={e => {
+                                if (isMandatory) return;
+                                if (e.target.checked) {
+                                  setNewForms(prev => [...prev, formType]);
+                                } else {
+                                  setNewForms(prev => prev.filter(f => f !== formType));
+                                }
+                              }}
+                              className="rounded border-slate-700 text-amber-500 focus:ring-amber-500"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <span className="font-mono font-bold">{formType}</span>
+                              {isMandatory && (
+                                <span className="ml-1.5 text-[10px] uppercase font-bold text-sky-400 bg-sky-950/60 px-1.5 py-0.5 rounded border border-sky-800/40">
+                                  Mandatory
+                                </span>
+                              )}
+                            </div>
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -771,7 +884,7 @@ export const JobsView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsNewJobModalOpen(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-semibold transition cursor-pointer"
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) rounded font-semibold transition cursor-pointer"
                 >
                   Cancel
                 </button>

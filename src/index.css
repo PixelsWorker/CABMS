@@ -1,6 +1,537 @@
 @import "tailwindcss";
 
-/* Gate S: shell/navigation only. Full appearance modes remain a later gate. */
+/* Gate T: Full-Application Appearance Modes & Design Tokens */
+:root,
+[data-appearance="default_dark"] {
+  --cabms-canvas: #020617;
+  --cabms-surface: #0f172a;
+  --cabms-surface-subtle: #1e293b;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #94a3b8;
+  --cabms-border-base: #334155;
+  --cabms-border-focus: #38bdf8;
+
+  --cabms-badge-completed-bg: #064e3b;
+  --cabms-badge-completed-text: #ffffff;
+  --cabms-badge-completed-border: #059669;
+
+  --cabms-badge-warning-bg: #fbbf24;
+  --cabms-badge-warning-text: #020617;
+  --cabms-badge-warning-border: #f59e0b;
+
+  --cabms-badge-danger-bg: #7f1d1d;
+  --cabms-badge-danger-text: #ffffff;
+  --cabms-badge-danger-border: #dc2626;
+
+  --cabms-badge-info-bg: #0c4a6e;
+  --cabms-badge-info-text: #ffffff;
+  --cabms-badge-info-border: #0284c7;
+
+  --cabms-badge-purple-bg: #3b0764;
+  --cabms-badge-purple-text: #e9d5ff;
+  --cabms-badge-purple-border: #9333ea;
+
+  --cabms-accent-danger: #f87171;
+  --cabms-accent-info: #7dd3fc;
+  --cabms-accent-purple: #c084fc;
+  --cabms-accent-success: #34d399;
+  --cabms-accent-warning: #fbbf24;
+
+  /* Brand Logos */
+  --cabms-logo-panel: #38bdf8;
+  --cabms-logo-solar: #4ade80;
+  --cabms-logo-cell: #f8fafc;
+  --cabms-logo-grad-top: #10b981;
+  --cabms-logo-grad-mid: #34d399;
+  --cabms-logo-grad-bot: #22c55e;
+  --cabms-logo-frame: #34d399;
+  --cabms-logo-secondary: #cbd5e1;
+  --cabms-logo-circuit: #34d399;
+  --cabms-logo-bevel: #064e3b;
+  --cabms-logo-shield: #38bdf8;
+  --cabms-logo-title: #f8fafc;
+  --cabms-logo-tagline: #94a3b8;
+  --cabms-logo-accent: #38bdf8;
+  --cabms-logo-lens: #0f172a;
+}
+
+[data-appearance="high_visibility_light"] {
+  --cabms-canvas: #f8fafc;
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #f1f5f9;
+  --cabms-text-primary: #020617;
+  --cabms-text-secondary: #334155;
+  --cabms-border-base: #475569;
+  --cabms-border-focus: #0369a1;
+
+  --cabms-badge-completed-bg: #ecfdf5;
+  --cabms-badge-completed-text: #064e3b;
+  --cabms-badge-completed-border: #059669;
+
+  --cabms-badge-warning-bg: #fbbf24;
+  --cabms-badge-warning-text: #020617;
+  --cabms-badge-warning-border: #b45309;
+
+  --cabms-badge-danger-bg: #fef2f2;
+  --cabms-badge-danger-text: #991b1b;
+  --cabms-badge-danger-border: #dc2626;
+
+  --cabms-badge-info-bg: #f0f9ff;
+  --cabms-badge-info-text: #0369a1;
+  --cabms-badge-info-border: #0369a1;
+
+  --cabms-badge-purple-bg: #f3e8ff;
+  --cabms-badge-purple-text: #581c87;
+  --cabms-badge-purple-border: #a855f7;
+
+  --cabms-accent-danger: #b91c1c;
+  --cabms-accent-info: #0369a1;
+  --cabms-accent-purple: #7e22ce;
+  --cabms-accent-success: #047857;
+  --cabms-accent-warning: #b45309;
+
+  /* Brand Logos */
+  --cabms-logo-panel: #02283d;
+  --cabms-logo-solar: #15803d;
+  --cabms-logo-cell: #02283d;
+  --cabms-logo-grad-top: #147a4d;
+  --cabms-logo-grad-mid: #15803d;
+  --cabms-logo-grad-bot: #166534;
+  --cabms-logo-frame: #15803d;
+  --cabms-logo-secondary: #1e293b;
+  --cabms-logo-circuit: #15803d;
+  --cabms-logo-bevel: #064e3b;
+  --cabms-logo-shield: #092e49;
+  --cabms-logo-title: #092e49;
+  --cabms-logo-tagline: #1e293b;
+  --cabms-logo-accent: #0284c7;
+  --cabms-logo-lens: #ffffff;
+}
+
+[data-appearance="high_visibility_dark"] {
+  --cabms-canvas: #000000;
+  --cabms-surface: #0a0f1d;
+  --cabms-surface-subtle: #131b2e;
+  --cabms-text-primary: #ffffff;
+  --cabms-text-secondary: #cbd5e1;
+  --cabms-border-base: #64748b;
+  --cabms-border-focus: #38bdf8;
+
+  --cabms-badge-completed-bg: #064e3b;
+  --cabms-badge-completed-text: #ffffff;
+  --cabms-badge-completed-border: #10b981;
+
+  --cabms-badge-warning-bg: #fbbf24;
+  --cabms-badge-warning-text: #020617;
+  --cabms-badge-warning-border: #f59e0b;
+
+  --cabms-badge-danger-bg: #7f1d1d;
+  --cabms-badge-danger-text: #ffffff;
+  --cabms-badge-danger-border: #ef4444;
+
+  --cabms-badge-info-bg: #0c4a6e;
+  --cabms-badge-info-text: #ffffff;
+  --cabms-badge-info-border: #38bdf8;
+
+  --cabms-badge-purple-bg: #581c87;
+  --cabms-badge-purple-text: #ffffff;
+  --cabms-badge-purple-border: #c084fc;
+
+  --cabms-accent-danger: #f87171;
+  --cabms-accent-info: #38bdf8;
+  --cabms-accent-purple: #d8b4fe;
+  --cabms-accent-success: #34d399;
+  --cabms-accent-warning: #fbbf24;
+
+  /* Brand Logos */
+  --cabms-logo-panel: #7dd3fc;
+  --cabms-logo-solar: #86efac;
+  --cabms-logo-cell: #ffffff;
+  --cabms-logo-grad-top: #34d399;
+  --cabms-logo-grad-mid: #6ee7b7;
+  --cabms-logo-grad-bot: #4ade80;
+  --cabms-logo-frame: #6ee7b7;
+  --cabms-logo-secondary: #f1f5f9;
+  --cabms-logo-circuit: #6ee7b7;
+  --cabms-logo-bevel: #064e3b;
+  --cabms-logo-shield: #7dd3fc;
+  --cabms-logo-title: #ffffff;
+  --cabms-logo-tagline: #e2e8f0;
+  --cabms-logo-accent: #38bdf8;
+  --cabms-logo-lens: #000000;
+}
+
+
+/* Orthogonal Company Branding Tokens & Multi-Business Identity Presets */
+:root,
+[data-branding="neutral"] {
+  --cabms-branding-mode: 'neutral';
+}
+
+[data-branding="company"] {
+  --cabms-branding-mode: 'company';
+}
+
+/* Per-panel company identity tokens */
+[data-company-panel="solarcell"],
+[data-company-panel="solar_cell"] {
+  --cabms-brand-primary: #ffae14;
+  --cabms-brand-accent: #fbbf24;
+  --cabms-brand-border: #ffae14;
+}
+
+[data-company-panel="smart_home"],
+[data-company-panel="smarthome"] {
+  --cabms-brand-primary: #0284c7;
+  --cabms-brand-accent: #38bdf8;
+  --cabms-brand-border: #0284c7;
+}
+
+[data-company-panel="cctv"],
+[data-company-panel="gold_coast_cctv"] {
+  --cabms-brand-primary: #059669;
+  --cabms-brand-accent: #34d399;
+  --cabms-brand-border: #059669;
+}
+
+/* Subtle brand accent border for cross-company panels when company branding is active */
+[data-branding="company"] .cabms-company-surface:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]) {
+  border-left: 3px solid #ffae14;
+}
+[data-branding="company"] .cabms-company-surface:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
+  border-left: 3px solid #0284c7;
+}
+[data-branding="company"] .cabms-company-surface:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
+  border-left: 3px solid #059669;
+}
+
+/* DARK + COMPANY BRANDED: SOLARCELL PTY LTD (ORANGE #ffae14 THEME) */
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"]:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"] :is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"]) [data-branding="company"]:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]) {
+  --cabms-surface: #1a1107;
+  --cabms-surface-subtle: #291a0b;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #fde68a;
+  --cabms-border-base: #ffae14;
+  --cabms-border-focus: #ffae14;
+  --cabms-brand-primary: #ffae14;
+  --cabms-brand-hover: #ffc14d;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #ffae14;
+  --cabms-signoff-text: #020617;
+}
+
+/* DARK + COMPANY BRANDED: GOLD COAST CCTV (SECURITY CYAN/TEAL THEME) */
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"]:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"] :is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"]) [data-branding="company"]:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
+  --cabms-surface: #071f33;
+  --cabms-surface-subtle: #092942;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #a5f3fc;
+  --cabms-border-base: #0ba3ad;
+  --cabms-border-focus: #22d3ee;
+  --cabms-brand-primary: #22d3ee;
+  --cabms-brand-hover: #67e8f9;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #38bdf8;
+  --cabms-signoff-text: #020617;
+}
+
+/* DARK + COMPANY BRANDED: GOLD COAST SMART HOME SOLUTIONS (AUTOMATION EMERALD THEME) */
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"]:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"])[data-branding="company"] :is([data-company-panel="smart_home"], [data-company-panel="smarthome"]),
+:is([data-appearance="default_dark"], [data-appearance="high_visibility_dark"]) [data-branding="company"]:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
+  --cabms-surface: #071f15;
+  --cabms-surface-subtle: #0c3322;
+  --cabms-text-primary: #f8fafc;
+  --cabms-text-secondary: #bbf7d0;
+  --cabms-border-base: #3dae49;
+  --cabms-border-focus: #4be196;
+  --cabms-brand-primary: #4be196;
+  --cabms-brand-hover: #86efac;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #34d399;
+  --cabms-signoff-text: #020617;
+}
+
+/* LIGHT + COMPANY BRANDED: SOLARCELL PTY LTD (ORANGE #ffae14 THEME) */
+[data-appearance="high_visibility_light"][data-branding="company"]:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]),
+[data-appearance="high_visibility_light"][data-branding="company"] :is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]),
+[data-appearance="high_visibility_light"] [data-branding="company"]:is([data-company-panel="solarcell"], [data-company-panel="solar_cell"]) {
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #fffbeb;
+  --cabms-text-primary: #451a03;
+  --cabms-text-secondary: #78350f;
+  --cabms-border-base: #b45309;
+  --cabms-border-focus: #92400e;
+  --cabms-brand-primary: #ffae14;
+  --cabms-brand-hover: #f59e0b;
+  --cabms-brand-text: #020617;
+  --cabms-signoff-bg: #ffae14;
+  --cabms-signoff-text: #020617;
+}
+
+/* LIGHT + COMPANY BRANDED: GOLD COAST CCTV (SECURITY CYAN/TEAL THEME) */
+[data-appearance="high_visibility_light"][data-branding="company"]:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]),
+[data-appearance="high_visibility_light"][data-branding="company"] :is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]),
+[data-appearance="high_visibility_light"] [data-branding="company"]:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #ecfeff;
+  --cabms-text-primary: #092e49;
+  --cabms-text-secondary: #164e63;
+  --cabms-border-base: #0e7490;
+  --cabms-border-focus: #092e49;
+  --cabms-brand-primary: #155e75;
+  --cabms-brand-hover: #164e63;
+  --cabms-brand-text: #ffffff;
+  --cabms-signoff-bg: #22d3ee;
+  --cabms-signoff-text: #020617;
+}
+
+/* LIGHT + COMPANY BRANDED: GOLD COAST SMART HOME SOLUTIONS (AUTOMATION EMERALD THEME) */
+[data-appearance="high_visibility_light"][data-branding="company"]:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]),
+[data-appearance="high_visibility_light"][data-branding="company"] :is([data-company-panel="smart_home"], [data-company-panel="smarthome"]),
+[data-appearance="high_visibility_light"] [data-branding="company"]:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
+  --cabms-surface: #ffffff;
+  --cabms-surface-subtle: #ecfdf5;
+  --cabms-text-primary: #124024;
+  --cabms-text-secondary: #14532d;
+  --cabms-border-base: #065f46;
+  --cabms-border-focus: #124024;
+  --cabms-brand-primary: #065f46;
+  --cabms-brand-hover: #124024;
+  --cabms-brand-text: #ffffff;
+  --cabms-signoff-bg: #34d399;
+  --cabms-signoff-text: #020617;
+}
+
+/* High-visibility OLED Dark preserves clean contrast without heavy wash */
+[data-appearance="high_visibility_dark"][data-branding="company"] .cabms-company-surface {
+  background-color: var(--cabms-surface);
+}
+
+/* Universal semantic styling helpers */
+.cabms-app-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--cabms-canvas);
+  color: var(--cabms-text-primary);
+  display: flex;
+  flex-direction: column;
+}
+
+.cabms-footer {
+  background-color: var(--cabms-surface);
+  border-top: 1px solid var(--cabms-border-base);
+  color: var(--cabms-text-secondary);
+  padding: 1rem;
+  text-align: center;
+  font-size: 0.75rem;
+}
+
+@layer components {
+  .cabms-card {
+    background-color: var(--cabms-surface);
+    color: var(--cabms-text-primary);
+    border: 1px solid var(--cabms-border-base);
+    border-radius: 0.75rem;
+  }
+
+  .cabms-card-subtle {
+    background-color: var(--cabms-surface-subtle);
+    color: var(--cabms-text-primary);
+    border: 1px solid var(--cabms-border-base);
+    border-radius: 0.5rem;
+  }
+
+  .cabms-surface {
+    background-color: var(--cabms-surface);
+    color: var(--cabms-text-primary);
+  }
+
+  .cabms-surface-subtle {
+    background-color: var(--cabms-surface-subtle);
+    color: var(--cabms-text-primary);
+  }
+
+  .cabms-border,
+  .divide-y.cabms-border > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--cabms-border-base);
+  }
+
+  .cabms-text-primary {
+    color: var(--cabms-text-primary);
+  }
+
+  .cabms-text-secondary {
+    color: var(--cabms-text-secondary);
+  }
+
+  .cabms-input {
+    background-color: var(--cabms-surface-subtle);
+    color: var(--cabms-text-primary);
+    border: 1px solid var(--cabms-border-base);
+  }
+  .cabms-input:focus-visible {
+    outline: 3px solid var(--cabms-border-focus);
+    outline-offset: 2px;
+  }
+
+  /* Semantic Badges */
+  .cabms-badge-completed {
+    background-color: var(--cabms-badge-completed-bg);
+    color: var(--cabms-badge-completed-text);
+    border: 1px solid var(--cabms-badge-completed-border);
+  }
+
+  .cabms-badge-warning {
+    background-color: var(--cabms-badge-warning-bg);
+    color: var(--cabms-badge-warning-text);
+    border: 1px solid var(--cabms-badge-warning-border);
+  }
+
+  .cabms-badge-danger {
+    background-color: var(--cabms-badge-danger-bg);
+    color: var(--cabms-badge-danger-text);
+    border: 1px solid var(--cabms-badge-danger-border);
+  }
+
+  .cabms-badge-info {
+    background-color: var(--cabms-badge-info-bg);
+    color: var(--cabms-badge-info-text);
+    border: 1px solid var(--cabms-badge-info-border);
+  }
+
+  /* Semantic Accents */
+  .cabms-accent-danger { color: var(--cabms-accent-danger); }
+  .cabms-accent-info { color: var(--cabms-accent-info); }
+  .cabms-accent-purple { color: var(--cabms-accent-purple); }
+  .cabms-accent-success { color: var(--cabms-accent-success); }
+  .cabms-accent-warning { color: var(--cabms-accent-warning); }
+}
+
+/* Light mode utility overrides for accessible contrast on light backgrounds */
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-sky-500, .text-sky-400, .text-sky-300):not(:is([class*="bg-slate-800"], [class*="bg-slate-900"], [class*="bg-slate-950"], [class*="bg-sky-950"], [class*="bg-sky-900"], .cabms-demo-controls) *):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]):not([class*="bg-sky-950"]):not([class*="bg-sky-900"]) {
+  color: var(--cabms-accent-info);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-amber-500, .text-amber-400, .text-amber-300):not(:is([class*="bg-slate-800"], [class*="bg-slate-900"], [class*="bg-slate-950"], [class*="bg-amber-950"], [class*="bg-amber-900"], .cabms-demo-controls) *):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]):not([class*="bg-amber-950"]):not([class*="bg-amber-900"]) {
+  color: var(--cabms-accent-warning);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-emerald-500, .text-emerald-400, .text-emerald-300):not(:is([class*="bg-slate-800"], [class*="bg-slate-900"], [class*="bg-slate-950"], [class*="bg-emerald-950"], [class*="bg-emerald-900"], .cabms-demo-controls) *):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]):not([class*="bg-emerald-950"]):not([class*="bg-emerald-900"]) {
+  color: var(--cabms-accent-success);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-red-500, .text-red-400, .text-red-300):not(:is([class*="bg-slate-800"], [class*="bg-slate-900"], [class*="bg-slate-950"], [class*="bg-red-950"], [class*="bg-red-900"], .cabms-demo-controls) *):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]):not([class*="bg-red-950"]):not([class*="bg-red-900"]) {
+  color: var(--cabms-accent-danger);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-purple-500, .text-purple-400, .text-purple-300):not(:is([class*="bg-slate-800"], [class*="bg-slate-900"], [class*="bg-slate-950"], [class*="bg-purple-950"], [class*="bg-purple-900"], .cabms-demo-controls) *):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]):not([class*="bg-purple-950"]):not([class*="bg-purple-900"]) {
+  color: var(--cabms-accent-purple);
+}
+
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace, .cabms-footer) :is(.text-slate-400, .text-slate-500):not(:is([class*="bg-slate-800"], [class*="bg-slate-900"], [class*="bg-slate-950"], .cabms-demo-controls) *):not([class*="bg-slate-800"]):not([class*="bg-slate-900"]):not([class*="bg-slate-950"]) {
+  color: var(--cabms-text-secondary);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-emerald-950, [class*="bg-emerald-950"]) {
+  background-color: var(--cabms-badge-completed-bg);
+  color: var(--cabms-badge-completed-text);
+  border-color: var(--cabms-badge-completed-border);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-amber-950, [class*="bg-amber-950"]) {
+  background-color: var(--cabms-badge-warning-bg);
+  color: var(--cabms-badge-warning-text);
+  border-color: var(--cabms-badge-warning-border);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-red-950, [class*="bg-red-950"]) {
+  background-color: var(--cabms-badge-danger-bg);
+  color: var(--cabms-badge-danger-text);
+  border-color: var(--cabms-badge-danger-border);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-sky-950, [class*="bg-sky-950"]) {
+  background-color: var(--cabms-badge-info-bg);
+  color: var(--cabms-badge-info-text);
+  border-color: var(--cabms-badge-info-border);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-purple-950, [class*="bg-purple-950"]),
+[data-appearance="high_visibility_light"] :is(.cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle, .cabms-workspace) :is(.bg-purple-950, [class*="bg-purple-950"]) {
+  background-color: var(--cabms-badge-purple-bg);
+  color: var(--cabms-badge-purple-text);
+  border-color: var(--cabms-badge-purple-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-sky-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-info-bg);
+  color: var(--cabms-badge-info-text);
+  border-color: var(--cabms-badge-info-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-purple-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-purple-bg);
+  color: var(--cabms-badge-purple-text);
+  border-color: var(--cabms-badge-purple-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-amber-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-warning-bg);
+  color: var(--cabms-badge-warning-text);
+  border-color: var(--cabms-badge-warning-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-red-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-danger-bg);
+  color: var(--cabms-badge-danger-text);
+  border-color: var(--cabms-badge-danger-border);
+}
+
+[data-appearance="high_visibility_light"] :is([class*="bg-emerald-900"]):not(.cabms-demo-controls *) {
+  background-color: var(--cabms-badge-completed-bg);
+  color: var(--cabms-badge-completed-text);
+  border-color: var(--cabms-badge-completed-border);
+}
+
+/* Accessible hover states for 900-level badges and buttons in high_visibility_light */
+[data-appearance="high_visibility_light"] :is([class*="bg-sky-900"], [class*="bg-purple-900"], [class*="bg-amber-900"], [class*="bg-red-900"], [class*="bg-emerald-900"]):hover:not(.cabms-demo-controls *) {
+  filter: brightness(0.96);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"], .bg-amber-900, [class*="bg-amber-900"]):is(.text-amber-400, .text-amber-300, .text-amber-200, .text-amber-100),
+[data-appearance="high_visibility_light"] :is(.bg-amber-950, [class*="bg-amber-950"], .bg-amber-900, [class*="bg-amber-900"]) :is(.text-amber-400, .text-amber-300, .text-amber-200, .text-amber-100) {
+  color: var(--cabms-badge-warning-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"], .bg-emerald-900, [class*="bg-emerald-900"]):is(.text-emerald-400, .text-emerald-300, .text-emerald-200, .text-emerald-100),
+[data-appearance="high_visibility_light"] :is(.bg-emerald-950, [class*="bg-emerald-950"], .bg-emerald-900, [class*="bg-emerald-900"]) :is(.text-emerald-400, .text-emerald-300, .text-emerald-200, .text-emerald-100) {
+  color: var(--cabms-badge-completed-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"], .bg-red-900, [class*="bg-red-900"]):is(.text-red-400, .text-red-300, .text-red-200, .text-red-100),
+[data-appearance="high_visibility_light"] :is(.bg-red-950, [class*="bg-red-950"], .bg-red-900, [class*="bg-red-900"]) :is(.text-red-400, .text-red-300, .text-red-200, .text-red-100) {
+  color: var(--cabms-badge-danger-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"], .bg-sky-900, [class*="bg-sky-900"]):is(.text-sky-400, .text-sky-300, .text-sky-200, .text-sky-100),
+[data-appearance="high_visibility_light"] :is(.bg-sky-950, [class*="bg-sky-950"], .bg-sky-900, [class*="bg-sky-900"]) :is(.text-sky-400, .text-sky-300, .text-sky-200, .text-sky-100) {
+  color: var(--cabms-badge-info-text);
+}
+
+[data-appearance="high_visibility_light"] :is(.bg-purple-950, [class*="bg-purple-950"], .bg-purple-900, [class*="bg-purple-900"]):is(.text-purple-400, .text-purple-300, .text-purple-200, .text-purple-100),
+[data-appearance="high_visibility_light"] :is(.bg-purple-950, [class*="bg-purple-950"], .bg-purple-900, [class*="bg-purple-900"]) :is(.text-purple-400, .text-purple-300, .text-purple-200, .text-purple-100) {
+  color: var(--cabms-badge-purple-text);
+}
+
 .cabms-shell {
   --cabms-sidebar-width: 16rem;
   display: grid;
@@ -8,7 +539,13 @@
   flex: 1;
   min-width: 0;
 }
-.cabms-workspace { display: flex; flex-direction: column; min-width: 0; }
+.cabms-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background-color: var(--cabms-canvas);
+  color: var(--cabms-text-primary);
+}
 .cabms-main { min-width: 0; scroll-margin-top: 5rem; }
 .cabms-sidebar { display: none; }
 .cabms-sr-only {
@@ -23,72 +560,228 @@
 .cabms-skip-link:focus { transform: translateY(0); }
 .cabms-topbar {
   position: sticky; top: 0; z-index: 40;
-  display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; min-width: 0;
-  padding: .75rem 1rem; background: #0f172a; border-bottom: 1px solid #475569;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; min-width: 0;
+  padding: .75rem 1.25rem; background: var(--cabms-surface); border-bottom: 1px solid var(--cabms-border-base); color: var(--cabms-text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
-.cabms-topbar-identity { flex: 1; min-width: 0; }
+.cabms-topbar-identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.cabms-topbar-divider {
+  display: block;
+  width: 1px;
+  height: 2.25rem;
+  background-color: var(--cabms-border-base);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
 .cabms-business-name { display: block; font-size: 1rem; font-weight: 800; overflow-wrap: anywhere; }
-.cabms-active-area { display: block; margin-top: .125rem; color: #cbd5e1; font-size: .75rem; }
-.cabms-brand-mark {
-  display: grid; place-items: center; flex: 0 0 2.25rem; min-height: 2.25rem;
-  border-radius: .5rem; color: white; font-weight: 800;
+.cabms-active-area {
+  display: block;
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--cabms-text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
-.cabms-persona { display: none; color: #bae6fd; font-size: .75rem; text-align: right; }
+.cabms-topbar-company-subtitle {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--cabms-text-secondary);
+  font-weight: 500;
+  line-height: 1.2;
+}
+.cabms-topbar-abn {
+  font-size: .625rem; font-weight: 600; padding: .0625rem .375rem;
+  border-radius: .25rem; background: var(--cabms-surface-subtle); color: var(--cabms-text-secondary); border: 1px solid var(--cabms-border-base);
+}
+.cabms-topbar-tagline {
+  margin-top: .125rem; font-size: .6875rem; color: var(--cabms-text-secondary); line-height: 1.2;
+}
+.cabms-topbar-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .375rem;
+  margin-top: .25rem; font-size: .6875rem; color: var(--cabms-text-secondary);
+}
+.cabms-topbar-meta strong { color: var(--cabms-text-primary); font-weight: 600; }
+.cabms-topbar-meta .cabms-myob-id { color: var(--cabms-border-focus); }
+.cabms-meta-sep { color: var(--cabms-border-base); }
+.cabms-brand-switcher-wrapper {
+  position: relative; display: inline-flex; align-items: center;
+}
+.cabms-brand-mark-btn {
+  display: inline-flex; align-items: center; gap: .375rem; padding: .25rem;
+  background: transparent; border: 1px solid transparent; border-radius: .75rem;
+  cursor: pointer;
+}
+.cabms-brand-mark-btn:hover,
+.cabms-brand-mark-btn[aria-expanded="true"] {
+  background: var(--cabms-surface-subtle); border-color: var(--cabms-border-base);
+}
+/* Font Awesome base styles (layered so Tailwind size utilities win) */
+@layer base {
+  .svg-inline--fa {
+    display: inline-block;
+    height: 1em;
+    overflow: visible;
+    vertical-align: -0.125em;
+  }
+}
+
+.cabms-brand-svg.cabms-topbar-logo {
+  display: inline-flex;
+  align-items: center;
+  height: 3.25rem;
+  max-height: 3.75rem;
+  width: auto;
+  max-width: 20rem;
+  transition: transform 0.15s ease;
+}
+.cabms-brand-svg {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  display: block;
+}
+.cabms-brand-mark-svg {
+  height: 2rem;
+  width: 2rem;
+  max-height: 2.25rem;
+  max-width: 2.25rem;
+}
+.cabms-brand-option-mark .cabms-brand-mark-svg {
+  height: 1.5rem;
+  width: 1.5rem;
+}
+
+.cabms-brand-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 2.75rem;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.65rem;
+  line-height: 1;
+  padding: 0.25rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+.cabms-brand-chevron {
+  width: .875rem; height: .875rem; color: var(--cabms-text-secondary);
+}
+.cabms-brand-mark-btn[aria-expanded="true"] .cabms-brand-chevron {
+  transform: rotate(180deg); color: var(--cabms-text-primary);
+}
+.cabms-brand-dropdown-menu {
+  position: absolute; top: calc(100% + .5rem); left: 0; z-index: 80;
+  min-width: 17rem; padding: .5rem; background: var(--cabms-surface); color: var(--cabms-text-primary);
+  border: 1px solid var(--cabms-border-base); border-radius: .75rem;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, .5), 0 8px 10px -6px rgba(0, 0, 0, .5);
+}
+.cabms-brand-dropdown-header {
+  padding: .375rem .625rem .5rem; font-size: .6875rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em; color: var(--cabms-text-secondary);
+  border-bottom: 1px solid var(--cabms-border-base); margin-bottom: .375rem;
+}
+.cabms-brand-dropdown-list {
+  display: flex; flex-direction: column; gap: .25rem;
+}
+.cabms-brand-dropdown-option {
+  display: flex; align-items: center; gap: .75rem; width: 100%;
+  padding: .5rem .625rem; border-radius: .5rem; background: transparent;
+  border: 1px solid transparent; color: var(--cabms-text-primary); text-align: left;
+  cursor: pointer;
+}
+.cabms-brand-dropdown-option:hover {
+  background: var(--cabms-surface-subtle); color: var(--cabms-text-primary);
+}
+.cabms-brand-dropdown-option.is-active {
+  background: var(--cabms-surface-subtle); border-color: var(--cabms-border-focus); color: var(--cabms-text-primary);
+}
+.cabms-brand-option-mark {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.45rem;
+  line-height: 1;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.cabms-brand-option-info {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+}
+.cabms-brand-option-name {
+  font-size: .8125rem; font-weight: 700; color: var(--cabms-text-primary);
+}
+.cabms-brand-option-abn {
+  font-size: .625rem; color: var(--cabms-text-secondary);
+}
+.cabms-brand-option-check {
+  width: 1rem; height: 1rem; color: var(--cabms-border-focus); flex-shrink: 0;
+}
+.cabms-persona { display: none; color: var(--cabms-border-focus); font-size: .75rem; text-align: right; }
 .cabms-icon-button {
   display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0;
   min-width: 2.75rem; min-height: 2.75rem; padding: .5rem;
-  border: 1px solid #64748b; border-radius: .5rem;
-  background: #1e293b; color: #f1f5f9; cursor: pointer;
+  border: 1px solid var(--cabms-border-base); border-radius: .5rem;
+  background: var(--cabms-surface-subtle); color: var(--cabms-text-primary); cursor: pointer;
 }
 .cabms-icon-button svg { width: 1.25rem; height: 1.25rem; }
-.cabms-icon-button:hover { background: #334155; }
+.cabms-icon-button:hover { background: var(--cabms-surface); }
 .cabms-sidebar-heading, .cabms-drawer-heading {
   display: flex; align-items: center; justify-content: space-between; gap: .5rem;
   padding: 1rem; flex-shrink: 0;
 }
-.cabms-sidebar-wordmark { font-size: 1rem; font-weight: 800; }
-.cabms-sidebar-wordmark span { display: block; color: #cbd5e1; font-size: .6875rem; font-weight: 400; }
+.cabms-sidebar-wordmark { font-size: 1rem; font-weight: 800; color: var(--cabms-text-primary); }
+.cabms-sidebar-wordmark span { display: block; color: var(--cabms-text-secondary); font-size: .6875rem; font-weight: 400; }
 .cabms-nav-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: .5rem; }
 .cabms-nav-section + .cabms-nav-section { margin-top: 1rem; }
-.cabms-nav-section-title { margin: .25rem .75rem .5rem; color: #cbd5e1; font-size: .625rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.cabms-nav-section-title { margin: .25rem .75rem .5rem; color: var(--cabms-text-secondary); font-size: .625rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .cabms-nav-link {
   position: relative; display: flex; align-items: center; gap: .75rem;
   width: 100%; min-height: 2.75rem; margin-bottom: .25rem; padding: .625rem .75rem;
   border: 1px solid transparent; border-radius: .5rem;
-  background: transparent; color: #e2e8f0; text-align: left; cursor: pointer;
+  background: transparent; color: var(--cabms-text-primary); text-align: left; cursor: pointer;
 }
-.cabms-nav-link:hover { background: #1e293b; }
-.cabms-nav-link[aria-current="page"] { background: #1e293b; border-color: #94a3b8; color: #fde68a; }
+.cabms-nav-link:hover { background: var(--cabms-surface-subtle); }
+.cabms-nav-link[aria-current="page"] { background: var(--cabms-surface-subtle); border-color: var(--cabms-border-base); color: var(--cabms-border-focus); }
 .cabms-nav-icon { width: 1.125rem; height: 1.125rem; flex-shrink: 0; }
 .cabms-nav-label { flex: 1; min-width: 0; font-size: .75rem; font-weight: 600; overflow-wrap: anywhere; }
-.cabms-nav-badge { border-radius: 1rem; padding: .125rem .375rem; color: #0f172a; background: #fbbf24; font-size: .625rem; font-weight: 800; }
-.cabms-sidebar-disclosure { padding: 1rem; color: #cbd5e1; border-top: 1px solid #475569; font-size: .625rem; flex-shrink: 0; }
-.cabms-nav-tooltip { position: fixed; z-index: 70; transform: translateY(-50%); max-width: 18rem; padding: .5rem .75rem; border: 1px solid #94a3b8; border-radius: .5rem; background: #0f172a; color: #f8fafc; font-size: .75rem; pointer-events: none; }
-.cabms-notification { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 1rem; background: #082f49; border-bottom: 1px solid #38bdf8; color: #e0f2fe; font-size: .75rem; }
+.cabms-nav-badge { border-radius: 1rem; padding: .125rem .375rem; color: var(--cabms-badge-warning-text); background: var(--cabms-badge-warning-bg); font-size: .625rem; font-weight: 800; }
+.cabms-sidebar-disclosure { padding: 1rem; color: var(--cabms-text-secondary); border-top: 1px solid var(--cabms-border-base); font-size: .625rem; flex-shrink: 0; }
+.cabms-nav-tooltip { position: fixed; z-index: 70; transform: translateY(-50%); max-width: 18rem; padding: .5rem .75rem; border: 1px solid var(--cabms-border-base); border-radius: .5rem; background: var(--cabms-surface); color: var(--cabms-text-primary); font-size: .75rem; pointer-events: none; }
+.cabms-notification { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .75rem 1rem; background: var(--cabms-surface-subtle); border-bottom: 1px solid var(--cabms-border-focus); color: var(--cabms-text-primary); font-size: .75rem; }
 .cabms-notification span { min-width: 0; overflow-wrap: anywhere; }
 .cabms-notification button { min-height: 2.75rem; padding: .5rem; flex-shrink: 0; font-weight: 700; text-decoration: underline; cursor: pointer; }
-.cabms-notification[data-tone="error"] { background: #450a0a; border-color: #f87171; color: #fee2e2; }
-.cabms-notification[data-tone="warning"] { background: #451a03; border-color: #fbbf24; color: #fef3c7; }
-.cabms-notification[data-tone="success"] { background: #022c22; border-color: #34d399; color: #d1fae5; }
+.cabms-notification[data-tone="error"] { background: var(--cabms-badge-danger-bg); border-color: var(--cabms-badge-danger-border); color: var(--cabms-badge-danger-text); }
+.cabms-notification[data-tone="warning"] { background: var(--cabms-badge-warning-bg); border-color: var(--cabms-badge-warning-border); color: var(--cabms-badge-warning-text); }
+.cabms-notification[data-tone="success"] { background: var(--cabms-badge-completed-bg); border-color: var(--cabms-badge-completed-border); color: var(--cabms-badge-completed-text); }
 .cabms-drawer-layer { position: fixed; inset: 0; z-index: 100; }
 .cabms-drawer-backdrop { position: absolute; inset: 0; background: rgb(2 6 23 / .75); }
 .cabms-mobile-drawer {
   position: relative; display: flex; flex-direction: column;
   width: min(20rem, calc(100% - 2rem)); height: 100%; height: 100dvh;
   padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);
-  background: #0f172a; color: #f1f5f9; border-right: 1px solid #64748b;
+  background: var(--cabms-surface); color: var(--cabms-text-primary); border-right: 1px solid var(--cabms-border-base);
   box-shadow: 1rem 0 3rem rgb(0 0 0 / .3);
 }
-.cabms-drawer-heading h2 { min-width: 0; overflow-wrap: anywhere; font-size: 1rem; font-weight: 800; }
-.cabms-drawer-identity { padding: 0 1rem .75rem; overflow-wrap: anywhere; font-size: .875rem; font-weight: 700; }
-.cabms-drawer-identity span { color: #cbd5e1; font-size: .75rem; font-weight: 400; }
+.cabms-drawer-heading h2 { min-width: 0; overflow-wrap: anywhere; font-size: 1rem; font-weight: 800; color: var(--cabms-text-primary); }
+.cabms-drawer-identity { padding: 0 1rem .75rem; overflow-wrap: anywhere; font-size: .875rem; font-weight: 700; color: var(--cabms-text-primary); }
+.cabms-drawer-identity span { color: var(--cabms-text-secondary); font-size: .75rem; font-weight: 400; }
 .cabms-shell :is(button, a, select, input, textarea):focus-visible,
 .cabms-drawer-layer :is(button, a):focus-visible,
 .cabms-demo-controls :is(button, select, summary):focus-visible {
-  outline: 3px solid #38bdf8; outline-offset: 3px;
+  outline: 3px solid var(--cabms-border-focus);
+  outline-offset: 3px;
 }
 .cabms-demo-controls { min-width: 0; }
-.cabms-demo-controls > summary { cursor: pointer; padding: .75rem; color: #e2e8f0; background: #0f172a; font-size: .75rem; font-weight: 600; }
+.cabms-demo-controls > summary { cursor: pointer; padding: .75rem; color: var(--cabms-text-primary); background: var(--cabms-surface); font-size: .75rem; font-weight: 600; }
 .cabms-demo-controls select { min-width: 0; max-width: 100%; }
 .cabms-demo-controls .cabms-control-select { width: 100%; min-width: 0; }
 .cabms-demo-controls .cabms-clock { overflow-wrap: anywhere; }
@@ -99,20 +792,33 @@
 @media (min-width: 1024px) {
   .cabms-shell { grid-template-columns: var(--cabms-sidebar-width) minmax(0, 1fr); }
   .cabms-shell[data-sidebar-collapsed="true"] { --cabms-sidebar-width: 4.5rem; }
-  .cabms-sidebar { display: flex; position: sticky; top: 0; align-self: start; flex-direction: column; height: 100vh; height: 100dvh; background: #111827; color: #f1f5f9; border-right: 1px solid #475569; min-width: 0; }
+  .cabms-sidebar { display: flex; position: sticky; top: 0; align-self: start; flex-direction: column; height: 100vh; height: 100dvh; background: var(--cabms-surface); color: var(--cabms-text-primary); border-right: 1px solid var(--cabms-border-base); min-width: 0; }
   .cabms-shell[data-sidebar-collapsed="true"] .cabms-sidebar-heading { justify-content: center; padding: 1rem .5rem; }
   .cabms-shell[data-sidebar-collapsed="true"] .cabms-nav-link { justify-content: center; padding: .625rem .5rem; }
   .cabms-shell[data-sidebar-collapsed="true"] .cabms-nav-badge { position: absolute; right: 0; top: 0; padding: 0 .25rem; }
   .cabms-mobile-toggle { display: none; }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .cabms-icon-button, .cabms-nav-link { transition: background-color .15s ease, border-color .15s ease; }
+  .cabms-icon-button, .cabms-nav-link, .cabms-brand-mark-btn, .cabms-brand-dropdown-option { transition: background-color .15s ease, border-color .15s ease; }
+  .cabms-brand-chevron { transition: transform .15s ease; }
 }
 @media (forced-colors: active) {
-  .cabms-sidebar, .cabms-topbar, .cabms-mobile-drawer, .cabms-nav-tooltip, .cabms-notification, .cabms-demo-controls > summary { background: Canvas; color: CanvasText; border-color: CanvasText; }
-  .cabms-icon-button, .cabms-nav-link { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
+  .cabms-sidebar, .cabms-topbar, .cabms-mobile-drawer, .cabms-nav-tooltip, .cabms-notification, .cabms-demo-controls > summary,
+  .cabms-card, .cabms-card-subtle, .cabms-surface, .cabms-surface-subtle {
+    background: Canvas; color: CanvasText; border-color: CanvasText;
+  }
+  .cabms-icon-button, .cabms-nav-link, .cabms-brand-mark-btn, .cabms-brand-dropdown-option, .cabms-input {
+    background: ButtonFace; color: ButtonText; border-color: ButtonText;
+  }
+  .cabms-brand-dropdown-option[aria-pressed="true"] { outline: 2px solid Highlight; outline-offset: -2px; }
   .cabms-nav-link[aria-current="page"] { outline: 2px solid Highlight; outline-offset: -3px; }
-  .cabms-nav-badge { background: Highlight; color: HighlightText; }
-  .cabms-nav-section-title, .cabms-sidebar-disclosure, .cabms-active-area, .cabms-persona, .cabms-drawer-identity span { color: CanvasText; }
-  .cabms-shell :focus-visible, .cabms-drawer-layer :focus-visible, .cabms-demo-controls :focus-visible { outline-color: Highlight; }
+  .cabms-nav-badge, .cabms-badge-completed, .cabms-badge-warning, .cabms-badge-danger, .cabms-badge-info {
+    background: Highlight; color: HighlightText; border-color: Highlight;
+  }
+  .cabms-nav-section-title, .cabms-sidebar-disclosure, .cabms-active-area, .cabms-persona, .cabms-drawer-identity span, .cabms-topbar-abn, .cabms-topbar-tagline, .cabms-topbar-meta, .cabms-topbar-meta strong, .cabms-topbar-meta .cabms-myob-id, .cabms-text-primary, .cabms-text-secondary, .cabms-accent-danger, .cabms-accent-info, .cabms-accent-success, .cabms-accent-warning {
+    color: CanvasText;
+  }
+  .cabms-shell :focus-visible, .cabms-drawer-layer :focus-visible, .cabms-demo-controls :focus-visible {
+    outline-color: Highlight;
+  }
 }

@@ -5,8 +5,15 @@ import {
   businessCalendarDate,
   businessWeekBounds,
   formatBusinessTime,
+  formatBusinessCalendarDate,
   isInBusinessWeek,
   serializeBusinessInstant,
+  isBusinessDay,
+  addBusinessDays,
+  calculateQuoteFollowUpDates,
+  calculateQuoteExpiration,
+  BRISBANE_EKKA_2026,
+  GOLD_COAST_SHOW_2026,
 } from '../src/utils/businessTime.ts';
 
 test('Business time is identical under Brisbane and Kolkata host timezones, including midnight', () => {
@@ -62,4 +69,164 @@ test('Business clock advancement and serialized event instants are explicit Bris
   }
   assert.throws(() => advanceBusinessClock('2026-11-02T09:00:00', 1), /valid timestamp/i);
   assert.throws(() => advanceBusinessClock(start, Number.NaN), /finite hour/i);
+});
+
+const expectedAU = (iso: string, options: Intl.DateTimeFormatOptions) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-AU', {
+    ...options,
+    timeZone: 'Australia/Brisbane',
+  }).format(Date.UTC(y, m - 1, d, 12, 0, 0));
+};
+
+test('FC-13: formatBusinessCalendarDate renders identical calendar dates under UTC, Brisbane, Kolkata, and New York host timezones', () => {
+  const previous = process.env.TZ;
+  try {
+    for (const timezone of ['UTC', 'Australia/Brisbane', 'Asia/Kolkata', 'America/New_York']) {
+      process.env.TZ = timezone;
+      const shortOct23 = formatBusinessCalendarDate('2026-10-23', { weekday: 'short', day: 'numeric', month: 'short' });
+      assert.equal(shortOct23, expectedAU('2026-10-23', { weekday: 'short', day: 'numeric', month: 'short' }), `Short Oct 23 under ${timezone}`);
+
+      const longOct23 = formatBusinessCalendarDate('2026-10-23', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      assert.equal(longOct23, expectedAU('2026-10-23', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }), `Long Oct 23 under ${timezone}`);
+      assert.ok(longOct23.includes('23') && longOct23.includes('October') && longOct23.includes('2026') && longOct23.includes('Friday'), `Long Oct 23 components under ${timezone}`);
+
+      // Month/Year boundaries
+      assert.equal(formatBusinessCalendarDate('2026-12-31', { weekday: 'short', day: 'numeric', month: 'short' }), expectedAU('2026-12-31', { weekday: 'short', day: 'numeric', month: 'short' }));
+      assert.equal(formatBusinessCalendarDate('2027-01-01', { weekday: 'short', day: 'numeric', month: 'short' }), expectedAU('2027-01-01', { weekday: 'short', day: 'numeric', month: 'short' }));
+      assert.equal(formatBusinessCalendarDate('2026-02-28', { day: 'numeric', month: 'short' }), expectedAU('2026-02-28', { day: 'numeric', month: 'short' }));
+
+      // Invalid inputs
+      assert.equal(formatBusinessCalendarDate('2026-02-29'), 'Invalid date');
+      assert.equal(formatBusinessCalendarDate('invalid-date'), 'Invalid date');
+      assert.equal(formatBusinessCalendarDate(''), 'Invalid date');
+      assert.equal(formatBusinessCalendarDate(null as any), 'Invalid date');
+    }
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+test('FC-13: formatBusinessCalendarDate strictly enforces Australia/Brisbane timezone even if caller options specify a different timeZone', () => {
+  const expectedShortOct23 = expectedAU('2026-10-23', { weekday: 'short', day: 'numeric', month: 'short' });
+
+  const resultOverrideNY = formatBusinessCalendarDate('2026-10-23', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  } as any);
+  assert.equal(resultOverrideNY, expectedShortOct23, 'Forced Australia/Brisbane despite caller timeZone override');
+
+  const resultOverrideHNL = formatBusinessCalendarDate('2026-10-23', {
+    timeZone: 'Pacific/Honolulu',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  } as any);
+  assert.equal(resultOverrideHNL, expectedShortOct23, 'Forced Australia/Brisbane despite Honolulu override');
+
+  const resultOverrideUTC = formatBusinessCalendarDate('2026-10-23', {
+    timeZone: 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  } as any);
+  assert.equal(resultOverrideUTC, expectedShortOct23, 'Forced Australia/Brisbane despite UTC override');
+});
+
+test('Regional holidays: Brisbane Ekka (12 Aug) vs Gold Coast Show (28 Aug)', () => {
+  // Brisbane Ekka: holiday in Brisbane, business day in Gold Coast
+  assert.equal(isBusinessDay(BRISBANE_EKKA_2026, 'brisbane'), false, 'Brisbane Ekka is holiday in Brisbane');
+  assert.equal(isBusinessDay(BRISBANE_EKKA_2026, 'gold_coast'), true, 'Brisbane Ekka is normal business day on Gold Coast');
+
+  // Gold Coast Show: holiday in Gold Coast, business day in Brisbane
+  assert.equal(isBusinessDay(GOLD_COAST_SHOW_2026, 'gold_coast'), false, 'Gold Coast Show is holiday on Gold Coast');
+  assert.equal(isBusinessDay(GOLD_COAST_SHOW_2026, 'brisbane'), true, 'Gold Coast Show is normal business day in Brisbane');
+
+  // Statewide holiday: Boxing Day Observed (28 Dec 2026) is holiday in both
+  assert.equal(isBusinessDay('2026-12-28', 'brisbane'), false, '28 Dec 2026 is holiday in Brisbane');
+  assert.equal(isBusinessDay('2026-12-28', 'gold_coast'), false, '28 Dec 2026 is holiday on Gold Coast');
+
+  // 2027 Calendar: Full Public Holiday Coverage
+  assert.equal(isBusinessDay('2027-01-01', 'brisbane'), false, '1 Jan 2027 is holiday');
+  assert.equal(isBusinessDay('2027-01-26', 'brisbane'), false, '26 Jan 2027 is holiday');
+  assert.equal(isBusinessDay('2027-03-26', 'brisbane'), false, 'Good Friday 2027 is holiday');
+  assert.equal(isBusinessDay('2027-03-29', 'brisbane'), false, 'Easter Monday 2027 is holiday');
+  assert.equal(isBusinessDay('2027-04-26', 'brisbane'), false, 'Anzac Day Observed 2027 is holiday');
+  assert.equal(isBusinessDay('2027-05-03', 'brisbane'), false, 'Labour Day 2027 is holiday');
+
+  // 2028 Calendar: Full Public Holiday Coverage
+  assert.equal(isBusinessDay('2028-01-01', 'brisbane'), false, '1 Jan 2028 is Saturday holiday');
+  assert.equal(isBusinessDay('2028-01-03', 'brisbane'), false, '3 Jan 2028 is New Year Observed holiday');
+  assert.equal(isBusinessDay('2028-01-26', 'brisbane'), false, '26 Jan 2028 is Australia Day holiday');
+  assert.equal(isBusinessDay('2028-04-14', 'brisbane'), false, 'Good Friday 2028 is holiday');
+  assert.equal(isBusinessDay('2028-04-17', 'brisbane'), false, 'Easter Monday 2028 is holiday');
+  assert.equal(isBusinessDay('2028-05-01', 'brisbane'), false, 'Labour Day 2028 is holiday');
+  assert.equal(isBusinessDay('2028-10-02', 'brisbane'), false, 'King\'s Birthday 2028 is holiday');
+
+  // Weekends are never business days
+  assert.equal(isBusinessDay('2026-11-07', 'brisbane'), false, 'Saturday is not business day');
+  assert.equal(isBusinessDay('2026-11-08', 'brisbane'), false, 'Sunday is not business day');
+  assert.equal(isBusinessDay('2026-11-09', 'brisbane'), true, 'Monday is business day');
+});
+
+test('addBusinessDays correctly skips weekends and regional public holidays', () => {
+  // Start Monday 2026-11-02 -> +3 business days should be Thursday 2026-11-05
+  assert.equal(addBusinessDays('2026-11-02', 3, 'brisbane'), '2026-11-05');
+
+  // Start Thursday 2026-11-05 -> +2 business days should skip Fri/Sat/Sun -> Mon 2026-11-09
+  assert.equal(addBusinessDays('2026-11-05', 2, 'brisbane'), '2026-11-09');
+
+  // Over Ekka week in Brisbane (Mon 10 Aug to Thu 13 Aug):
+  // 2026-08-10 (Mon) + 3 business days: Tue (day 1), Wed is Ekka (skipped in BNE), Thu (day 2), Fri (day 3) -> 2026-08-14
+  assert.equal(addBusinessDays('2026-08-10', 3, 'brisbane'), '2026-08-14');
+  // On Gold Coast, Wed is not a holiday -> Wed (day 2), Thu (day 3) -> 2026-08-13
+  assert.equal(addBusinessDays('2026-08-10', 3, 'gold_coast'), '2026-08-13');
+
+  // Over Easter 2027 (Wed 24 March + 3 business days -> skips Good Friday & Easter Mon -> Wed 31 March)
+  assert.equal(addBusinessDays('2027-03-24', 3, 'brisbane'), '2027-03-31');
+
+  // Malformed / impossible dates throw RangeError instead of hanging
+  assert.throws(() => addBusinessDays('', 3), RangeError);
+  assert.throws(() => addBusinessDays('not-a-date', 3), RangeError);
+  assert.throws(() => addBusinessDays('2026-02-31', 3), RangeError);
+
+  // Padded holiday dates are normalized and recognized as holidays
+  assert.equal(isBusinessDay(' 2026-04-03 ', 'brisbane'), false, 'Padded Good Friday is detected as holiday');
+
+  // Unsupported years (> 2028 or < 2026) throw RangeError to prevent unpopulated holiday miscalculations
+  assert.throws(() => isBusinessDay('2029-12-25', 'brisbane'), RangeError);
+  assert.throws(() => addBusinessDays('2029-12-20', 3, 'brisbane'), RangeError);
+  assert.throws(() => isBusinessDay('2025-12-25', 'brisbane'), RangeError);
+  assert.throws(() => addBusinessDays('2025-12-20', 3, 'brisbane'), RangeError);
+});
+
+test('calculateQuoteFollowUpDates computes Stage 1 (3 business days), Stage 2 (7 business days), and 14 calendar day expiry', () => {
+  const issuedAt = '2026-11-02T09:00:00+10:00'; // Monday
+  const dates = calculateQuoteFollowUpDates(issuedAt, 'brisbane');
+  assert.equal(dates.stage1Date, '2026-11-05', 'Stage 1 @ 3 business days');
+  assert.equal(dates.stage2Date, '2026-11-11', 'Stage 2 @ 7 business days');
+  assert.equal(dates.expiresAtDate, '2026-11-16', 'Expires at 14 calendar days');
+
+  const expiryInstant = calculateQuoteExpiration(issuedAt);
+  assert.equal(expiryInstant, '2026-11-16T09:00:00.000+10:00');
+});
+
+test('Cross-year boundary: quote issued late December 2027 correctly advances into January 2028', () => {
+  // Quote issued Friday 2027-12-24
+  // 2027-12-25 (Sat), 2027-12-26 (Sun), 2027-12-27 (Mon - Christmas Observed), 2027-12-28 (Tue - Boxing Day Observed)
+  // Day 1: Wed 2027-12-29
+  // Day 2: Thu 2027-12-30
+  // Day 3: Fri 2027-12-31 (Stage 1)
+  // 2028-01-01 (Sat), 2028-01-02 (Sun), 2028-01-03 (Mon - New Year's Day Observed)
+  // Day 4: Tue 2028-01-04
+  // Day 5: Wed 2028-01-05
+  // Day 6: Thu 2028-01-06
+  // Day 7: Fri 2028-01-07 (Stage 2)
+  const issuedAt = '2027-12-24T09:00:00+10:00';
+  const dates = calculateQuoteFollowUpDates(issuedAt, 'brisbane');
+  assert.equal(dates.stage1Date, '2027-12-31', 'Stage 1 @ 3 business days ends in 2027');
+  assert.equal(dates.stage2Date, '2028-01-06', 'Stage 2 @ 7 business days safely precedes expiration on last business day');
+  assert.equal(dates.expiresAtDate, '2028-01-07', '14 calendar days expires on 2028-01-07');
 });

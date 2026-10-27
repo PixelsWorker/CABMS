@@ -1,0 +1,445 @@
+[
+  {
+    "id": "JOB-2026-101",
+    "brandId": "solarcell",
+    "customerId": "CUSTOMER-DEMO-001",
+    "title": "10kW Solar PV Inverter & Safety Audit",
+    "jobType": "Commercial Solar PV Installation",
+    "jobTypeVersion": "v4.2",
+    "siteAddress": "[Fictional] 42 Orchid Avenue, Surfers Paradise QLD 4217",
+    "siteContact": "John Citizen",
+    "sitePhone": "0400 000 001",
+    "description": "Documentation-required visit with JSA and smoke-alarm inspection. Initially missing JSA sign-off to demonstrate completion failure and subsequent success.",
+    "status": "IN_PROGRESS",
+    "appointmentStatus": "SCHEDULED",
+    "assignedTechId": "TECH-001",
+    "assignedTechName": "Dave Miller",
+    "scheduledDate": "2026-11-02",
+    "scheduledTime": "09:00",
+    "estimatedDurationHours": 3,
+    "isDirectToInvoice": false,
+    "formsRequired": [
+      "JSA",
+      "SMOKE_ALARM"
+    ],
+    "attachedSampleIds": [
+      "ATT-002",
+      "ATT-004"
+    ],
+    "quote": {
+      "id": "QUOTE-2026-042",
+      "jobId": "JOB-2026-101",
+      "customerId": "CUSTOMER-DEMO-001",
+      "brandId": "solarcell",
+      "externalMyobRef": "MYOB-Q-88204",
+      "title": "Solar PV Array Inspection & Smoke Safety Verification",
+      "subtotal": 580,
+      "gst": 58,
+      "total": 638,
+      "lineItems": [
+        {
+          "id": "LI-1",
+          "description": "Comprehensive Rooftop Solar Inverter & Array Electrical Testing",
+          "quantity": 1,
+          "unitPrice": 380,
+          "total": 380
+        },
+        {
+          "id": "LI-2",
+          "description": "Photoelectric Interconnected Smoke Alarm Compliance Audit (4 units)",
+          "quantity": 4,
+          "unitPrice": 50,
+          "total": 200
+        }
+      ],
+      "termsVersion": "v2.4 - Oct 2026",
+      "termsContentSnapshot": "CABMS Standard Service Terms v2.4: Service performed subject to standard trade warranties and access conditions.",
+      "frozenIssuerSnapshot": "Solarcell Technologies Pty Ltd (Fictional Placeholder) • ABN 12 345 678 901",
+      "acceptanceStatus": "ACCEPTED",
+      "linkScenario": "valid",
+      "acceptedAt": "2026-10-28 14:22",
+      "acceptedByName": "John Citizen",
+      "issuedAt": "2026-10-27T10:00:00+10:00",
+      "expiresAt": "2026-11-10T10:00:00+10:00",
+      "followUps": [],
+      "acceptanceHistory": [
+        {
+          "timestamp": "2026-10-27 10:00",
+          "action": "Quote Generated & Synced to MYOB Business",
+          "actor": "Office Staff (Emma Wilson)",
+          "notes": "External ref MYOB-Q-88204"
+        },
+        {
+          "timestamp": "2026-10-27 10:05",
+          "action": "Acceptance Link Sent via Email",
+          "actor": "Automated Service",
+          "notes": "Link scenario: valid"
+        },
+        {
+          "timestamp": "2026-10-28 14:22",
+          "action": "Quote Accepted by Customer Online",
+          "actor": "John Citizen",
+          "notes": "IP snapshot logged (Synthetic Demo)"
+        }
+      ]
+    },
+    "invoice": {
+      "id": "INV-2026-091",
+      "externalMyobRef": "MYOB-INV-77102",
+      "amount": 638,
+      "status": "SENT_TO_MYOB",
+      "issuedDate": "2026-11-02",
+      "dueDate": "2026-11-16",
+      "reconciliationRequired": false
+    },
+    "reviewRequest": {
+      "status": "NOT_SENT",
+      "reviewLink": "https://demo.google-reviews.invalid/solarcell-goldcoast",
+      "brandName": "Solarcell",
+      "channel": "EMAIL_SIMULATED",
+      "history": []
+    },
+    "reminders": [
+      {
+        "id": "REM-101-1",
+        "targetAppointmentTime": "2026-11-02 09:00",
+        "leadHours": 24,
+        "scheduledFor": "2026-11-01 09:00",
+        "type": "REMINDER_24HR",
+        "channel": "EMAIL_SIMULATED",
+        "suppressed": false,
+        "delivered": true,
+        "deliveredAt": "2026-11-01 09:00"
+      },
+      {
+        "id": "REM-101-2",
+        "targetAppointmentTime": "2026-11-02 09:00",
+        "leadHours": 2,
+        "scheduledFor": "2026-11-02 07:00",
+        "type": "REMINDER_2HR",
+        "channel": "EMAIL_SIMULATED",
+        "suppressed": false,
+        "delivered": true,
+        "deliveredAt": "2026-11-02 07:00"
+      }
+    ],
+    "unresolvedWarnings": [
+      "Provisional notice: Smoke alarm limits and expiry wording are provisional per unapproved source variants."
+    ],
+    "activityHistory": [
+      {
+        "timestamp": "2026-10-27 09:30",
+        "action": "Work order created & scheduled",
+        "actor": "Office Staff"
+      },
+      {
+        "timestamp": "2026-10-28 14:22",
+        "action": "Customer accepted quotation MYOB-Q-88204",
+        "actor": "John Citizen"
+      },
+      {
+        "timestamp": "2026-11-02 09:00",
+        "action": "Technician Dave Miller commenced work onsite",
+        "actor": "Tech: Dave Miller"
+      }
+    ]
+  },
+  {
+    "id": "JOB-2026-102",
+    "brandId": "smart_home",
+    "customerId": "CUSTOMER-DEMO-001",
+    "title": "Emergency Aircon Automation Inverter Reset",
+    "jobType": "Direct-to-Invoice Emergency Service",
+    "jobTypeVersion": "v1.0",
+    "siteAddress": "[Fictional] 42 Orchid Avenue, Surfers Paradise QLD 4217",
+    "siteContact": "John Citizen",
+    "sitePhone": "0400 000 001",
+    "description": "Direct-to-invoice emergency service call. Requires no quote and no compliance forms. Demonstrates the clean no-required-forms completion pathway.",
+    "status": "IN_PROGRESS",
+    "appointmentStatus": "SCHEDULED",
+    "assignedTechId": "TECH-001",
+    "assignedTechName": "Dave Miller",
+    "scheduledDate": "2026-11-02",
+    "scheduledTime": "13:00",
+    "estimatedDurationHours": 1.5,
+    "isDirectToInvoice": true,
+    "formsRequired": [],
+    "attachedSampleIds": [],
+    "invoice": {
+      "id": "INV-2026-092",
+      "externalMyobRef": "MYOB-INV-77103",
+      "amount": 220,
+      "status": "DRAFT",
+      "issuedDate": "2026-11-02",
+      "dueDate": "2026-11-09",
+      "reconciliationRequired": false
+    },
+    "reviewRequest": {
+      "status": "NOT_SENT",
+      "reviewLink": "https://demo.google-reviews.invalid/gc-smarthome",
+      "brandName": "Smart Home Solutions",
+      "channel": "EMAIL_SIMULATED",
+      "history": []
+    },
+    "reminders": [
+      {
+        "id": "REM-102-1",
+        "targetAppointmentTime": "2026-11-02 13:00",
+        "leadHours": 2,
+        "scheduledFor": "2026-11-02 11:00",
+        "type": "REMINDER_2HR",
+        "channel": "EMAIL_SIMULATED",
+        "suppressed": false,
+        "delivered": false
+      }
+    ],
+    "unresolvedWarnings": [
+      "Direct-to-invoice service: no compliance documentation required for operational completion."
+    ],
+    "activityHistory": [
+      {
+        "timestamp": "2026-11-01 16:00",
+        "action": "Emergency booking received and scheduled",
+        "actor": "Office Staff"
+      }
+    ]
+  },
+  {
+    "id": "JOB-2026-103",
+    "brandId": "solarcell",
+    "customerId": "CUSTOMER-DEMO-004",
+    "title": "3-Phase Inverter Replacement & Testing",
+    "jobType": "Commercial Solar PV Installation",
+    "jobTypeVersion": "v4.2",
+    "siteAddress": "[Fictional] 15 Monaco Street, Broadbeach Waters QLD 4218",
+    "siteContact": "Elena Rossi",
+    "sitePhone": "0400 000 004",
+    "description": "Electrical certificate example with missing Part B warning persistently displayed. Illustrates adherence to the source-extract boundary.",
+    "status": "SCHEDULED",
+    "appointmentStatus": "SCHEDULED",
+    "assignedTechId": "TECH-001",
+    "assignedTechName": "Dave Miller",
+    "scheduledDate": "2026-11-03",
+    "scheduledTime": "08:30",
+    "estimatedDurationHours": 4,
+    "isDirectToInvoice": false,
+    "formsRequired": [
+      "JSA",
+      "ELECTRICAL"
+    ],
+    "attachedSampleIds": [
+      "ATT-001"
+    ],
+    "quote": {
+      "id": "QUOTE-2026-043",
+      "jobId": "JOB-2026-103",
+      "customerId": "CUSTOMER-DEMO-004",
+      "brandId": "solarcell",
+      "externalMyobRef": "MYOB-Q-88205",
+      "title": "Commercial 3-Phase Inverter Replacement & Testing Package",
+      "subtotal": 1350,
+      "gst": 135,
+      "total": 1485,
+      "lineItems": [
+        {
+          "id": "LI-103-1",
+          "description": "Supply & Mount 3-Phase Commercial Solar Inverter",
+          "quantity": 1,
+          "unitPrice": 1100,
+          "total": 1100
+        },
+        {
+          "id": "LI-103-2",
+          "description": "Electrical Isolation, Polarity & RCD Commissioning",
+          "quantity": 1,
+          "unitPrice": 250,
+          "total": 250
+        }
+      ],
+      "termsVersion": "v2.4 - Oct 2026",
+      "termsContentSnapshot": "CABMS Standard Service Terms v2.4: Service performed subject to standard trade warranties and access conditions.",
+      "frozenIssuerSnapshot": "Solarcell Technologies Pty Ltd (Fictional Placeholder) • ABN 12 345 678 901",
+      "acceptanceStatus": "SENT",
+      "linkScenario": "valid",
+      "issuedAt": "2026-11-01T14:00:00+10:00",
+      "expiresAt": "2026-11-15T14:00:00+10:00",
+      "followUps": [
+        {
+          "id": "QFU-2026-043-1",
+          "quoteId": "QUOTE-2026-043",
+          "stage": "STAGE_1_COURTESY",
+          "scheduledDate": "2026-11-04",
+          "status": "SCHEDULED",
+          "channel": "EMAIL_SIMULATED"
+        },
+        {
+          "id": "QFU-2026-043-2",
+          "quoteId": "QUOTE-2026-043",
+          "stage": "STAGE_2_EXPIRY",
+          "scheduledDate": "2026-11-10",
+          "status": "SCHEDULED",
+          "channel": "EMAIL_SIMULATED"
+        }
+      ],
+      "acceptanceHistory": [
+        {
+          "timestamp": "2026-11-01 14:00",
+          "action": "Quote Generated & Synced to MYOB Business",
+          "actor": "Office Staff (Emma Wilson)"
+        },
+        {
+          "timestamp": "2026-11-01 14:05",
+          "action": "Acceptance Link Sent via Email",
+          "actor": "Automated Service"
+        }
+      ]
+    },
+    "invoice": {
+      "id": "INV-2026-093",
+      "externalMyobRef": "MYOB-INV-77104",
+      "amount": 1485,
+      "status": "DRAFT",
+      "issuedDate": "2026-11-03",
+      "dueDate": "2026-11-17",
+      "reconciliationRequired": false
+    },
+    "reviewRequest": {
+      "status": "NOT_SENT",
+      "reviewLink": "https://demo.google-reviews.invalid/solarcell-goldcoast",
+      "brandName": "Solarcell",
+      "channel": "EMAIL_SIMULATED",
+      "history": []
+    },
+    "reminders": [
+      {
+        "id": "REM-103-1",
+        "targetAppointmentTime": "2026-11-03 08:30",
+        "leadHours": 24,
+        "scheduledFor": "2026-11-02 08:30",
+        "type": "REMINDER_24HR",
+        "channel": "EMAIL_SIMULATED",
+        "suppressed": false,
+        "delivered": true,
+        "deliveredAt": "2026-11-02 08:30"
+      }
+    ],
+    "unresolvedWarnings": [
+      "CRITICAL NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred."
+    ],
+    "activityHistory": [
+      {
+        "timestamp": "2026-10-30 11:00",
+        "action": "Quote MYOB-Q-88205 prepared and dispatched",
+        "actor": "Office Staff"
+      },
+      {
+        "timestamp": "2026-11-01 09:00",
+        "action": "Site scheduled for 03/11 with Dave Miller",
+        "actor": "Office Staff"
+      }
+    ]
+  },
+  {
+    "id": "JOB-2026-104",
+    "brandId": "cctv",
+    "customerId": "CUSTOMER-DEMO-003",
+    "title": "Warehouse Security Camera Cabling & Compliance Audit",
+    "jobType": "Enterprise CCTV & Cabling Inspection",
+    "jobTypeVersion": "v2.1",
+    "siteAddress": "[Fictional] 88 Distribution Court, Yatala QLD 4207",
+    "siteContact": "Marcus Vance",
+    "sitePhone": "0400 000 003",
+    "description": "Cabling inspection with TCA1 installation certificate and TCA2 non-compliance report. Placed in NEEDS_REVISIT state due to high-risk electrical/cabling defect.",
+    "status": "NEEDS_REVISIT",
+    "appointmentStatus": "SCHEDULED",
+    "assignedTechId": "TECH-002",
+    "assignedTechName": "Alex Taylor",
+    "scheduledDate": "2026-11-02",
+    "scheduledTime": "10:00",
+    "estimatedDurationHours": 3.5,
+    "isDirectToInvoice": false,
+    "formsRequired": [
+      "JSA",
+      "TCA1",
+      "TCA2"
+    ],
+    "attachedSampleIds": [
+      "ATT-003"
+    ],
+    "invoice": {
+      "id": "INV-2026-094",
+      "externalMyobRef": "MYOB-INV-77105",
+      "amount": 880,
+      "status": "DRAFT",
+      "issuedDate": "2026-11-02",
+      "dueDate": "2026-11-16",
+      "reconciliationRequired": false
+    },
+    "reviewRequest": {
+      "status": "NOT_SENT",
+      "reviewLink": "https://demo.google-reviews.invalid/gc-cctv",
+      "brandName": "Gold Coast CCTV",
+      "channel": "EMAIL_SIMULATED",
+      "history": []
+    },
+    "reminders": [],
+    "unresolvedWarnings": [
+      "NON-COMPLIANCE RECORDED: TCA2 defect requires remediation quotation before operational sign-off.",
+      "Notice: Cabler registration and expiry details remain synthetic demo placeholders."
+    ],
+    "activityHistory": [
+      {
+        "timestamp": "2026-11-02 10:45",
+        "action": "TCA2 non-compliance logged by Alex Taylor",
+        "actor": "Tech: Alex Taylor"
+      },
+      {
+        "timestamp": "2026-11-02 11:00",
+        "action": "Operational status set to NEEDS_REVISIT",
+        "actor": "System"
+      }
+    ]
+  },
+  {
+    "id": "JOB-2026-105",
+    "brandId": "smart_home",
+    "customerId": "CUSTOMER-DEMO-002",
+    "title": "Strata Complex Lighting Automation Upgrade",
+    "jobType": "Residential Smoke Safety Audit",
+    "jobTypeVersion": "v3.0",
+    "siteAddress": "[Fictional] Suite 4, 180 Hedges Avenue, Mermaid Beach QLD 4218",
+    "siteContact": "Sarah Jenkins",
+    "sitePhone": "0400 000 002",
+    "description": "Unassigned job used specifically to demonstrate Technician denied-access and permission boundaries.",
+    "status": "NEW",
+    "appointmentStatus": "UNSCHEDULED",
+    "assignedTechId": null,
+    "assignedTechName": null,
+    "scheduledDate": null,
+    "scheduledTime": null,
+    "estimatedDurationHours": 4,
+    "isDirectToInvoice": false,
+    "formsRequired": [
+      "JSA"
+    ],
+    "attachedSampleIds": [],
+    "reviewRequest": {
+      "status": "NOT_SENT",
+      "reviewLink": "https://demo.google-reviews.invalid/gc-smarthome",
+      "brandName": "Smart Home Solutions",
+      "channel": "EMAIL_SIMULATED",
+      "history": []
+    },
+    "reminders": [],
+    "unresolvedWarnings": [
+      "Unassigned job: Technician cannot view detail view under strict role boundaries."
+    ],
+    "activityHistory": [
+      {
+        "timestamp": "2026-11-01 10:00",
+        "action": "New unassigned work order created",
+        "actor": "Office Staff"
+      }
+    ]
+  }
+]

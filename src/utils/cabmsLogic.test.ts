@@ -95,7 +95,7 @@ test('validateJobCompletion: direct-to-invoice job completes without forms', () 
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: 'https://demo.reviews.invalid/smart-home',
-      brandName: 'Gold Coast Smart Home Solutions',
+      brandName: 'Smart Home Solutions',
       channel: 'EMAIL_SIMULATED',
       history: [],
     },
@@ -272,7 +272,7 @@ test('validateJobCompletion: documentation job fails when JSA is not signed', ()
   });
 
   assert.equal(result.canComplete, false);
-  assert.ok(result.missingRequirements.includes('JSA / Risk Assessment requires technician DEMO sign-off'));
+  assert.ok(result.missingRequirements.includes('JSA / Risk Assessment requires technician Preview sign-off'));
 });
 
 test('validateJobCompletion: succeeds once JSA is signed off', () => {
@@ -511,6 +511,101 @@ test('checkCustomerDuplicate: detects duplicate by email or phone', () => {
     customers
   );
   assert.equal(dupCheck3.isDuplicate, false);
+  const untrimmedExisting: Customer[] = [
+    {
+      id: 'CUSTOMER-DEMO-002',
+      myobCustomerId: 'MYOB-DEMO-002',
+      name: 'Untrimmed Email Customer',
+      contactPerson: 'Untrimmed Email Customer',
+      email: '  untrimmed@example.invalid  ',
+      phone: '0422 333 444',
+      billingAddress: '100 Gold Coast Hwy',
+      brandAffiliations: ['solarcell'],
+      syncStatus: 'SYNCED',
+      createdAt: '2026-01-01',
+    },
+  ];
+  const untrimmedDupCheck = checkCustomerDuplicate(
+    { email: 'UNTRIMMED@example.invalid', phone: '', name: 'Different Name' },
+    untrimmedExisting
+  );
+  assert.equal(untrimmedDupCheck.isDuplicate, true);
+  assert.equal(untrimmedDupCheck.field, 'email');
+});
+
+test('FC-15: checkCustomerDuplicate ignores demo placeholder 0400 000 000 and empty phone, preserving real duplicates', () => {
+  const customers: Customer[] = [
+    {
+      id: 'CUSTOMER-DEMO-001',
+      myobCustomerId: 'MYOB-DEMO-001',
+      name: 'John Citizen',
+      contactPerson: 'John Citizen',
+      email: 'john.citizen@example.invalid',
+      phone: '0400 000 000', // Uses fallback demo placeholder
+      billingAddress: '42 Orchid Avenue, Surfers Paradise QLD 4217',
+      brandAffiliations: ['solarcell'],
+      syncStatus: 'SYNCED',
+      createdAt: '2026-10-01',
+    },
+    {
+      id: 'CUSTOMER-DEMO-002',
+      myobCustomerId: 'MYOB-DEMO-002',
+      name: 'Sarah Smith',
+      contactPerson: 'Sarah Smith',
+      email: 'sarah.smith@example.invalid',
+      phone: '0412 345 678', // Real distinct mobile
+      billingAddress: '10 Marine Parade, Southport QLD 4215',
+      brandAffiliations: ['smart_home'],
+      syncStatus: 'SYNCED',
+      createdAt: '2026-10-02',
+    },
+  ];
+
+  // 1. New customer with empty phone and different email/name: NOT a duplicate
+  const emptyPhoneCheck = checkCustomerDuplicate(
+    { name: 'Alice Walker', email: 'alice.walker@example.invalid', phone: '' },
+    customers
+  );
+  assert.equal(emptyPhoneCheck.isDuplicate, false, 'Empty phone should not trigger duplicate');
+
+  // 2. New customer explicitly using placeholder '0400 000 000': NOT a duplicate
+  const placeholderCheck = checkCustomerDuplicate(
+    { name: 'Bob Roberts', email: 'bob.roberts@example.invalid', phone: '0400 000 000' },
+    customers
+  );
+  assert.equal(placeholderCheck.isDuplicate, false, 'Placeholder phone 0400 000 000 should not trigger duplicate');
+
+  // 3. New customer with normalized '0400000000': NOT a duplicate
+  const normPlaceholderCheck = checkCustomerDuplicate(
+    { name: 'Charlie Clark', email: 'charlie@example.invalid', phone: '0400000000' },
+    customers
+  );
+  assert.equal(normPlaceholderCheck.isDuplicate, false, 'Normalized placeholder phone should not trigger duplicate');
+
+  // 4. Real phone match (different formatting: (04) 1234 5678 vs 0412 345 678): IS a duplicate
+  const realPhoneCheck = checkCustomerDuplicate(
+    { name: 'Different Name', email: 'different@example.invalid', phone: '(04) 1234 5678' },
+    customers
+  );
+  assert.equal(realPhoneCheck.isDuplicate, true, 'Genuine matching phone should trigger duplicate');
+  assert.equal(realPhoneCheck.field, 'phone');
+  assert.equal(realPhoneCheck.matchedCustomer?.id, 'CUSTOMER-DEMO-002');
+
+  // 5. Genuine email match: IS a duplicate
+  const realEmailCheck = checkCustomerDuplicate(
+    { name: 'Another Name', email: 'sarah.smith@example.invalid', phone: '0499 888 777' },
+    customers
+  );
+  assert.equal(realEmailCheck.isDuplicate, true, 'Matching email should trigger duplicate');
+  assert.equal(realEmailCheck.field, 'email');
+
+  // 6. Genuine name match: IS a duplicate
+  const realNameCheck = checkCustomerDuplicate(
+    { name: 'Sarah Smith', email: 'new.sarah@example.invalid', phone: '0499 888 777' },
+    customers
+  );
+  assert.equal(realNameCheck.isDuplicate, true, 'Matching name should trigger duplicate');
+  assert.equal(realNameCheck.field, 'name');
 });
 
 test('verifyPersonaAccess: technician and office staff boundaries (G00-001)', () => {

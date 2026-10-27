@@ -7,6 +7,8 @@ import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
 import { ComplianceFormsView } from '../src/views/ComplianceFormsView.tsx';
 import { JobsView } from '../src/views/JobsView.tsx';
 import { WebsiteInboxView } from '../src/views/WebsiteInboxView.tsx';
+import { MockDataAdapter, getMockDataAdapter, ValidationError, NotFoundError } from '../src/services/index.ts';
+import { INITIAL_BUSINESS_CLOCK, serializeBusinessInstant, calculateQuoteExpiration, calculateQuoteFollowUpDates } from '../src/utils/businessTime.ts';
 import {
   Customer,
   Job,
@@ -22,6 +24,7 @@ import {
   DraftBusinessProfile,
 } from '../src/types/cabms.ts';
 import {
+  CompletionValidationResult,
   validateJobCompletion,
   deduplicateReviewRequest,
   suppressOldReminders,
@@ -37,8 +40,12 @@ import {
 } from '../src/utils/cabmsLogic.ts';
 import {
   INITIAL_BRANDS,
+  INITIAL_ELECTRICAL_CERT,
   INITIAL_JOBS,
   INITIAL_JOB_TYPES,
+  INITIAL_SMOKE_ALARM_CERT,
+  INITIAL_TCA1_CERT,
+  INITIAL_TCA2_CERT,
   INITIAL_TEMPLATES,
 } from '../src/data/seedData.ts';
 
@@ -51,6 +58,512 @@ Object.defineProperty(globalThis, 'document', { value: dom.window.document, writ
 Object.defineProperty(globalThis, 'HTMLDivElement', { value: dom.window.HTMLDivElement, writable: true, configurable: true });
 Object.defineProperty(globalThis, 'HTMLElement', { value: dom.window.HTMLElement, writable: true, configurable: true });
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+test('LAYER 6: PR16 detached baselines protect exported seeds and provider reset', async () => {
+  const adapter = getMockDataAdapter();
+  await adapter.resetToBaseline();
+  const baseline = adapter.getInitialBaseline();
+  const seeds = structuredClone({ jobs: INITIAL_JOBS, brands: INITIAL_BRANDS, types: INITIAL_JOB_TYPES, templates: INITIAL_TEMPLATES });
+  const other = adapter.getInitialBaseline();
+  for (const field of Object.keys(baseline) as (keyof typeof baseline)[]) {
+    assert.notStrictEqual(baseline[field], other[field], `${field} is detached`);
+  }
+  baseline.jobs[0].activityHistory.push({ action: 'Returned snapshot only', actor: 'Test', timestamp: INITIAL_BUSINESS_CLOCK });
+  baseline.complianceForms.jsa['JOB-2026-101'].signedByTechName = 'Returned snapshot only';
+  assert.deepEqual(adapter.getInitialBaseline(), other);
+  try {
+    await adapter.updateJobStatus('JOB-2026-101', 'IN_PROGRESS');
+    await adapter.updateBrandOperationalSettings('solarcell', { contact_phone: 'Adapter only' });
+    await adapter.publishTemplateVersion(other.templates.find(t => t.activeStatus !== 'PUBLISHED')?.id || other.templates[0].id);
+    await adapter.prepareQuoteForJob('JOB-2026-103', 'Adapter only', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 1, total: 1 }]);
+    assert.deepEqual({ jobs: INITIAL_JOBS, brands: INITIAL_BRANDS, types: INITIAL_JOB_TYPES, templates: INITIAL_TEMPLATES }, seeds);
+    await withMountedContext(async ctx => {
+      await act(async () => { ctx.updateJobStatus('JOB-2026-101', 'IN_PROGRESS'); ctx.resetDemo(); });
+      assert.deepEqual(ctx.jobs, seeds.jobs);
+      assert.deepEqual(ctx.brands, seeds.brands);
+    });
+    assert.deepEqual(adapter.getInitialBaseline(), other, 'provider reset restores adapter fixtures too');
+  } finally { await adapter.resetToBaseline(); }
+});
+
+test('LAYER 6: PR16 adapter job types reject unknown and cross-brand requests without partial conversion', async () => {
+  const adapter = new MockDataAdapter();
+  const before = adapter.getInitialBaseline();
+  const type = before.jobTypes.find(t => t.brandId === 'solarcell')!;
+  const payload = { brand_id: 'smart_home' as const, customer_id: before.customers[0].id, title: 'Synthetic type validation', job_type_id: type.id, site_address: 'Synthetic site', site_contact: 'Synthetic contact', site_phone: '0400000000', description: 'Fixture' };
+  await assert.rejects(adapter.createJob({ ...payload, job_type_id: 'UNKNOWN-TYPE' }), ValidationError);
+  await assert.rejects(adapter.createJob(payload), ValidationError);
+  assert.deepEqual(adapter.getInitialBaseline(), before);
+  const enquiry = before.enquiries[0];
+  await assert.rejects(adapter.convertEnquiry(enquiry.id, before.customers[0].id, 'UNKNOWN-TYPE'), ValidationError);
+  assert.deepEqual(adapter.getInitialBaseline(), before, 'failed conversion cannot mutate enquiry or jobs');
+  const job = await adapter.createJob({ ...payload, brand_id: 'solarcell' });
+  assert.equal(job.jobType, type.name);
+  assert.equal(job.jobTypeVersion, type.version);
+  assert.deepEqual(job.formsRequired, type.formsRequired);
+});
+
+test('LAYER 6: PR16 adapter terminal jobs reject every mutation and preserve dedicated reopening', async () => {
+  for (const status of ['COMPLETED', 'CANCELLED'] as const) {
+    const adapter = new MockDataAdapter();
+    await adapter.updateJobStatus('JOB-2026-101', status);
+    const before = adapter.getInitialBaseline();
+    for (const operation of [
+      () => adapter.updateJobStatus('JOB-2026-101', 'NEW'),
+      () => adapter.updateJobStatus('JOB-2026-101', status),
+      () => adapter.rescheduleJob('JOB-2026-101', '2026-11-20', '12:00'),
+      () => adapter.cancelWholeJob('JOB-2026-101', 'Rejected terminal cancellation'),
+      () => adapter.cancelJobAppointment('JOB-2026-101', 'Rejected terminal visit cancellation'),
+    ]) {
+      await assert.rejects(operation(), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), before);
+    }
+    if (status === 'CANCELLED') {
+      const reopened = await adapter.reopenCancelledJob('JOB-2026-101');
+      assert.ok(['NEW', 'SCHEDULED'].includes(reopened.status));
+      await adapter.rescheduleJob(reopened.id, '2026-11-20', '12:00');
+      await adapter.cancelWholeJob(reopened.id, 'Valid active cancellation');
+    } else {
+      await assert.rejects(adapter.reopenCancelledJob('JOB-2026-101'), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), before);
+    }
+  }
+});
+
+test('LAYER 6: PR16 context job guards preserve terminal jobs and allow only valid reopen transitions', async () => {
+  await withMountedContext(async ctx => {
+    const completedId = 'JOB-2026-101';
+    await act(async () => { ctx.updateJobStatus(completedId, 'IN_PROGRESS'); });
+    const completed = ctx.getAuthoritativeState().jobs.find(j => j.id === completedId)!;
+    // Install a terminal fixture after the public update detached it from shared seed data.
+    completed.status = 'COMPLETED';
+    const completedBefore = structuredClone(completed);
+    for (const operation of [
+      () => ctx.updateJobStatus(completedId, 'NEW'),
+      () => ctx.cancelWholeJob(completedId, 'Rejected completed-job cancellation'),
+      () => ctx.reopenCancelledJob(completedId),
+    ]) {
+      await act(async () => { operation(); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === completedId), completedBefore);
+      assert.equal(ctx.demoNotification?.type, 'error');
+    }
+
+    const cancelledId = 'JOB-2026-102';
+    await act(async () => { ctx.updateJobStatus(cancelledId, 'IN_PROGRESS'); });
+    const cancelled = ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId)!;
+    cancelled.status = 'CANCELLED';
+    const cancelledBefore = structuredClone(cancelled);
+    for (const operation of [
+      () => ctx.updateJobStatus(cancelledId, 'SCHEDULED'),
+      () => ctx.cancelWholeJob(cancelledId, 'Rejected repeated cancellation'),
+    ]) {
+      await act(async () => { operation(); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId), cancelledBefore);
+      assert.equal(ctx.demoNotification?.type, 'error');
+    }
+
+    await act(async () => { ctx.reopenCancelledJob(cancelledId); });
+    const reopened = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId)!);
+    assert.ok(reopened.status === 'NEW' || reopened.status === 'SCHEDULED');
+    assert.equal(reopened.activityHistory.length, cancelledBefore.activityHistory.length + 1);
+    await act(async () => { ctx.reopenCancelledJob(cancelledId); });
+    assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId), reopened);
+    assert.equal(ctx.demoNotification?.type, 'error');
+
+    await act(async () => { ctx.cancelWholeJob(cancelledId, 'Valid cancellation after reopening'); });
+    const cancelledAgain = ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId)!;
+    assert.equal(cancelledAgain.status, 'CANCELLED');
+    assert.ok(cancelledAgain.reminders.every(r => r.delivered || r.suppressed), 'dedicated cancellation suppresses pending reminders');
+
+    const beforeMissing = structuredClone(ctx.getAuthoritativeState().jobs);
+    for (const operation of [
+      () => ctx.updateJobStatus('MISSING-JOB', 'IN_PROGRESS'),
+      () => ctx.cancelWholeJob('MISSING-JOB', 'Missing fixture'),
+      () => ctx.reopenCancelledJob('MISSING-JOB'),
+    ]) {
+      await act(async () => { operation(); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs, beforeMissing);
+      assert.equal(ctx.demoNotification?.type, 'error');
+    }
+
+    const activeId = 'JOB-2026-103';
+    await act(async () => { ctx.updateJobStatus(activeId, 'IN_PROGRESS'); });
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === activeId)?.status, 'IN_PROGRESS');
+
+    const directTransitionId = 'JOB-2026-104';
+    await act(async () => { ctx.updateJobStatus(directTransitionId, 'IN_PROGRESS'); });
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId)?.status, 'IN_PROGRESS');
+    for (const terminalStatus of ['COMPLETED', 'CANCELLED'] as const) {
+      const before = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId)!);
+      await act(async () => { ctx.updateJobStatus(directTransitionId, terminalStatus); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId), before);
+      assert.equal(ctx.demoNotification?.type, 'error');
+      assert.match(ctx.demoNotification?.message || '', new RegExp(terminalStatus === 'COMPLETED' ? 'validated completion' : 'whole-job cancellation'));
+    }
+
+    let completionAttempt!: CompletionValidationResult;
+    await act(async () => { completionAttempt = ctx.attemptCompleteJob(directTransitionId); });
+    assert.equal(
+      ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId)?.status === 'COMPLETED',
+      completionAttempt.canComplete,
+      'only the validated completion workflow can move the job to COMPLETED'
+    );
+  });
+});
+
+test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps use one injected clock read', async () => {
+  let clock = '2027-12-24T09:00:00+10:00';
+  let reads = 0;
+  const adapter = new MockDataAdapter(() => { reads++; return clock; });
+  const items = [{ id: '1', description: 'Fraction A', quantity: 1, unitPrice: 0.1, total: 0.1 }, { id: '2', description: 'Fraction B', quantity: 1, unitPrice: 0.2, total: 0.2 }];
+  for (const brand of ['solarcell', 'smart_home', 'cctv'] as const) {
+    const job = (await adapter.getJobs({ brandId: brand }))[0];
+    const beforeReads = reads;
+    const quote = await adapter.prepareQuoteForJob(job.id, 'Deterministic quote', items);
+    assert.equal(reads, beforeReads + 1);
+    assert.deepEqual([quote.subtotal, quote.gst, quote.total], [0.3, 0.03, 0.33]);
+    assert.equal(quote.issuedAt, serializeBusinessInstant(clock));
+    assert.equal(quote.acceptanceHistory[0].timestamp, quote.issuedAt);
+    assert.equal(quote.expiresAt, calculateQuoteExpiration(clock));
+    const dates = calculateQuoteFollowUpDates(clock, adapter.getInitialBaseline().brands[brand].holidayRegion);
+    assert.deepEqual(quote.followUps?.map(f => f.scheduledDate), [dates.stage1Date, dates.stage2Date]);
+    assert.ok(quote.followUps?.every(f => f.quoteId === quote.id));
+  }
+  for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+    clock = '2027-12-26T10:30:00+10:00';
+    const operationAdapter = new MockDataAdapter(() => { reads++; return clock; });
+    await operationAdapter.prepareQuoteForJob('JOB-2026-103', 'Independent operation fixture', items);
+    const beforeReads = reads;
+    await operationAdapter[operation]('JOB-2026-103', 'Synthetic operation');
+    assert.equal(reads, beforeReads + 1);
+    assert.equal((await operationAdapter.getQuoteForJob('JOB-2026-103'))!.acceptanceHistory.at(-1)!.timestamp, serializeBusinessInstant(clock));
+  }
+  const before = adapter.getInitialBaseline();
+  for (const unsupported of ['2028-12-29T09:00:00+10:00', '2030-01-01T09:00:00+10:00']) {
+    clock = unsupported;
+    await assert.rejects(adapter.prepareQuoteForJob('JOB-2026-103', 'Unsupported', items), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+  const defaultQuote = await new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Default clock', items);
+  assert.equal(defaultQuote.issuedAt, serializeBusinessInstant(INITIAL_BUSINESS_CLOCK));
+});
+
+test('LAYER 6: PR16 adapter revoke/refuse enforce quote states and process follow-ups atomically', async () => {
+  const operationClock = '2027-12-26T10:30:00+10:00';
+  const makeAdapter = (status: Quote['acceptanceStatus']) => {
+    let clockReads = 0;
+    const adapter = new MockDataAdapter(() => { clockReads++; return operationClock; });
+    const jobs = adapter.getInitialBaseline().jobs;
+    const quote = jobs.find(j => j.id === 'JOB-2026-103')!.quote!;
+    quote.acceptanceStatus = status;
+    quote.expiresAt = '2027-12-26T10:30:00.001+10:00';
+    quote.followUps = [
+      { ...quote.followUps![0], id: `scheduled-${status}`, status: 'SCHEDULED' },
+      { ...quote.followUps![1], id: `sent-${status}`, status: 'SENT', sentAt: '2026-11-04T00:00:00+10:00' },
+    ];
+    Object.assign(adapter, { jobs });
+    return { adapter, reads: () => clockReads };
+  };
+
+  for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+    for (const validStatus of ['SENT', 'DRAFT'] as const) {
+      const { adapter, reads } = makeAdapter(validStatus);
+      const before = await adapter.getQuoteForJob('JOB-2026-103');
+      assert.ok(before);
+      const readsBefore = reads();
+      await adapter[operation]('JOB-2026-103', 'Independent quote operation');
+      const after = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+      assert.equal(reads(), readsBefore + 1, 'successful operation captures one clock value');
+      assert.equal(after.acceptanceStatus, 'REVOKED');
+      assert.equal(after.acceptanceHistory.length, before.acceptanceHistory.length + 1);
+      assert.equal(after.acceptanceHistory.at(-1)!.timestamp, serializeBusinessInstant(operationClock));
+      assert.deepEqual(after.followUps?.map(f => f.status), ['CANCELLED', 'SENT']);
+
+      const afterSuccess = adapter.getInitialBaseline();
+      const readsAfterSuccess = reads();
+      await assert.rejects(adapter[operation]('JOB-2026-103', 'Repeated terminal operation'), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), afterSuccess, 'repeated revoke/refusal leaves state and history unchanged');
+      assert.equal(reads(), readsAfterSuccess, 'rejected transition does not read the clock');
+    }
+
+    for (const terminalStatus of ['ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+      const { adapter, reads } = makeAdapter(terminalStatus);
+      const before = adapter.getInitialBaseline();
+      await assert.rejects(adapter[operation]('JOB-2026-103', 'Rejected terminal quote'), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), before, `${operation} preserves ${terminalStatus} quote and history`);
+      assert.equal(reads(), 0, 'rejected transition does not read the clock');
+    }
+  }
+});
+
+test('LAYER 6: adapter revoke/refuse enforce quote expiry at the exact timestamp', async () => {
+  const expiresAt = '2027-12-26T10:30:00.000+10:00';
+  const deltas = [-1, 0, 1] as const;
+
+  for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+    for (const status of ['SENT', 'DRAFT'] as const) {
+      for (const delta of deltas) {
+        const now = serializeBusinessInstant(Date.parse(expiresAt) + delta);
+        let clockReads = 0;
+        const adapter = new MockDataAdapter(() => { clockReads++; return now; });
+        const jobs = adapter.getInitialBaseline().jobs;
+        const quote = jobs.find(job => job.id === 'JOB-2026-103')!.quote!;
+        quote.acceptanceStatus = status;
+        quote.expiresAt = expiresAt;
+        quote.refusalReason = 'Existing refusal reason';
+        quote.followUps = [
+          { ...quote.followUps![0], id: 'scheduled-before-expiry', status: 'SCHEDULED' },
+          { ...quote.followUps![1], id: 'already-sent', status: 'SENT', sentAt: '2027-12-25T10:30:00.000+10:00' },
+        ];
+        Object.assign(adapter, { jobs });
+        const before = await adapter.getQuoteForJob('JOB-2026-103');
+        assert.ok(before);
+        const readsBefore = clockReads;
+
+        if (delta < 0) {
+          await adapter[operation]('JOB-2026-103', 'Expiry boundary fixture');
+          const after = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+          assert.equal(clockReads, readsBefore + 1, 'successful operation captures one deterministic timestamp');
+          assert.equal(after.acceptanceStatus, 'REVOKED');
+          assert.equal(after.acceptanceHistory.at(-1)!.timestamp, now);
+          assert.deepEqual(after.followUps?.map(followUp => followUp.status), ['CANCELLED', 'SENT']);
+          if (operation === 'revokeQuote') assert.equal(after.refusalReason, 'Existing refusal reason');
+          else assert.equal(after.refusalReason, 'Expiry boundary fixture');
+
+          const afterSuccess = await adapter.getQuoteForJob('JOB-2026-103');
+          await assert.rejects(adapter[operation]('JOB-2026-103', 'Repeated operation'), ValidationError);
+          assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), afterSuccess, 'repeated operation preserves complete quote');
+        } else {
+          await assert.rejects(adapter[operation]('JOB-2026-103', 'Rejected expired operation'), ValidationError);
+          assert.equal(clockReads, readsBefore + 1, 'expiry validation uses one captured clock value');
+          assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), before, 'rejected operation preserves quote, history, follow-ups and refusal reason');
+        }
+      }
+    }
+
+    for (const status of ['ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+      let clockReads = 0;
+      const adapter = new MockDataAdapter(() => { clockReads++; return '2027-12-26T10:29:59.999+10:00'; });
+      const jobs = adapter.getInitialBaseline().jobs;
+      const quote = jobs.find(job => job.id === 'JOB-2026-103')!.quote!;
+      quote.acceptanceStatus = status;
+      quote.expiresAt = expiresAt;
+      Object.assign(adapter, { jobs });
+      const before = await adapter.getQuoteForJob('JOB-2026-103');
+      await assert.rejects(adapter[operation]('JOB-2026-103', 'Rejected terminal quote'), ValidationError);
+      assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), before);
+      assert.equal(clockReads, 0, 'terminal-state validation occurs before reading the clock');
+    }
+
+    for (const status of ['SENT', 'DRAFT'] as const) {
+      const adapter = new MockDataAdapter(() => '2030-01-01T00:00:00.000+10:00');
+      const jobs = adapter.getInitialBaseline().jobs;
+      const quote = jobs.find(job => job.id === 'JOB-2026-103')!.quote!;
+      quote.acceptanceStatus = status;
+      quote.expiresAt = undefined;
+      Object.assign(adapter, { jobs });
+      assert.deepEqual(await adapter[operation]('JOB-2026-103', 'No-expiry quote'), {
+        success: true,
+        message: operation === 'revokeQuote' ? 'Quote revoked.' : 'Quote declined.',
+      });
+    }
+  }
+});
+
+test('LAYER 6: context revoke/refuse reject expired quotes without changing quote state', async () => {
+  await withMountedContext(async ctx => {
+    for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+      for (const status of ['SENT', 'DRAFT'] as const) {
+        for (const delta of [-1, 0, 1] as const) {
+          await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+          let quote!: Quote;
+          await act(async () => {
+            quote = ctx.prepareQuoteForJob('JOB-2026-101', 'Expiry boundary fixture', [
+              { id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 },
+            ]);
+          });
+          const expiry = quote.expiresAt!;
+          const job = ctx.getAuthoritativeState().jobs.find(item => item.id === 'JOB-2026-101')!;
+          job.quote!.acceptanceStatus = status;
+          job.quote!.refusalReason = 'Existing refusal reason';
+          job.quote!.followUps = [
+            { ...job.quote!.followUps![0], id: 'scheduled-before-expiry', status: 'SCHEDULED' },
+            { ...job.quote!.followUps![1], id: 'already-sent', status: 'SENT', sentAt: '2026-11-01T00:00:00.000+10:00' },
+          ];
+          const now = serializeBusinessInstant(Date.parse(expiry) + delta);
+          await act(async () => { ctx.setDemoClock(now); });
+          const before = structuredClone(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote!);
+          let result!: { success: boolean; message: string };
+          await act(async () => { result = ctx[operation](job.id, 'Expiry boundary fixture'); });
+          const after = ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote!;
+
+          if (delta < 0) {
+            assert.equal(result.success, true);
+            assert.equal(after.acceptanceStatus, 'REVOKED');
+            assert.equal(after.acceptanceHistory.at(-1)!.timestamp, now);
+            assert.deepEqual(after.followUps?.map(followUp => followUp.status), ['CANCELLED', 'SENT']);
+            assert.equal(after.refusalReason, 'Expiry boundary fixture');
+            const afterSuccess = structuredClone(after);
+            await act(async () => { result = ctx[operation](job.id, 'Repeated operation'); });
+            assert.equal(result.success, false);
+            assert.deepEqual(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote, afterSuccess);
+          } else {
+            assert.equal(result.success, false);
+            assert.match(result.message, /expired/i);
+            assert.equal(ctx.demoNotification?.type, 'error');
+            assert.deepEqual(after, before, 'rejected operation preserves complete quote state');
+          }
+        }
+      }
+
+      for (const status of ['ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+        await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+        await act(async () => {
+          ctx.prepareQuoteForJob('JOB-2026-101', 'Terminal quote fixture', [
+            { id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 },
+          ]);
+        });
+        const job = ctx.getAuthoritativeState().jobs.find(item => item.id === 'JOB-2026-101')!;
+        job.quote!.acceptanceStatus = status;
+        const before = structuredClone(job.quote!);
+        let result!: { success: boolean; message: string };
+        await act(async () => { result = ctx[operation](job.id, 'Rejected terminal quote'); });
+        assert.equal(result.success, false);
+        assert.deepEqual(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote, before);
+      }
+
+      for (const status of ['SENT', 'DRAFT'] as const) {
+        await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+        await act(async () => {
+          ctx.prepareQuoteForJob('JOB-2026-101', 'No-expiry quote fixture', [
+            { id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 },
+          ]);
+        });
+        const job = ctx.getAuthoritativeState().jobs.find(item => item.id === 'JOB-2026-101')!;
+        job.quote!.acceptanceStatus = status;
+        job.quote!.expiresAt = undefined;
+        const lateClock = serializeBusinessInstant(Date.parse(job.quote!.issuedAt!) + 30 * 24 * 60 * 60 * 1000);
+        await act(async () => { ctx.setDemoClock(lateClock); });
+        let result!: { success: boolean; message: string };
+        await act(async () => { result = ctx[operation](job.id, 'No-expiry quote'); });
+        assert.equal(result.success, true);
+        assert.equal(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote!.acceptanceStatus, 'REVOKED');
+      }
+    }
+  });
+});
+
+test('LAYER 6: PR16 adapter acceptance rejects every invalid scenario/state and elapsed expiry atomically', async () => {
+  let clock = INITIAL_BUSINESS_CLOCK;
+  let reads = 0;
+  const adapter = new MockDataAdapter(() => { reads++; return clock; });
+  const sent = await adapter.getQuoteForJob('JOB-2026-103');
+  assert.ok(sent);
+  const before = adapter.getInitialBaseline();
+  for (const scenario of ['invalid', 'expired', 'revoked', 'superseded', 'already_accepted', 'unknown']) {
+    await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-103', scenario), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+  for (const status of ['DRAFT', 'ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+    const seeded = new MockDataAdapter();
+    // Test-only fixture installation for states without an adapter transition API.
+    const jobs = seeded.getInitialBaseline().jobs;
+    jobs.find(j => j.id === 'JOB-2026-103')!.quote!.acceptanceStatus = status;
+    Object.assign(seeded, { jobs });
+    const snapshot = seeded.getInitialBaseline();
+    await assert.rejects(seeded.recordQuoteAcceptance('JOB-2026-103', 'valid'), ValidationError);
+    assert.deepEqual(seeded.getInitialBaseline(), snapshot);
+  }
+  for (const timestamp of [sent.expiresAt!, serializeBusinessInstant(Date.parse(sent.expiresAt!) + 1)]) {
+    clock = timestamp;
+    await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-103', 'valid'), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+  clock = serializeBusinessInstant(Date.parse(sent.expiresAt!) - 1);
+  const beforeReads = reads;
+  assert.deepEqual(await adapter.recordQuoteAcceptance('JOB-2026-103', 'valid'), { success: true, message: 'Quote accepted and recorded in preview.' });
+  assert.equal(reads, beforeReads + 1);
+  const accepted = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+  assert.equal(accepted.acceptanceHistory.length, sent.acceptanceHistory.length + 1);
+  assert.equal(accepted.acceptedAt, clock);
+  assert.equal(accepted.acceptanceHistory.at(-1)!.timestamp, clock);
+  assert.ok(accepted.followUps?.every(f => f.status === 'CANCELLED'));
+  await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-103', 'valid'), ValidationError);
+  assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), accepted);
+  await assert.rejects(adapter.recordQuoteAcceptance('MISSING', 'valid'), NotFoundError);
+  await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-102', 'valid'), NotFoundError);
+});
+
+test('LAYER 6: PR16 quote follow-up replay is independent of clock step size and idempotent at expiry', async () => {
+  const replay = async (hours: number[]) => {
+    let result!: Quote;
+    await withMountedContext(async ctx => {
+      await act(async () => { ctx.resetDemo(); });
+      await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Replay fixture', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+      for (const step of hours) await act(async () => { ctx.advanceClock(step); });
+      result = structuredClone(ctx.jobs.find(j => j.id === 'JOB-2026-101')!.quote!);
+      await act(async () => { ctx.advanceClock(0); ctx.advanceClock(24); });
+      assert.deepEqual(ctx.jobs.find(j => j.id === 'JOB-2026-101')!.quote, result, 'later/repeated advancement does not duplicate events');
+    });
+    return result;
+  };
+  const large = await replay([14 * 24]);
+  assert.deepEqual(large, await replay(Array(14).fill(24)));
+  assert.equal(large.acceptanceStatus, 'EXPIRED');
+  assert.ok(large.followUps?.every(f => f.status === 'SENT'));
+  assert.deepEqual(large.followUps?.map(f => f.sentAt), large.followUps?.map(f => serializeBusinessInstant(`${f.scheduledDate}T00:00:00+10:00`)));
+  assert.deepEqual(large.acceptanceHistory.slice(-3).map(h => h.timestamp), [...large.followUps!.map(f => f.sentAt!), large.expiresAt!]);
+  assert.deepEqual(large, await replay([20 * 24]), 'jump past expiry replays the same events');
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Isolated terminal fixtures', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+    const terminalQuotes = ctx.getAuthoritativeState().jobs.filter(j => j.quote).map(j => j.quote!);
+    // Install all states into job-owned fixture objects; no production testing seam is added.
+    const base = structuredClone(terminalQuotes[0]);
+    const states = ['DRAFT', 'ACCEPTED', 'REVOKED', 'SUPERSEDED', 'EXPIRED'] as const;
+    for (const status of states) {
+      const quote = structuredClone(base);
+      quote.acceptanceStatus = status;
+      quote.acceptanceHistory = [];
+      quote.followUps = [
+        { id: 'future', quoteId: quote.id, stage: 'STAGE_2_EXPIRY', scheduledDate: '2026-11-30', status: 'SCHEDULED', channel: 'EMAIL_SIMULATED' },
+        { id: 'due', quoteId: quote.id, stage: 'STAGE_1_COURTESY', scheduledDate: '2026-11-03', status: 'SCHEDULED', channel: 'EMAIL_SIMULATED' },
+      ];
+      ctx.getAuthoritativeState().jobs[0].quote = quote;
+      await act(async () => { ctx.setDemoClock(INITIAL_BUSINESS_CLOCK); });
+      await act(async () => { ctx.advanceClock(24); });
+      assert.ok(!ctx.jobs[0].quote!.acceptanceHistory.some(h => h.action.includes('follow-up email dispatched')), `${status} cannot dispatch before expiry`);
+      await act(async () => { ctx.advanceClock(20 * 24); });
+      const processed = ctx.jobs[0].quote!;
+      assert.ok(processed.followUps!.every(f => f.status === 'CANCELLED'));
+      assert.ok(!processed.acceptanceHistory.some(h => h.action.includes('follow-up email dispatched')));
+      assert.equal(processed.acceptanceStatus, status === 'DRAFT' ? 'EXPIRED' : status);
+    }
+  });
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Unsorted event fixture', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+    const quote = ctx.getAuthoritativeState().jobs[0].quote!;
+    quote.expiresAt = '2026-11-16T00:00:00+10:00';
+    const followUp = quote.followUps![0];
+    quote.followUps = [
+      { ...followUp, id: 'late', scheduledDate: '2026-11-10' },
+      { ...followUp, id: 'already-sent', scheduledDate: '2026-11-03', status: 'SENT', sentAt: '2026-11-03T00:00:00.000+10:00' },
+      { ...followUp, id: 'early', scheduledDate: '2026-11-05' },
+      { ...followUp, id: 'at-expiry', scheduledDate: '2026-11-16' },
+      { ...followUp, id: 'future', scheduledDate: '2026-11-30' },
+    ];
+    const oldHistory = structuredClone(quote.acceptanceHistory);
+    await act(async () => { ctx.advanceClock(20 * 24); });
+    const processed = ctx.jobs[0].quote!;
+    assert.deepEqual(processed.acceptanceHistory.slice(0, oldHistory.length), oldHistory);
+    assert.deepEqual(processed.acceptanceHistory.slice(oldHistory.length).map(h => h.timestamp), [
+      '2026-11-05T00:00:00.000+10:00', '2026-11-10T00:00:00.000+10:00', quote.expiresAt,
+    ]);
+    assert.deepEqual(processed.followUps?.map(f => f.status), ['SENT', 'SENT', 'SENT', 'CANCELLED', 'CANCELLED']);
+    assert.equal(processed.followUps![1].sentAt, '2026-11-03T00:00:00.000+10:00', 'processed event timestamp is preserved');
+  });
+});
 
 // Executable Mounted React Context Runner
 export async function withMountedContext(
@@ -538,6 +1051,7 @@ test('LAYER 6: Integration — Journey C: TCA2 defect generates separate audit r
 
   // 5. Real Context Action Integration: Two calls in the same tick without intervening render
   const realCtx = getMountedCabmsContext();
+  act(() => { realCtx.setPersona('super_admin'); });
   // Call real CabmsContext.officeReviewTca2 twice synchronously in same tick on seed job JOB-2026-104
   realCtx.officeReviewTca2('JOB-2026-104');
   realCtx.officeReviewTca2('JOB-2026-104');
@@ -694,16 +1208,18 @@ test('LAYER 6: Integration — Journey C-2: Unassigned work order creation defau
 // JOURNEY D: Historical Template Version Preservation
 // -------------------------------------------------------------
 test('LAYER 6: Integration — Journey D: Historical version preservation retains frozen snapshot', () => {
-  const template: TemplateSetting = {
-    ...INITIAL_TEMPLATES.find(t => t.type === 'TERMS')!,
-  };
+  const seedTerms = INITIAL_TEMPLATES.find(t => t.type === 'TERMS')!;
+  const baselineSeedVersion = seedTerms.currentVersion;
+  const baselineRevisionsCount = seedTerms.revisions.length;
+
+  const template: TemplateSetting = structuredClone(seedTerms);
 
   // Record 1 created with current version v2.4
   const record1Snapshot = {
     termsVersion: template.currentVersion,
     termsContent: template.content,
   };
-  assert.equal(record1Snapshot.termsVersion, 'v2.4');
+  assert.equal(record1Snapshot.termsVersion, baselineSeedVersion);
 
   // Admin updates template to draft v2.5 and publishes it
   const newPublishedVersion = 'v2.5';
@@ -719,11 +1235,16 @@ test('LAYER 6: Integration — Journey D: Historical version preservation retain
   });
 
   // Verify Record 1 still retains exact historical snapshot v2.4
-  assert.equal(record1Snapshot.termsVersion, 'v2.4');
+  assert.equal(record1Snapshot.termsVersion, baselineSeedVersion);
   assert.ok(!record1Snapshot.termsContent.includes('Clause 19'));
   // Verify template master has moved forward
   assert.equal(template.currentVersion, 'v2.5');
   assert.ok(template.content.includes('Clause 19'));
+
+  // FC-04: Verify shared template seed fixture remains unpolluted
+  assert.equal(seedTerms.currentVersion, baselineSeedVersion, 'shared template seed currentVersion remains unpolluted');
+  assert.equal(seedTerms.revisions.length, baselineRevisionsCount, 'shared template seed revisions array length remains unpolluted');
+  assert.ok(!seedTerms.revisions.some((r: any) => r.version === newPublishedVersion), 'shared template seed has no leaked revision');
 });
 
 // -------------------------------------------------------------
@@ -877,8 +1398,11 @@ test('LAYER 6: Integration — Journey F: Master template review gating enforces
 // JOURNEY G: Review Request Failure & Retry Lifecycle
 // -------------------------------------------------------------
 test('LAYER 6: Integration — Journey G: Review request SMTP failure transitions to FAILED and retry increments attempts', () => {
+  const seedJob = INITIAL_JOBS[0];
+  const baselineJobHistoryLength = seedJob.reviewRequest?.history?.length ?? 0;
+
   const job: Job = {
-    ...INITIAL_JOBS[0],
+    ...structuredClone(seedJob),
     reviewRequest: {
       status: 'NOT_SENT',
       reviewLink: 'https://demo.reviews.invalid',
@@ -911,6 +1435,9 @@ test('LAYER 6: Integration — Journey G: Review request SMTP failure transition
   assert.equal(job.reviewRequest.status, 'SENT');
   assert.equal(job.reviewRequest.history.length, 2);
   assert.ok(job.reviewRequest.history[1].event.includes('Attempt 2'));
+
+  // FC-04: Confirm seed job was not mutated by nested property updates
+  assert.equal(seedJob.reviewRequest?.history?.length ?? 0, baselineJobHistoryLength, 'seed job history unpolluted');
 });
 
 // -------------------------------------------------------------
@@ -944,6 +1471,9 @@ test('LAYER 6: Integration — Journey H: Certificate delivery captures full fro
 // -------------------------------------------------------------
 test('LAYER 6: Integration — Journey I: Draft business incubator isolates non-operational profiles, enforces slug uniqueness, and preserves licences', () => {
   const realCtx = getMountedCabmsContext();
+  act(() => {
+    realCtx.simulateSignIn('super_admin');
+  });
 
   // 1. Create a draft business profile with complete licence fields and custom slug
   const result = realCtx.createDraftBusiness({
@@ -1169,29 +1699,43 @@ test('LAYER 6: Integration — Journey M: real signed seeds and newly signed for
       assert.equal(validateSignedSnapshot(delivery!.fullFrozenDocumentSnapshot, jobId, formType).valid, true);
     }
 
-    await act(async () => {
-      ctx.signOffJsa('JOB-2026-101');
-      ctx.signOffElectrical('JOB-2026-101');
-      ctx.signOffSmokeAlarm('JOB-2026-102');
-      ctx.signOffTca1('JOB-2026-102');
-      ctx.signOffTca2('JOB-2026-101');
-    });
+    const job101 = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!;
+    const job102 = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-102')!;
+    const orig101Forms = [...job101.formsRequired];
+    const orig102Forms = [...job102.formsRequired];
 
-    const newlySignedForms: [string, string][] = [
-      ['JOB-2026-101', 'JSA'],
-      ['JOB-2026-101', 'ELECTRICAL'],
-      ['JOB-2026-102', 'SMOKE_ALARM'],
-      ['JOB-2026-102', 'TCA1'],
-      ['JOB-2026-101', 'TCA2'],
-    ];
-    for (const [jobId, formType] of newlySignedForms) {
-      let result: any;
+    try {
       await act(async () => {
-        result = ctx.sendCertificateEmail(jobId, formType);
+        // Under Policy A, certificates are eligible for dispatch only if contractually required by the job
+        job101.formsRequired = ['JSA', 'SMOKE_ALARM', 'ELECTRICAL', 'TCA2'];
+        job102.formsRequired = ['SMOKE_ALARM', 'TCA1'];
+
+        ctx.signOffJsa('JOB-2026-101');
+        ctx.signOffElectrical('JOB-2026-101');
+        ctx.signOffSmokeAlarm('JOB-2026-102');
+        ctx.signOffTca1('JOB-2026-102');
+        ctx.signOffTca2('JOB-2026-101');
       });
-      assert.equal(result.success, true, `new ${formType} sign-off delivery should succeed: ${result.message}`);
+
+      const newlySignedForms: [string, string][] = [
+        ['JOB-2026-101', 'JSA'],
+        ['JOB-2026-101', 'ELECTRICAL'],
+        ['JOB-2026-102', 'SMOKE_ALARM'],
+        ['JOB-2026-102', 'TCA1'],
+        ['JOB-2026-101', 'TCA2'],
+      ];
+      for (const [jobId, formType] of newlySignedForms) {
+        let result: any;
+        await act(async () => {
+          result = ctx.sendCertificateEmail(jobId, formType);
+        });
+        assert.equal(result.success, true, `new ${formType} sign-off delivery should succeed: ${result.message}`);
+      }
+      assert.equal(ctx.certificateDeliveries.length, 11);
+    } finally {
+      job101.formsRequired = orig101Forms;
+      job102.formsRequired = orig102Forms;
     }
-    assert.equal(ctx.certificateDeliveries.length, 11);
   });
 });
 
@@ -1783,7 +2327,7 @@ test('LAYER 6: Wave A — website conversion picker exposes only the enquiry bus
         await act(async () => {});
       }
       const enquiry = ctx.websiteEnquiries.find(item => item.brandId === brandId && item.status === 'PENDING_REVIEW')!;
-      const card = Array.from(container.querySelectorAll('div.bg-slate-900')).find(node => node.textContent?.includes(enquiry.id))!;
+      const card = Array.from(container.querySelectorAll('div.cabms-card')).find(node => node.textContent?.includes(enquiry.id))!;
       await clickButton(card as HTMLElement, 'Convert to Work Order');
       const label = Array.from(container.querySelectorAll('label')).find(item => item.textContent?.includes('Operational Job Type'))!;
       const select = label.parentElement!.querySelector<HTMLSelectElement>('select')!;
@@ -1814,5 +2358,1424 @@ test('LAYER 6: Wave A — clock advances and future audit events retain explicit
     assert.equal(ctx.demoClock, '2026-11-03T00:00:00.000+10:00');
     await act(async () => { ctx.advanceClock(24); });
     assert.equal(ctx.demoClock, '2026-11-04T00:00:00.000+10:00');
+  });
+});
+
+test('LAYER 6: WIN-CR-03 — invalid forms remain unsigned and editable across all five document types, and valid sign-offs freeze snapshots', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+
+    // 1. JSA
+    let jsaJob!: Job;
+    let jsaJobId!: string;
+    await act(async () => {
+      jsaJob = ctx.createJob({
+        brandId: 'solarcell',
+        jobType: 'JT-001',
+        title: 'WIN-CR-03 JSA Validation Job',
+        assignedTechId: 'TECH-001',
+        assignedTechName: 'Dave Miller',
+      });
+      jsaJobId = jsaJob.id;
+    });
+    assert.ok(ctx.jobs.some(j => j.id === jsaJobId), 'JSA job exists in ctx.jobs');
+    // Set prerequisites (induction & competency) so only the schema field is missing
+    await act(async () => {
+      ctx.updateJsaForm(jsaJobId, {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: '', // Invalid empty string
+      });
+    });
+    // Attempt sign-off
+    await act(async () => {
+      ctx.signOffJsa(jsaJobId);
+    });
+    const jsaInvalid = ctx.getOrCreateJsa(jsaJobId);
+    assert.equal(jsaInvalid.signedOff, false, 'JSA remains unsigned when customerName is blank');
+    assert.equal(jsaInvalid.fullSnapshot, undefined, 'JSA fullSnapshot is not created when validation fails');
+
+    // Confirm unsigned form is still editable
+    await act(async () => {
+      ctx.updateJsaForm(jsaJobId, { customerName: 'Acme Solar Client' });
+    });
+    assert.equal(ctx.getOrCreateJsa(jsaJobId).customerName, 'Acme Solar Client', 'Unsigned JSA remains editable');
+
+    // Valid sign-off
+    await act(async () => {
+      ctx.signOffJsa(jsaJobId);
+    });
+    const jsaValid = ctx.getOrCreateJsa(jsaJobId);
+    assert.equal(jsaValid.signedOff, true, 'JSA signs off successfully with valid fields');
+    assert.ok(jsaValid.fullSnapshot, 'JSA fullSnapshot is created');
+    assert.equal(jsaValid.jobReference, jsaJobId, 'JSA jobReference matches created job id');
+    assert.equal(jsaValid.signedByTechName, jsaJob.assignedTechName, 'JSA signedByTechName matches assigned technician');
+    const jsaValCheck = validateSignedSnapshot(jsaValid.fullSnapshot, jsaJobId, 'JSA');
+    assert.equal(jsaValCheck.valid, true, 'JSA frozen snapshot satisfies validator schema');
+    assert.ok(jsaValid.frozenIssuerSnapshot, 'JSA preserves frozenIssuerSnapshot');
+    assert.ok(jsaValid.frozenIssuerSnapshot.includes(INITIAL_BRANDS.solarcell.legalIssuerName), 'JSA frozenIssuerSnapshot matches Solarcell legal issuer');
+    // Confirm immutability after signing
+    await act(async () => {
+      ctx.updateJsaForm(jsaJobId, { customerName: 'Attempted Mutated Name' });
+    });
+    assert.equal(ctx.getOrCreateJsa(jsaJobId).customerName, 'Acme Solar Client', 'Signed JSA rejects edits');
+
+    // 2. ELECTRICAL
+    let elecJob!: Job;
+    let elecJobId!: string;
+    await act(async () => {
+      elecJob = ctx.createJob({
+        brandId: 'solarcell',
+        jobType: 'JT-001',
+        title: 'WIN-CR-03 Electrical Validation Job',
+        assignedTechId: 'TECH-001',
+        assignedTechName: 'Dave Miller',
+      });
+      elecJobId = elecJob.id;
+    });
+    assert.ok(ctx.jobs.some(j => j.id === elecJobId), 'Electrical job exists in ctx.jobs');
+    await act(async () => {
+      ctx.updateElectricalForm(elecJobId, {
+        installationAddress: '', // Invalid empty string
+      });
+    });
+    await act(async () => {
+      ctx.signOffElectrical(elecJobId);
+    });
+    const elecInvalid = ctx.getOrCreateElectrical(elecJobId);
+    assert.equal(elecInvalid.signedOff, false, 'Electrical cert remains unsigned when installationAddress is blank');
+    assert.equal(elecInvalid.fullSnapshot, undefined, 'Electrical fullSnapshot is not created when validation fails');
+
+    // Confirm unsigned form is still editable
+    await act(async () => {
+      ctx.updateElectricalForm(elecJobId, { installationAddress: '123 Sunshine Coast Way' });
+    });
+    assert.equal(ctx.getOrCreateElectrical(elecJobId).installationAddress, '123 Sunshine Coast Way', 'Unsigned Electrical cert remains editable');
+
+    // Valid sign-off
+    await act(async () => {
+      ctx.signOffElectrical(elecJobId);
+    });
+    const elecValid = ctx.getOrCreateElectrical(elecJobId);
+    assert.equal(elecValid.signedOff, true, 'Electrical cert signs off successfully with valid fields');
+    assert.ok(elecValid.fullSnapshot, 'Electrical cert fullSnapshot is created');
+    assert.equal(elecValid.jobReference, elecJobId, 'Electrical jobReference matches created job id');
+    assert.equal(elecValid.signedByTechName, elecJob.assignedTechName, 'Electrical signedByTechName matches assigned technician');
+    const elecValCheck = validateSignedSnapshot(elecValid.fullSnapshot, elecJobId, 'ELECTRICAL');
+    assert.equal(elecValCheck.valid, true, 'Electrical frozen snapshot satisfies validator schema');
+    assert.ok(elecValid.frozenIssuerSnapshot, 'Electrical cert preserves frozenIssuerSnapshot');
+    assert.ok(elecValid.frozenIssuerSnapshot.includes(INITIAL_BRANDS.solarcell.legalIssuerName), 'Electrical frozenIssuerSnapshot matches Solarcell legal issuer');
+    await act(async () => {
+      ctx.updateElectricalForm(elecJobId, { installationAddress: 'Attempted Mutated Address' });
+    });
+    assert.equal(ctx.getOrCreateElectrical(elecJobId).installationAddress, '123 Sunshine Coast Way', 'Signed Electrical cert rejects edits');
+
+    // 3. SMOKE ALARM
+    let smokeJob!: Job;
+    let smokeJobId!: string;
+    await act(async () => {
+      smokeJob = ctx.createJob({
+        brandId: 'smart_home',
+        jobType: 'JT-002',
+        title: 'WIN-CR-03 Smoke Alarm Validation Job',
+        assignedTechId: 'TECH-001',
+        assignedTechName: 'Dave Miller',
+      });
+      smokeJobId = smokeJob.id;
+    });
+    assert.ok(ctx.jobs.some(j => j.id === smokeJobId), 'Smoke Alarm job exists in ctx.jobs');
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(smokeJobId, {
+        propertyType: '' as any, // Invalid empty string (schema required)
+      });
+    });
+    await act(async () => {
+      ctx.signOffSmokeAlarm(smokeJobId);
+    });
+    const smokeInvalid = ctx.getOrCreateSmokeAlarm(smokeJobId);
+    assert.equal(smokeInvalid.signedOff, false, 'Smoke Alarm cert remains unsigned when propertyType is blank');
+    assert.equal(smokeInvalid.fullSnapshot, undefined, 'Smoke Alarm fullSnapshot is not created when validation fails');
+
+    // Confirm unsigned form is still editable
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(smokeJobId, { propertyType: 'Townhouse' });
+    });
+    assert.equal(ctx.getOrCreateSmokeAlarm(smokeJobId).propertyType, 'Townhouse', 'Unsigned Smoke Alarm cert remains editable');
+
+    // Valid sign-off
+    await act(async () => {
+      ctx.signOffSmokeAlarm(smokeJobId);
+    });
+    const smokeValid = ctx.getOrCreateSmokeAlarm(smokeJobId);
+    assert.equal(smokeValid.signedOff, true, 'Smoke Alarm cert signs off successfully with valid fields');
+    assert.ok(smokeValid.fullSnapshot, 'Smoke Alarm cert fullSnapshot is created');
+    assert.equal(smokeValid.jobReference, smokeJobId, 'Smoke Alarm jobReference matches created job id');
+    assert.equal(smokeValid.signedByTechName, smokeJob.assignedTechName, 'Smoke Alarm signedByTechName matches assigned technician');
+    const smokeValCheck = validateSignedSnapshot(smokeValid.fullSnapshot, smokeJobId, 'SMOKE_ALARM');
+    assert.equal(smokeValCheck.valid, true, 'Smoke Alarm frozen snapshot satisfies validator schema');
+    assert.ok(smokeValid.frozenIssuerSnapshot, 'Smoke Alarm cert preserves frozenIssuerSnapshot');
+    assert.ok(smokeValid.frozenIssuerSnapshot.includes(INITIAL_BRANDS.smart_home.legalIssuerName), 'Smoke Alarm frozenIssuerSnapshot matches Smart Home legal issuer');
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(smokeJobId, { propertyType: 'Unit / Apartment' });
+    });
+    assert.equal(ctx.getOrCreateSmokeAlarm(smokeJobId).propertyType, 'Townhouse', 'Signed Smoke Alarm cert rejects edits');
+
+    // 4. TCA1
+    let tca1Job!: Job;
+    let tca1JobId!: string;
+    await act(async () => {
+      tca1Job = ctx.createJob({
+        brandId: 'cctv',
+        jobType: 'JT-003',
+        title: 'WIN-CR-03 TCA1 Validation Job',
+        assignedTechId: 'TECH-002',
+        assignedTechName: 'Alex Taylor',
+      });
+      tca1JobId = tca1Job.id;
+    });
+    assert.ok(ctx.jobs.some(j => j.id === tca1JobId), 'TCA1 job exists in ctx.jobs');
+    await act(async () => {
+      ctx.updateTca1Form(tca1JobId, {
+        customerName: '', // Invalid empty string
+      });
+    });
+    await act(async () => {
+      ctx.signOffTca1(tca1JobId);
+    });
+    const tca1Invalid = ctx.getOrCreateTca1(tca1JobId);
+    assert.equal(tca1Invalid.signedOff, false, 'TCA1 cert remains unsigned when customerName is blank');
+    assert.equal(tca1Invalid.fullSnapshot, undefined, 'TCA1 fullSnapshot is not created when validation fails');
+
+    // Confirm unsigned form is still editable
+    await act(async () => {
+      ctx.updateTca1Form(tca1JobId, { customerName: 'Gold Coast Security Client' });
+    });
+    assert.equal(ctx.getOrCreateTca1(tca1JobId).customerName, 'Gold Coast Security Client', 'Unsigned TCA1 cert remains editable');
+
+    // Valid sign-off
+    await act(async () => {
+      ctx.signOffTca1(tca1JobId);
+    });
+    const tca1Valid = ctx.getOrCreateTca1(tca1JobId);
+    assert.equal(tca1Valid.signedOff, true, 'TCA1 cert signs off successfully with valid fields');
+    assert.ok(tca1Valid.fullSnapshot, 'TCA1 cert fullSnapshot is created');
+    assert.equal(tca1Valid.jobReference, tca1JobId, 'TCA1 jobReference matches created job id');
+    assert.equal(tca1Valid.signedByTechName, tca1Job.assignedTechName, 'TCA1 signedByTechName matches assigned technician');
+    const tca1ValCheck = validateSignedSnapshot(tca1Valid.fullSnapshot, tca1JobId, 'TCA1');
+    assert.equal(tca1ValCheck.valid, true, 'TCA1 frozen snapshot satisfies validator schema');
+    assert.ok(tca1Valid.frozenIssuerSnapshot, 'TCA1 cert preserves frozenIssuerSnapshot');
+    assert.ok(tca1Valid.frozenIssuerSnapshot.includes(INITIAL_BRANDS.cctv.legalIssuerName), 'TCA1 frozenIssuerSnapshot matches CCTV legal issuer');
+    await act(async () => {
+      ctx.updateTca1Form(tca1JobId, { customerName: 'Attempted Mutated Name' });
+    });
+    assert.equal(ctx.getOrCreateTca1(tca1JobId).customerName, 'Gold Coast Security Client', 'Signed TCA1 cert rejects edits');
+
+    // 5. TCA2
+    let tca2Job!: Job;
+    let tca2JobId!: string;
+    await act(async () => {
+      tca2Job = ctx.createJob({
+        brandId: 'cctv',
+        jobType: 'JT-003',
+        title: 'WIN-CR-03 TCA2 Validation Job',
+        assignedTechId: 'TECH-002',
+        assignedTechName: 'Alex Taylor',
+      });
+      tca2JobId = tca2Job.id;
+    });
+    assert.ok(ctx.jobs.some(j => j.id === tca2JobId), 'TCA2 job exists in ctx.jobs');
+    // Check baseline: no TCA2 audit record exists for tca2JobId
+    const initialTca2Audit = ctx.tca2AuditRecords[tca2JobId] as Tca2AuditRecord | undefined;
+    assert.equal(initialTca2Audit, undefined, 'No TCA2 audit record before sign-off');
+    await act(async () => {
+      ctx.updateTca2Form(tca2JobId, {
+        nonComplianceDescription: '', // Invalid empty string
+      });
+    });
+    await act(async () => {
+      ctx.signOffTca2(tca2JobId);
+    });
+    const tca2Invalid = ctx.getOrCreateTca2(tca2JobId);
+    assert.equal(tca2Invalid.signedOff, false, 'TCA2 cert remains unsigned when nonComplianceDescription is blank');
+    assert.equal(tca2Invalid.fullSnapshot, undefined, 'TCA2 fullSnapshot is not created when validation fails');
+    const postInvalidTca2Audit = ctx.tca2AuditRecords[tca2JobId] as Tca2AuditRecord | undefined;
+    assert.equal(postInvalidTca2Audit, undefined, 'No TCA2 audit record created after failed sign-off');
+
+    // Confirm unsigned form is still editable
+    await act(async () => {
+      ctx.updateTca2Form(tca2JobId, {
+        nonComplianceDescription: 'Unshielded Cat6 cable routed across high-voltage conduit without barrier.',
+      });
+    });
+    assert.ok(
+      ctx.getOrCreateTca2(tca2JobId).nonComplianceDescription.includes('Unshielded Cat6'),
+      'Unsigned TCA2 cert remains editable'
+    );
+
+    // Valid sign-off
+    await act(async () => {
+      ctx.signOffTca2(tca2JobId);
+    });
+    const tca2Valid = ctx.getOrCreateTca2(tca2JobId);
+    assert.equal(tca2Valid.signedOff, true, 'TCA2 cert signs off successfully with valid fields');
+    assert.ok(tca2Valid.fullSnapshot, 'TCA2 cert fullSnapshot is created');
+    assert.equal(tca2Valid.jobReference, tca2JobId, 'TCA2 jobReference matches created job id');
+    assert.equal(tca2Valid.signedByTechName, tca2Job.assignedTechName, 'TCA2 signedByTechName matches assigned technician');
+    const tca2ValCheck = validateSignedSnapshot(tca2Valid.fullSnapshot, tca2JobId, 'TCA2');
+    assert.equal(tca2ValCheck.valid, true, 'TCA2 frozen snapshot satisfies validator schema');
+    assert.ok(tca2Valid.frozenIssuerSnapshot, 'TCA2 cert preserves frozenIssuerSnapshot');
+    assert.ok(tca2Valid.frozenIssuerSnapshot.includes(INITIAL_BRANDS.cctv.legalIssuerName), 'TCA2 frozenIssuerSnapshot matches CCTV legal issuer');
+    // Confirm audit record is initialized only after successful sign-off
+    const validTca2Audit = ctx.tca2AuditRecords[tca2JobId] as Tca2AuditRecord | undefined;
+    assert.ok(validTca2Audit, 'TCA2 audit record is initialized on valid sign-off');
+    assert.equal(validTca2Audit?.customerAcknowledged, false);
+    assert.equal(validTca2Audit?.officeReviewCompleted, false);
+
+    // Confirm immutability after signing
+    await act(async () => {
+      ctx.updateTca2Form(tca2JobId, { nonComplianceDescription: 'Attempted Mutated Defect' });
+    });
+    assert.ok(
+      ctx.getOrCreateTca2(tca2JobId).nonComplianceDescription.includes('Unshielded Cat6'),
+      'Signed TCA2 cert rejects edits'
+    );
+  });
+});
+
+test('LAYER 6: CR-NEW-01 — authoritative form ref consistency across immediate attachment, same-render completion, TCA2 review deduplication, and demo scenario immutability', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+
+    // 1. Immediate sample attachment after sign-off in the same React act / same render
+    let jobA!: Job;
+    await act(async () => {
+      jobA = ctx.createJob({
+        brandId: 'solarcell',
+        jobType: 'JT-001',
+        title: 'CR-NEW-01 Immediate Attach Test Job',
+        assignedTechId: 'TECH-001',
+        assignedTechName: 'Dave Miller',
+      });
+    });
+    await act(async () => {
+      ctx.updateJsaForm(jobA.id, {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: 'Immediate Test Client',
+      });
+      ctx.signOffJsa(jobA.id);
+      ctx.attachSampleToJobForm(jobA.id, 'JSA', 'ATT-001');
+    });
+    const jsaA = ctx.getOrCreateJsa(jobA.id);
+    assert.equal(jsaA.signedOff, true, 'JSA is signed off');
+    assert.ok(!jsaA.attachedSampleIds?.includes('ATT-001'), 'Sample attachment rejected on signed form within same act');
+    const jobAAfter = ctx.jobs.find(j => j.id === jobA.id)!;
+    assert.ok(!jobAAfter.attachedSampleIds?.includes('ATT-001'), 'Job attachments not corrupted by rejected sample');
+
+    // 2. Attempt same-render removal of sample from signed form
+    let jobB!: Job;
+    await act(async () => {
+      jobB = ctx.createJob({
+        brandId: 'solarcell',
+        jobType: 'JT-001',
+        title: 'CR-NEW-01 Remove Sample Test Job',
+        assignedTechId: 'TECH-001',
+        assignedTechName: 'Dave Miller',
+      });
+      ctx.updateJsaForm(jobB.id, {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: 'Signed With Sample Client',
+      });
+      ctx.attachSampleToJobForm(jobB.id, 'JSA', 'ATT-001');
+    });
+    assert.ok(ctx.getOrCreateJsa(jobB.id).attachedSampleIds?.includes('ATT-001'), 'Sample attached before sign-off');
+    await act(async () => {
+      ctx.signOffJsa(jobB.id);
+      ctx.removeSampleFromJobForm(jobB.id, 'JSA', 'ATT-001');
+    });
+    assert.equal(ctx.getOrCreateJsa(jobB.id).signedOff, true, 'Form is signed');
+    assert.ok(ctx.getOrCreateJsa(jobB.id).attachedSampleIds?.includes('ATT-001'), 'Sample removal rejected on signed form within same act');
+    const jobBAfter = ctx.jobs.find(j => j.id === jobB.id)!;
+    assert.ok(jobBAfter.attachedSampleIds?.includes('ATT-001'), 'Job attachments still include sample from signed form');
+
+    // 3. Multiple attachments across different unsigned forms correctly aggregated on job
+    let jobC!: Job;
+    await act(async () => {
+      jobC = ctx.createJob({
+        brandId: 'solarcell',
+        jobType: 'JT-001',
+        title: 'CR-NEW-01 Multiple Attachments Test Job',
+        assignedTechId: 'TECH-001',
+        assignedTechName: 'Dave Miller',
+      });
+      ctx.attachSampleToJobForm(jobC.id, 'JSA', 'ATT-001');
+      ctx.attachSampleToJobForm(jobC.id, 'ELECTRICAL', 'ATT-004');
+    });
+    const jsaC = ctx.getOrCreateJsa(jobC.id);
+    const elecC = ctx.getOrCreateElectrical(jobC.id);
+    assert.ok(jsaC.attachedSampleIds?.includes('ATT-001'), 'JSA has ATT-001');
+    assert.ok(elecC.attachedSampleIds?.includes('ATT-004'), 'ELECTRICAL has ATT-004');
+    const jobCAfter = ctx.jobs.find(j => j.id === jobC.id)!;
+    assert.ok(jobCAfter.attachedSampleIds?.includes('ATT-001'), 'Aggregated job attachments contain ATT-001');
+    assert.ok(jobCAfter.attachedSampleIds?.includes('ATT-004'), 'Aggregated job attachments contain ATT-004');
+
+    // 4. Sign required forms and immediately attempt job completion in same act
+    let compRes: any;
+    await act(async () => {
+      ctx.updateJsaForm(jobC.id, {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: 'Complete Job Client',
+      });
+      ctx.signOffJsa(jobC.id);
+      ctx.updateElectricalForm(jobC.id, {
+        installationAddress: '456 Commercial Way, Bundall QLD',
+      });
+      ctx.signOffElectrical(jobC.id);
+      compRes = ctx.attemptCompleteJob(jobC.id);
+    });
+    assert.equal(compRes.canComplete, true, 'Immediate job completion succeeds');
+    const jobCCompleted = ctx.jobs.find(j => j.id === jobC.id)!;
+    assert.equal(jobCCompleted.status, 'COMPLETED', 'Job transitioned to COMPLETED status reading authoritative refs directly');
+
+    // 5. TCA2 customer acknowledgment and office review
+    let jobD!: Job;
+    await act(async () => {
+      jobD = ctx.createJob({
+        brandId: 'cctv',
+        jobType: 'JT-003',
+        title: 'CR-NEW-01 TCA2 Workflow Job',
+        assignedTechId: 'TECH-002',
+        assignedTechName: 'Alex Taylor',
+      });
+    });
+    await act(async () => {
+      ctx.updateTca2Form(jobD.id, {
+        nonComplianceDescription: 'Cat6 cabling in close proximity to 415V supply line.',
+      });
+      ctx.signOffTca2(jobD.id);
+      ctx.customerAckTca2(jobD.id);
+    });
+    const auditAfterAck = ctx.tca2AuditRecords[jobD.id];
+    assert.ok(auditAfterAck?.customerAcknowledged, 'Customer acknowledged in same workflow');
+
+    const jobsCountBeforeReview = ctx.jobs.length;
+    await act(async () => {
+      ctx.officeReviewTca2(jobD.id);
+    });
+    const auditAfterReview = ctx.tca2AuditRecords[jobD.id];
+    assert.ok(auditAfterReview?.officeReviewCompleted, 'Office review completed');
+    assert.ok(auditAfterReview?.rectificationFollowupJobId, 'Follow-up remedial job ID created');
+    assert.equal(ctx.jobs.length, jobsCountBeforeReview + 1, 'Exactly one remedial job created');
+
+    // Verify repeated office review call does NOT generate duplicate follow-up remedial jobs
+    await act(async () => {
+      ctx.officeReviewTca2(jobD.id);
+    });
+    assert.equal(ctx.jobs.length, jobsCountBeforeReview + 1, 'Repeated office review does not create duplicate remedial job');
+
+    // 6. Demo scenario doc_missing_signoff
+    // First, verify when unsigned: doc_missing_signoff sets signedOff: false
+    await act(async () => {
+      ctx.resetDemo();
+    });
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-101').signedOff, false, 'Unsigned initially');
+    await act(async () => {
+      ctx.setActiveScenario('doc_missing_signoff');
+    });
+    assert.equal(ctx.getOrCreateJsa('JOB-2026-101').signedOff, false, 'Remains unsigned after scenario load');
+
+    // Now sign off JSA for JOB-2026-101
+    await act(async () => {
+      ctx.updateJsaForm('JOB-2026-101', {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: 'Signed Test Client',
+      });
+      ctx.signOffJsa('JOB-2026-101');
+    });
+    const signedJsa101 = ctx.getOrCreateJsa('JOB-2026-101');
+    assert.equal(signedJsa101.signedOff, true, 'JSA signed');
+    const snapshot101 = signedJsa101.fullSnapshot;
+    assert.ok(snapshot101, 'Snapshot exists');
+
+    // Reload doc_missing_signoff while signed off (switch to default first to trigger scenario effect)
+    await act(async () => {
+      ctx.setActiveScenario('default');
+    });
+    await act(async () => {
+      ctx.setActiveScenario('doc_missing_signoff');
+    });
+    const jsa101AfterReload = ctx.getOrCreateJsa('JOB-2026-101');
+    assert.equal(jsa101AfterReload.signedOff, true, 'Signed JSA remains signed when doc_missing_signoff is loaded');
+    assert.equal(jsa101AfterReload.fullSnapshot, snapshot101, 'Signed snapshot not wiped or rewritten by scenario load');
+  });
+});
+
+test('LAYER 6: FC-10 — rescheduleJobAppointment blocks rescheduling of terminal jobs (COMPLETED / CANCELLED) while permitting rebooking of cancelled appointments on active jobs', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    // 1. Terminal COMPLETED job (JOB-2026-102 is direct-to-invoice, completes without forms)
+    await act(async () => {
+      ctx.attemptCompleteJob('JOB-2026-102');
+    });
+    const completedJobBefore = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    assert.equal(completedJobBefore.status, 'COMPLETED', 'Job 102 is completed');
+    const compDateBefore = completedJobBefore.scheduledDate;
+    const compTimeBefore = completedJobBefore.scheduledTime;
+    const compRemindersCount = completedJobBefore.reminders.length;
+    const compHistoryCount = completedJobBefore.activityHistory.length;
+
+    // Attempt reschedule on completed job
+    await act(async () => {
+      ctx.rescheduleJobAppointment('JOB-2026-102', '2026-11-25', '14:00');
+    });
+    const completedJobAfter = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    assert.equal(completedJobAfter.status, 'COMPLETED', 'Terminal completed job remains COMPLETED');
+    assert.equal(completedJobAfter.scheduledDate, compDateBefore, 'Date unmutated');
+    assert.equal(completedJobAfter.scheduledTime, compTimeBefore, 'Time unmutated');
+    assert.equal(completedJobAfter.reminders.length, compRemindersCount, 'No new reminders created');
+    assert.equal(completedJobAfter.activityHistory.length, compHistoryCount, 'No activity history added');
+
+    // 2. Terminal CANCELLED job
+    await act(async () => {
+      ctx.cancelWholeJob('JOB-2026-101', 'Project abandoned by client');
+    });
+    const cancelledJobBefore = ctx.jobs.find(j => j.id === 'JOB-2026-101')!;
+    assert.equal(cancelledJobBefore.status, 'CANCELLED', 'Job 101 is cancelled');
+    const canDateBefore = cancelledJobBefore.scheduledDate;
+    const canRemindersCount = cancelledJobBefore.reminders.length;
+
+    // Attempt reschedule on cancelled job
+    await act(async () => {
+      ctx.rescheduleJobAppointment('JOB-2026-101', '2026-11-25', '14:00');
+    });
+    const cancelledJobAfter = ctx.jobs.find(j => j.id === 'JOB-2026-101')!;
+    assert.equal(cancelledJobAfter.status, 'CANCELLED', 'Terminal cancelled job remains CANCELLED');
+    assert.equal(cancelledJobAfter.scheduledDate, canDateBefore, 'Date unmutated');
+    assert.equal(cancelledJobAfter.reminders.length, canRemindersCount, 'No new reminders created');
+
+    // 3. Active job with cancelled appointment: legal rebooking
+    const activeJob = ctx.jobs.find(j => j.id === 'JOB-2026-103')!;
+    assert.equal(activeJob.status, 'SCHEDULED', 'Job 103 is active');
+    await act(async () => {
+      ctx.cancelJobAppointment('JOB-2026-103', 'Technician delayed by storm');
+    });
+    const visitCancelledJob = ctx.jobs.find(j => j.id === 'JOB-2026-103')!;
+    assert.equal(visitCancelledJob.appointmentStatus, 'CANCELLED', 'Visit marked CANCELLED');
+    assert.equal(visitCancelledJob.status, 'SCHEDULED', 'Parent job remains active SCHEDULED');
+
+    // Rebook visit on active job
+    await act(async () => {
+      ctx.rescheduleJobAppointment('JOB-2026-103', '2026-11-04', '11:00');
+    });
+    const rebookedJob = ctx.jobs.find(j => j.id === 'JOB-2026-103')!;
+    assert.equal(rebookedJob.appointmentStatus, 'RESCHEDULED', 'Appointment status updated to RESCHEDULED');
+    assert.equal(rebookedJob.scheduledDate, '2026-11-04', 'Scheduled date updated');
+    assert.equal(rebookedJob.scheduledTime, '11:00', 'Scheduled time updated');
+    assert.equal(rebookedJob.status, 'SCHEDULED', 'Active status maintained');
+
+    // 4. FC-10 Manager Review: Same-render race condition guard
+    // Cancel whole job and immediately attempt reschedule inside the same act() without intervening rerender
+    let jobCId = '';
+    await act(async () => {
+      const created = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Same-render test job',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '300 Queen St, Brisbane QLD',
+        siteContact: 'Sam Render',
+      });
+      jobCId = created.id;
+    });
+
+    await act(async () => {
+      ctx.cancelWholeJob(jobCId, 'Cancellation before render');
+      ctx.rescheduleJobAppointment(jobCId, '2026-11-29', '09:00');
+    });
+    const sameRenderCancelled = ctx.jobs.find(j => j.id === jobCId)!;
+    assert.equal(sameRenderCancelled.status, 'CANCELLED', 'Terminal CANCELLED status preserved against same-render reschedule');
+    assert.notEqual(sameRenderCancelled.scheduledDate, '2026-11-29', 'Scheduled date unmutated by rejected same-render reschedule');
+
+    // 5. FC-10 Manager Review: Terminal-job appointment cancellation guard
+    // Attempting to cancel appointment on terminal completed or cancelled job is rejected with zero mutations
+    const canRemCount = sameRenderCancelled.reminders.length;
+    const canHistCount = sameRenderCancelled.activityHistory.length;
+    const preCompletedJob = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    const compApptStatus = preCompletedJob.appointmentStatus;
+    const compRemCount = preCompletedJob.reminders.length;
+    const compHistCount = preCompletedJob.activityHistory.length;
+    await act(async () => {
+      ctx.cancelJobAppointment(jobCId, 'Attempt appointment cancellation on terminal cancelled job');
+      ctx.cancelJobAppointment('JOB-2026-102', 'Attempt appointment cancellation on terminal completed job');
+    });
+    const postCancelVisitJob = ctx.jobs.find(j => j.id === jobCId)!;
+    assert.equal(postCancelVisitJob.reminders.length, canRemCount, 'Zero new reminders on terminal job visit cancellation');
+    assert.equal(postCancelVisitJob.activityHistory.length, canHistCount, 'Zero activity history additions on rejected visit cancellation');
+    const postCancelCompletedJob = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    assert.equal(postCancelCompletedJob.status, 'COMPLETED', 'Completed job remains COMPLETED');
+    assert.equal(postCancelCompletedJob.appointmentStatus, compApptStatus, 'Completed job appointmentStatus remains unchanged');
+    assert.equal(postCancelCompletedJob.reminders.length, compRemCount, 'Completed job reminders remain unchanged');
+    assert.equal(postCancelCompletedJob.activityHistory.length, compHistCount, 'Completed job activityHistory remains unchanged');
+  });
+});
+
+test('LAYER 6: FC-18 — reconcileInvoiceSync ensures unique, stable external MYOB references across mixed online and offline invoices, preserves retry idempotency, and preserves invoice identity on failure', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    // 1. Job 101 has seeded online invoice
+    const job101 = ctx.jobs.find(j => j.id === 'JOB-2026-101')!;
+    assert.ok(job101.invoice, 'Job 101 has seeded invoice');
+    const onlineRef101 = job101.invoice!.externalMyobRef;
+    assert.ok(onlineRef101.startsWith('MYOB-INV-'), 'Online invoice has valid MYOB ref');
+
+    // 2. Go offline via setMyobStatus and create two invoices for Job 102 and Job 103
+    await act(async () => {
+      ctx.setPersona('super_admin');
+      ctx.setMyobStatus('DISCONNECTED');
+    });
+    await act(async () => {
+      ctx.prepareInvoiceForJob('JOB-2026-102', 1200);
+      ctx.prepareInvoiceForJob('JOB-2026-103', 2400);
+    });
+    await act(async () => {
+      ctx.setMyobStatus('CONNECTED');
+    });
+
+    const job102Offline = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    const job103Offline = ctx.jobs.find(j => j.id === 'JOB-2026-103')!;
+    assert.equal(job102Offline.invoice?.externalMyobRef, 'PENDING-MYOB-SYNC', 'Job 102 invoice is pending sync');
+    assert.equal(job103Offline.invoice?.externalMyobRef, 'PENDING-MYOB-SYNC', 'Job 103 invoice is pending sync');
+    assert.notEqual(job102Offline.invoice?.id, job103Offline.invoice?.id, 'Invoice IDs are distinct');
+
+    // 3. Reconcile Job 103 first
+    await act(async () => {
+      ctx.reconcileInvoiceSync('JOB-2026-103', 'SUCCESS');
+    });
+    const job103Synced = ctx.jobs.find(j => j.id === 'JOB-2026-103')!;
+    assert.equal(job103Synced.invoice?.syncStatus, 'SYNCED');
+    const ref103 = job103Synced.invoice?.externalMyobRef;
+    assert.ok(ref103?.startsWith('MYOB-INV-'), 'Job 103 receives MYOB-INV-* reference');
+
+    // 4. Reconcile Job 102 second
+    await act(async () => {
+      ctx.reconcileInvoiceSync('JOB-2026-102', 'SUCCESS');
+    });
+    const job102Synced = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    assert.equal(job102Synced.invoice?.syncStatus, 'SYNCED');
+    const ref102 = job102Synced.invoice?.externalMyobRef;
+    assert.ok(ref102?.startsWith('MYOB-INV-'), 'Job 102 receives MYOB-INV-* reference');
+
+    // Assert uniqueness between the two offline reconciled invoices and online invoice
+    assert.notEqual(ref102, ref103, 'Offline invoices reconciled sequentially receive distinct references');
+    assert.notEqual(ref102, onlineRef101, 'Offline reconciled invoice does not collide with online invoice');
+    assert.notEqual(ref103, onlineRef101, 'Offline reconciled invoice does not collide with online invoice');
+
+    // 5. Test retry idempotency: repeating reconciliation on Job 102 does not change its reference
+    await act(async () => {
+      ctx.reconcileInvoiceSync('JOB-2026-102', 'SUCCESS');
+    });
+    const job102Retried = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    assert.equal(job102Retried.invoice?.externalMyobRef, ref102, 'Retry reconciliation preserves established reference');
+
+    // 6. Test failed reconciliation: preserves invoice ID and marks for office review
+    await act(async () => {
+      ctx.reconcileInvoiceSync('JOB-2026-102', 'FAIL');
+    });
+    const job102Failed = ctx.jobs.find(j => j.id === 'JOB-2026-102')!;
+    assert.equal(job102Failed.invoice?.id, job102Offline.invoice?.id, 'Invoice identity preserved on failure');
+    assert.equal(job102Failed.invoice?.reconciliationRequired, true, 'Reconciliation marked required on failure');
+
+    // 7. FC-18 Manager Review: Same-render race condition (prepare and reconcile within the same act without intervening rerender)
+    let newJobId = '';
+    await act(async () => {
+      const j = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Same-render invoice job',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '500 Adelaide St, Brisbane QLD',
+        siteContact: 'Inv Test',
+      });
+      newJobId = j.id;
+    });
+
+    await act(async () => {
+      ctx.setMyobStatus('DISCONNECTED');
+    });
+
+    await act(async () => {
+      ctx.prepareInvoiceForJob(newJobId, 3200);
+      ctx.reconcileInvoiceSync(newJobId, 'SUCCESS');
+    });
+
+    const sameRenderInvJob = ctx.jobs.find(j => j.id === newJobId)!;
+    assert.ok(sameRenderInvJob.invoice, 'Invoice created in same act exists');
+    assert.equal(sameRenderInvJob.invoice?.syncStatus, 'SYNCED', 'Same-render invoice successfully reconciled');
+    assert.ok(sameRenderInvJob.invoice?.externalMyobRef.startsWith('MYOB-INV-'), 'Derived valid external reference in same act');
+    assert.notEqual(sameRenderInvJob.invoice?.externalMyobRef, ref102, 'Same-render invoice reference does not collide with Job 102');
+    assert.notEqual(sameRenderInvJob.invoice?.externalMyobRef, ref103, 'Same-render invoice reference does not collide with Job 103');
+    assert.notEqual(sameRenderInvJob.invoice?.externalMyobRef, onlineRef101, 'Same-render invoice reference does not collide with online invoice');
+
+    // 8. FC-18 Manager Review: Malformed invoice ID safety
+    // Create a job whose invoice ID has no numeric suffix
+    let malformedJobId = '';
+    await act(async () => {
+      const j = ctx.createJob({
+        brandId: 'smart_home',
+        title: 'Malformed invoice job',
+        jobType: 'Direct-to-Invoice Emergency Service',
+        siteAddress: '600 Queen St, Brisbane QLD',
+        siteContact: 'Mal Formed',
+      });
+      malformedJobId = j.id;
+    });
+
+    await act(async () => {
+      ctx.prepareInvoiceForJob(malformedJobId, 500);
+    });
+
+    // Manually mutate authoritative job invoice id to malformed non-numeric format
+    const malformedJob = ctx.jobs.find(j => j.id === malformedJobId)!;
+    if (malformedJob.invoice) {
+      malformedJob.invoice.id = 'INV-MALFORMED-NO-NUM';
+      malformedJob.invoice.externalMyobRef = 'PENDING-MYOB-SYNC';
+    }
+
+    await act(async () => {
+      ctx.reconcileInvoiceSync(malformedJobId, 'SUCCESS');
+    });
+
+    const afterMalformedReconcile = ctx.jobs.find(j => j.id === malformedJobId)!;
+    assert.equal(afterMalformedReconcile.invoice?.externalMyobRef, 'PENDING-MYOB-SYNC', 'Malformed invoice ID blocked from reconciliation and reference remains pending');
+  });
+});
+
+test('LAYER 6: FC-20 — unique default certificate reference generation binds to target job identity while strictly preserving existing signed snapshots', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    // 1. Create two new distinct jobs to verify default certificate reference generation
+    let jobAId = '';
+    let jobBId = '';
+    await act(async () => {
+      jobAId = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Job A Electrical Service',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '100 Marine Pde, Southport QLD',
+        siteContact: 'Alice Test',
+      }).id;
+      jobBId = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Job B Electrical Service',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '200 Marine Pde, Southport QLD',
+        siteContact: 'Bob Test',
+      }).id;
+    });
+
+    assert.notEqual(jobAId, jobBId, 'Created jobs have distinct IDs');
+
+    // Generate default electrical certs for jobA and jobB
+    const elecA = ctx.getOrCreateElectrical(jobAId);
+    const elecB = ctx.getOrCreateElectrical(jobBId);
+    const jobASuffix = jobAId.replace(/^JOB-/, '');
+    const jobBSuffix = jobBId.replace(/^JOB-/, '');
+    assert.equal(elecA.certReference, `ELEC-CERT-${jobASuffix}`);
+    assert.equal(elecB.certReference, `ELEC-CERT-${jobBSuffix}`);
+    assert.notEqual(elecA.certReference, elecB.certReference, 'Distinct jobs receive distinct electrical cert references');
+
+    // Smoke alarm default references
+    const smokeA = ctx.getOrCreateSmokeAlarm(jobAId);
+    const smokeB = ctx.getOrCreateSmokeAlarm(jobBId);
+    assert.equal(smokeA.certReference, `SMOKE-${jobASuffix}`);
+    assert.equal(smokeB.certReference, `SMOKE-${jobBSuffix}`);
+    assert.notEqual(smokeA.certReference, smokeB.certReference, 'Distinct jobs receive distinct smoke cert references');
+
+    // TCA1 & TCA2 default references
+    const tca1A = ctx.getOrCreateTca1(jobAId);
+    const tca1B = ctx.getOrCreateTca1(jobBId);
+    assert.equal(tca1A.certReference, `TCA1-${jobASuffix}`);
+    assert.equal(tca1B.certReference, `TCA1-${jobBSuffix}`);
+    assert.notEqual(tca1A.certReference, tca1B.certReference, 'Distinct jobs receive distinct TCA1 references');
+
+    const tca2A = ctx.getOrCreateTca2(jobAId);
+    const tca2B = ctx.getOrCreateTca2(jobBId);
+    assert.equal(tca2A.reportReference, `TCA2-DEFECT-${jobASuffix}`);
+    assert.equal(tca2B.reportReference, `TCA2-DEFECT-${jobBSuffix}`);
+    assert.notEqual(tca2A.reportReference, tca2B.reportReference, 'Distinct jobs receive distinct TCA2 report references');
+
+    // 2. FC-20 Manager Review: Historical collision avoidance across all four certificate generators
+    // Electrical collision: Job JOB-2026-881 attempting to generate ELEC-CERT-2026-881 (collides with historical ELEC-CERT-2026-881 on JOB-2026-103)
+    const elecColliding = ctx.getOrCreateElectrical('JOB-2026-881');
+    assert.equal(elecColliding.certReference, 'ELEC-CERT-2026-881-1', 'Electrical reference disambiguated against historical signed cert');
+    assert.notEqual(elecColliding.certReference, INITIAL_ELECTRICAL_CERT.certReference, 'Does not collide with historical signed electrical cert');
+
+    // Smoke alarm collision: Job JOB-2026-001 attempting to generate SMOKE-2026-001 (collides with historical SMOKE-2026-001 on JOB-2026-101)
+    const smokeColliding = ctx.getOrCreateSmokeAlarm('JOB-2026-001');
+    assert.equal(smokeColliding.certReference, 'SMOKE-2026-001-1', 'Smoke alarm reference disambiguated against historical signed cert');
+    assert.notEqual(smokeColliding.certReference, INITIAL_SMOKE_ALARM_CERT.certReference, 'Does not collide with historical signed smoke cert');
+
+    // TCA1 collision: Job JOB-2026-904 attempting to generate TCA1-2026-904 (collides with historical TCA1-2026-904 on JOB-2026-104)
+    const tca1Colliding = ctx.getOrCreateTca1('JOB-2026-904');
+    assert.equal(tca1Colliding.certReference, 'TCA1-2026-904-1', 'TCA1 reference disambiguated against historical signed cert');
+    assert.notEqual(tca1Colliding.certReference, INITIAL_TCA1_CERT.certReference, 'Does not collide with historical signed TCA1 cert');
+
+    // TCA2 collision: Job JOB-2026-007 attempting to generate TCA2-DEFECT-2026-007 (collides with historical TCA2-DEFECT-2026-007 on JOB-2026-104)
+    const tca2Colliding = ctx.getOrCreateTca2('JOB-2026-007');
+    assert.equal(tca2Colliding.reportReference, 'TCA2-DEFECT-2026-007-1', 'TCA2 report reference disambiguated against historical signed defect report');
+    assert.notEqual(tca2Colliding.reportReference, INITIAL_TCA2_CERT.reportReference, 'Does not collide with historical signed TCA2 report');
+
+    // Non-colliding future job JOB-2026-777 receives standard clean reference
+    const elecNonColliding = ctx.getOrCreateElectrical('JOB-2026-777');
+    assert.equal(elecNonColliding.certReference, 'ELEC-CERT-2026-777', 'Non-colliding job receives standard reference');
+
+    // 3. Critical Invariant: Verify historical pre-seeded signed snapshots remain untouched
+    const seededElec = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+    assert.equal(seededElec.certReference, 'ELEC-CERT-2026-881', 'Historical electrical cert reference preserved');
+    const valElec = validateSignedSnapshot(INITIAL_ELECTRICAL_CERT.fullSnapshot, INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+    assert.equal(valElec.valid, true, 'Historical electrical snapshot remains valid');
+
+    const seededSmoke = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+    assert.equal(seededSmoke.certReference, 'SMOKE-2026-001', 'Historical smoke cert reference preserved');
+    const valSmoke = validateSignedSnapshot(INITIAL_SMOKE_ALARM_CERT.fullSnapshot, INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(valSmoke.valid, true, 'Historical smoke alarm snapshot remains valid');
+
+    const seededTca1 = JSON.parse(INITIAL_TCA1_CERT.fullSnapshot!);
+    assert.equal(seededTca1.certReference, 'TCA1-2026-904', 'Historical TCA1 cert reference preserved');
+    const valTca1 = validateSignedSnapshot(INITIAL_TCA1_CERT.fullSnapshot, INITIAL_TCA1_CERT.jobReference, 'TCA1');
+    assert.equal(valTca1.valid, true, 'Historical TCA1 snapshot remains valid');
+
+    const seededTca2 = ctx.getOrCreateTca2('JOB-2026-104');
+    assert.equal(seededTca2.reportReference, 'TCA2-DEFECT-2026-007', 'Historical TCA2 defect report reference preserved');
+    const valTca2 = validateSignedSnapshot(seededTca2.fullSnapshot, seededTca2.jobReference, 'TCA2');
+    assert.equal(valTca2.valid, true, 'Historical TCA2 snapshot remains valid');
+  });
+});
+test('LAYER 6: P1 — same-render certificate consistency across all five document flows guards against stale closure sign-offs, verifies latest value freezing, and ensures sign-off immutability', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    // 1. JSA Flow: Same-render invalidation & sign-off rejection, then restoration & latest snapshot freezing
+    await act(async () => {
+      // Establish valid prerequisites
+      ctx.updateJsaForm('JOB-2026-101', {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: 'Initial Valid Customer',
+      });
+    });
+
+    // Clear required field in same act and immediately invoke signOffJsa
+    await act(async () => {
+      ctx.updateJsaForm('JOB-2026-101', { customerName: '' });
+      ctx.signOffJsa('JOB-2026-101');
+    });
+    const jsaAfterInvalid = ctx.getOrCreateJsa('JOB-2026-101');
+    assert.equal(jsaAfterInvalid.signedOff, false, 'JSA remains unsigned when required customerName cleared in same act');
+    assert.equal(jsaAfterInvalid.fullSnapshot, undefined, 'No frozen snapshot created for invalid JSA');
+
+    // Restore field with latest value and sign off
+    await act(async () => {
+      ctx.updateJsaForm('JOB-2026-101', { customerName: 'Latest Authoritative Citizen' });
+      ctx.signOffJsa('JOB-2026-101');
+    });
+    const jsaAfterValid = ctx.getOrCreateJsa('JOB-2026-101');
+    assert.equal(jsaAfterValid.signedOff, true, 'JSA is signed off after valid restoration');
+    assert.ok(jsaAfterValid.fullSnapshot, 'Frozen snapshot created');
+    const jsaParsed = JSON.parse(jsaAfterValid.fullSnapshot!);
+    assert.equal(jsaParsed.customerName, 'Latest Authoritative Citizen', 'Frozen snapshot contains latest field value');
+
+    // Repeated same-render sign-off immutability
+    const jsaSnapBefore = jsaAfterValid.fullSnapshot;
+    await act(async () => {
+      ctx.updateJsaForm('JOB-2026-101', { customerName: 'Attempted Mutated Name' });
+      ctx.signOffJsa('JOB-2026-101');
+    });
+    const jsaAfterRepeat = ctx.getOrCreateJsa('JOB-2026-101');
+    assert.equal(jsaAfterRepeat.fullSnapshot, jsaSnapBefore, 'Signed JSA snapshot is strictly immutable against subsequent sign-off attempts');
+
+    // 2. Electrical Flow: Same-render invalidation & sign-off rejection
+    let elecJobId = '';
+    await act(async () => {
+      elecJobId = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Electrical Consistency Test Job',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '100 Marine Pde, Southport QLD',
+        siteContact: 'Elec Tester',
+      }).id;
+    });
+
+    // In a single act, clear required installationAddress and attempt sign-off
+    await act(async () => {
+      ctx.updateElectricalForm(elecJobId, { installationAddress: '' });
+      ctx.signOffElectrical(elecJobId);
+    });
+    const elecAfterInvalid = ctx.getOrCreateElectrical(elecJobId);
+    assert.equal(elecAfterInvalid.signedOff, false, 'Electrical cert remains unsigned when address cleared in same act');
+    assert.equal(elecAfterInvalid.fullSnapshot, undefined, 'No snapshot created for invalid Electrical cert');
+
+    // Restore required address and sign off
+    await act(async () => {
+      ctx.updateElectricalForm(elecJobId, { installationAddress: '88 Gold Coast Hwy, Broadbeach QLD' });
+      ctx.signOffElectrical(elecJobId);
+    });
+    const elecAfterValid = ctx.getOrCreateElectrical(elecJobId);
+    assert.equal(elecAfterValid.signedOff, true, 'Electrical cert signed off after restoration');
+    const elecParsed = JSON.parse(elecAfterValid.fullSnapshot!);
+    assert.equal(elecParsed.installationAddress, '88 Gold Coast Hwy, Broadbeach QLD', 'Frozen snapshot contains latest address');
+
+    // Immutability: Repeated same-render sign-off
+    const elecSnapBefore = elecAfterValid.fullSnapshot;
+    await act(async () => {
+      ctx.updateElectricalForm(elecJobId, { installationAddress: 'Altered Address' });
+      ctx.signOffElectrical(elecJobId);
+    });
+    assert.equal(ctx.getOrCreateElectrical(elecJobId).fullSnapshot, elecSnapBefore, 'Electrical snapshot is immutable');
+
+    // 3. Smoke Alarm Flow: Same-render invalidation & sign-off rejection
+    let smokeJobId = '';
+    await act(async () => {
+      smokeJobId = ctx.createJob({
+        brandId: 'smart_home',
+        title: 'Smoke Alarm Consistency Test Job',
+        jobType: 'JT-002',
+        siteAddress: '200 Marine Pde, Southport QLD',
+        siteContact: 'Smoke Tester',
+      }).id;
+    });
+
+    // In a single act, clear required propertyType and attempt sign-off
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(smokeJobId, { propertyType: '' as any });
+      ctx.signOffSmokeAlarm(smokeJobId);
+    });
+    const smokeAfterInvalid = ctx.getOrCreateSmokeAlarm(smokeJobId);
+    assert.equal(smokeAfterInvalid.signedOff, false, 'Smoke cert remains unsigned when propertyType cleared in same act');
+    assert.equal(smokeAfterInvalid.fullSnapshot, undefined, 'No snapshot created for invalid Smoke cert');
+
+    // Restore propertyType and sign off
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(smokeJobId, { propertyType: 'Townhouse' });
+      ctx.signOffSmokeAlarm(smokeJobId);
+    });
+    const smokeAfterValid = ctx.getOrCreateSmokeAlarm(smokeJobId);
+    assert.equal(smokeAfterValid.signedOff, true, 'Smoke cert signed off after restoration');
+    const smokeParsed = JSON.parse(smokeAfterValid.fullSnapshot!);
+    assert.equal(smokeParsed.propertyType, 'Townhouse', 'Frozen snapshot contains latest propertyType');
+
+    // Immutability: Repeated same-render sign-off
+    const smokeSnapBefore = smokeAfterValid.fullSnapshot;
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(smokeJobId, { propertyType: 'Commercial Office' });
+      ctx.signOffSmokeAlarm(smokeJobId);
+    });
+    assert.equal(ctx.getOrCreateSmokeAlarm(smokeJobId).fullSnapshot, smokeSnapBefore, 'Smoke cert snapshot is immutable');
+
+    // 4. TCA1 Flow: Same-render invalidation & sign-off rejection
+    let tca1JobId = '';
+    await act(async () => {
+      tca1JobId = ctx.createJob({
+        brandId: 'cctv',
+        title: 'TCA1 Consistency Test Job',
+        jobType: 'Enterprise CCTV & Cabling Inspection',
+        siteAddress: '300 Marine Pde, Southport QLD',
+        siteContact: 'TCA1 Tester',
+      }).id;
+    });
+
+    // In a single act, clear required workDescription and attempt sign-off
+    await act(async () => {
+      ctx.updateTca1Form(tca1JobId, { workDescription: '' });
+      ctx.signOffTca1(tca1JobId);
+    });
+    const tca1AfterInvalid = ctx.getOrCreateTca1(tca1JobId);
+    assert.equal(tca1AfterInvalid.signedOff, false, 'TCA1 remains unsigned when workDescription cleared in same act');
+    assert.equal(tca1AfterInvalid.fullSnapshot, undefined, 'No snapshot created for invalid TCA1 cert');
+
+    // Restore workDescription and sign off
+    await act(async () => {
+      ctx.updateTca1Form(tca1JobId, { workDescription: 'Latest 8x Cat6 cabling drops verified' });
+      ctx.signOffTca1(tca1JobId);
+    });
+    const tca1AfterValid = ctx.getOrCreateTca1(tca1JobId);
+    assert.equal(tca1AfterValid.signedOff, true, 'TCA1 signed off after restoration');
+    const tca1Parsed = JSON.parse(tca1AfterValid.fullSnapshot!);
+    assert.equal(tca1Parsed.workDescription, 'Latest 8x Cat6 cabling drops verified', 'Frozen snapshot contains latest workDescription');
+
+    // Immutability: Repeated same-render sign-off
+    const tca1SnapBefore = tca1AfterValid.fullSnapshot;
+    await act(async () => {
+      ctx.updateTca1Form(tca1JobId, { workDescription: 'Altered Description' });
+      ctx.signOffTca1(tca1JobId);
+    });
+    assert.equal(ctx.getOrCreateTca1(tca1JobId).fullSnapshot, tca1SnapBefore, 'TCA1 snapshot is immutable');
+
+    // 5. TCA2 Flow: Same-render invalidation, side-effect prevention, and sign-off
+    let tca2JobId = '';
+    await act(async () => {
+      tca2JobId = ctx.createJob({
+        brandId: 'cctv',
+        title: 'TCA2 Consistency Test Job',
+        jobType: 'Enterprise CCTV & Cabling Inspection',
+        siteAddress: '400 Marine Pde, Southport QLD',
+        siteContact: 'TCA2 Tester',
+      }).id;
+    });
+
+    // In a single act, clear required nonComplianceDescription and attempt sign-off
+    await act(async () => {
+      ctx.updateTca2Form(tca2JobId, { nonComplianceDescription: '' });
+      ctx.signOffTca2(tca2JobId);
+    });
+    const tca2AfterInvalid = ctx.getOrCreateTca2(tca2JobId);
+    assert.equal(tca2AfterInvalid.signedOff, false, 'TCA2 remains unsigned when defect description cleared in same act');
+    assert.equal(tca2AfterInvalid.fullSnapshot, undefined, 'No snapshot created for invalid TCA2 defect report');
+    assert.equal(ctx.getTca2AuditRecord(tca2JobId), undefined, 'No TCA2 audit side effect created on blocked sign-off');
+
+    // Restore defect description and sign off
+    await act(async () => {
+      ctx.updateTca2Form(tca2JobId, { nonComplianceDescription: 'Riser cupboard unsegregated mains power feed' });
+      ctx.signOffTca2(tca2JobId);
+    });
+    const tca2AfterValid = ctx.getOrCreateTca2(tca2JobId);
+    assert.equal(tca2AfterValid.signedOff, true, 'TCA2 signed off after restoration');
+    const tca2Parsed = JSON.parse(tca2AfterValid.fullSnapshot!);
+    assert.equal(tca2Parsed.nonComplianceDescription, 'Riser cupboard unsegregated mains power feed', 'Frozen snapshot contains latest description');
+    assert.ok(ctx.getTca2AuditRecord(tca2JobId), 'TCA2 audit record created after valid sign-off');
+
+    // Immutability: Repeated same-render sign-off
+    const tca2SnapBefore = tca2AfterValid.fullSnapshot;
+    await act(async () => {
+      ctx.updateTca2Form(tca2JobId, { nonComplianceDescription: 'Altered Hazard' });
+      ctx.signOffTca2(tca2JobId);
+    });
+    assert.equal(ctx.getOrCreateTca2(tca2JobId).fullSnapshot, tca2SnapBefore, 'TCA2 snapshot is immutable');
+  });
+});
+
+test('LAYER 6: FC-20 & FC-18 — default certificate reference stability across repeated reads and document creation, and online invoice reference collision immunity against offline reconciled references', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    // 1. FC-20: Default reference stability across subsequent reads, same-render updates, and other document creation
+    let jobA: any;
+    await act(async () => {
+      jobA = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Job A Reference Stability Test',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '100 Queen St, Brisbane QLD',
+        siteContact: 'Alice Ref',
+      });
+    });
+
+    // Initial read
+    const refA1 = ctx.getOrCreateElectrical(jobA.id).certReference;
+    assert.ok(refA1.startsWith('ELEC-CERT-'), 'Initial electrical reference assigned');
+
+    // Subsequent read returns identical reference
+    const refA2 = ctx.getOrCreateElectrical(jobA.id).certReference;
+    assert.equal(refA2, refA1, 'Subsequent read returns stable reference');
+
+    // Same-render form update retains identical reference
+    await act(async () => {
+      ctx.updateElectricalForm(jobA.id, { dateOfTest: '2026-11-15' });
+    });
+    const refA3 = ctx.getOrCreateElectrical(jobA.id).certReference;
+    assert.equal(refA3, refA1, 'Reference remains stable after same-render form update');
+
+    // Creation of another document does not mutate Job A's reference
+    let jobB: any;
+    await act(async () => {
+      jobB = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Job B Reference Stability Test',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '200 Queen St, Brisbane QLD',
+        siteContact: 'Bob Ref',
+      });
+    });
+    const refB1 = ctx.getOrCreateElectrical(jobB.id).certReference;
+    assert.notEqual(refB1, refA1, 'Job B receives distinct reference');
+    const refA4 = ctx.getOrCreateElectrical(jobA.id).certReference;
+    assert.equal(refA4, refA1, 'Job A reference remains stable after Job B creation');
+
+    // 2. FC-18: Online invoice reference collision immunity against offline-reconciled reference
+    // Create offline invoice on Job A
+    await act(async () => {
+      ctx.setPersona('super_admin');
+      ctx.setMyobStatus('DISCONNECTED');
+    });
+    await act(async () => {
+      ctx.prepareInvoiceForJob(jobA.id, 1500);
+    });
+    const offlineJobA = ctx.jobs.find(j => j.id === jobA.id)!;
+    assert.equal(offlineJobA.invoice?.externalMyobRef, 'PENDING-MYOB-SYNC');
+
+    // Reconcile Job A offline invoice
+    await act(async () => {
+      ctx.reconcileInvoiceSync(jobA.id, 'SUCCESS');
+    });
+    const reconciledJobA = ctx.jobs.find(j => j.id === jobA.id)!;
+    const reconciledRefA = reconciledJobA.invoice!.externalMyobRef;
+    assert.ok(reconciledRefA.startsWith('MYOB-INV-'), 'Reconciled invoice receives stable reference');
+
+    // Repeated reconciliation preserves both reference and invoice identity
+    await act(async () => {
+      ctx.reconcileInvoiceSync(jobA.id, 'SUCCESS');
+    });
+    const repeatedJobA = ctx.jobs.find(j => j.id === jobA.id)!;
+    assert.equal(repeatedJobA.invoice?.externalMyobRef, reconciledRefA, 'Repeated reconciliation preserves reference');
+    assert.equal(repeatedJobA.invoice?.id, offlineJobA.invoice?.id, 'Repeated reconciliation preserves invoice identity');
+
+    // Bring MYOB online and create an online invoice on Job B
+    await act(async () => {
+      ctx.setMyobStatus('CONNECTED');
+    });
+    await act(async () => {
+      ctx.prepareInvoiceForJob(jobB.id, 2500);
+    });
+    const onlineJobB = ctx.jobs.find(j => j.id === jobB.id)!;
+    const onlineRefB = onlineJobB.invoice!.externalMyobRef;
+    assert.ok(onlineRefB.startsWith('MYOB-INV-'), 'Online invoice receives valid reference');
+    assert.notEqual(onlineRefB, reconciledRefA, 'Online invoice creation cannot duplicate offline reconciled reference');
+  });
+});
+test('LAYER 6: Render Purity — reading default forms is read-only, commits zero state, returns stable references across repeated renders, and executes cleanly in React StrictMode', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    let purityJob: any;
+    await act(async () => {
+      purityJob = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Render Purity Test Job',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '55 Purity Lane, Brisbane QLD',
+        siteContact: 'Pure Tester',
+      });
+    });
+
+    const jobId = purityJob.id;
+
+    // 1. Before reading: Assert that no form records are committed for this job
+    const authBefore = ctx.getAuthoritativeState();
+    assert.equal(authBefore.jsaForms?.[jobId], undefined, 'Precondition: JSA uncommitted');
+    assert.equal(authBefore.electricalCerts?.[jobId], undefined, 'Precondition: Electrical cert uncommitted');
+    assert.equal(authBefore.smokeAlarmCerts?.[jobId], undefined, 'Precondition: Smoke alarm cert uncommitted');
+    assert.equal(authBefore.tca1Certs?.[jobId], undefined, 'Precondition: TCA1 cert uncommitted');
+    assert.equal(authBefore.tca2Certs?.[jobId], undefined, 'Precondition: TCA2 report uncommitted');
+
+    // 2. Initial Read: Read all five default forms
+    const jsa1 = ctx.getOrCreateJsa(jobId);
+    const elec1 = ctx.getOrCreateElectrical(jobId);
+    const smoke1 = ctx.getOrCreateSmokeAlarm(jobId);
+    const tca1_1 = ctx.getOrCreateTca1(jobId);
+    const tca2_1 = ctx.getOrCreateTca2(jobId);
+
+    // Assert that reading default forms is read-only and commits zero state
+    const authAfterRead1 = ctx.getAuthoritativeState();
+    assert.equal(authAfterRead1.jsaForms?.[jobId], undefined, 'Reading default JSA does not commit form state');
+    assert.equal(authAfterRead1.electricalCerts?.[jobId], undefined, 'Reading default Electrical does not commit form state');
+    assert.equal(authAfterRead1.smokeAlarmCerts?.[jobId], undefined, 'Reading default Smoke Alarm does not commit form state');
+    assert.equal(authAfterRead1.tca1Certs?.[jobId], undefined, 'Reading default TCA1 does not commit form state');
+    assert.equal(authAfterRead1.tca2Certs?.[jobId], undefined, 'Reading default TCA2 does not commit form state');
+
+    // 3. Repeated Read: Reference stability across repeated calls/renders
+    const jsa2 = ctx.getOrCreateJsa(jobId);
+    const elec2 = ctx.getOrCreateElectrical(jobId);
+    const smoke2 = ctx.getOrCreateSmokeAlarm(jobId);
+    const tca1_2 = ctx.getOrCreateTca1(jobId);
+    const tca2_2 = ctx.getOrCreateTca2(jobId);
+
+    assert.equal(elec2.certReference, elec1.certReference, 'Electrical cert reference is stable across repeated reads');
+    assert.equal(smoke2.certReference, smoke1.certReference, 'Smoke alarm cert reference is stable across repeated reads');
+    assert.equal(tca1_2.certReference, tca1_1.certReference, 'TCA1 cert reference is stable across repeated reads');
+    assert.equal(tca2_2.reportReference, tca2_1.reportReference, 'TCA2 report reference is stable across repeated reads');
+
+    // Still nothing committed
+    const authAfterRead2 = ctx.getAuthoritativeState();
+    assert.equal(authAfterRead2.electricalCerts?.[jobId], undefined, 'Repeated reads still do not commit form state');
+
+    // 4. Explicit Update Action commits to authoritative state
+    await act(async () => {
+      ctx.updateElectricalForm(jobId, { dateOfTest: '2026-11-20' });
+    });
+    const authAfterUpdate = ctx.getAuthoritativeState();
+    assert.ok(authAfterUpdate.electricalCerts?.[jobId], 'Explicit update action persists electrical cert in authoritative state');
+    assert.equal(authAfterUpdate.electricalCerts?.[jobId]?.dateOfTest, '2026-11-20');
+    assert.equal(authAfterUpdate.electricalCerts?.[jobId]?.certReference, elec1.certReference, 'Preserves stable reference on update');
+
+    // Other forms remain uncommitted
+    assert.equal(authAfterUpdate.jsaForms?.[jobId], undefined, 'Other forms remain uncommitted after updating electrical cert');
+    assert.equal(authAfterUpdate.smokeAlarmCerts?.[jobId], undefined, 'Smoke alarm remains uncommitted');
+  });
+
+  // 5. React StrictMode rendering verification
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  let strictRenderCount = 0;
+  let strictElecRef = '';
+  let strictSmokeRef = '';
+
+  function StrictConsumer() {
+    strictRenderCount++;
+    const { getOrCreateElectrical, getOrCreateSmokeAlarm } = useCabms();
+    const elec = getOrCreateElectrical('JOB-STRICT-001');
+    const smoke = getOrCreateSmokeAlarm('JOB-STRICT-001');
+    strictElecRef = elec.certReference;
+    strictSmokeRef = smoke.certReference;
+    return React.createElement('div', { id: 'strict-consumer' }, `${elec.certReference} / ${smoke.certReference}`);
+  }
+
+  await act(async () => {
+    root.render(
+      React.createElement(
+        React.StrictMode,
+        null,
+        React.createElement(
+          CabmsProvider,
+          null,
+          React.createElement(StrictConsumer)
+        )
+      )
+    );
+  });
+
+  assert.ok(strictRenderCount >= 2, 'React StrictMode executed double-render');
+  assert.equal(strictElecRef, 'ELEC-CERT-STRICT-001', 'Deterministic electrical cert reference rendered in StrictMode');
+  assert.equal(strictSmokeRef, 'SMOKE-STRICT-001', 'Deterministic smoke cert reference rendered in StrictMode');
+  assert.equal(container.querySelector('#strict-consumer')?.textContent, 'ELEC-CERT-STRICT-001 / SMOKE-STRICT-001');
+
+  await act(async () => {
+    root.unmount();
+  });
+  container.remove();
+});
+test('LAYER 6: FC-01 & Policy A — sendCertificateEmail rejects unrequired forms and direct-to-invoice jobs, and retryCertificateDelivery enforces contractual requirement', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => {
+      ctx.resetDemo();
+    });
+
+    // 1. Direct-to-invoice job (formsRequired: []) cannot dispatch any certificates
+    let dtiJob: any;
+    await act(async () => {
+      dtiJob = ctx.createJob({
+        brandId: 'smart_home',
+        title: 'Policy A Direct-to-Invoice Job',
+        jobType: 'Direct-to-Invoice Emergency Service',
+        siteAddress: '100 DTI Way, Southport QLD',
+        siteContact: 'DTI Contact',
+      });
+    });
+
+    const dtiResult = ctx.sendCertificateEmail(dtiJob.id, 'JSA');
+    assert.equal(dtiResult.success, false, 'sendCertificateEmail rejects unrequired JSA on DTI job');
+    assert.equal(dtiResult.message, 'Certificate not required by work order contract');
+
+    // 2. Standard job with restricted requirements (formsRequired: ['JSA', 'ELECTRICAL'])
+    let solarJob: any;
+    await act(async () => {
+      solarJob = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'Policy A Solarcell Job',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '200 Solar Way, Broadbeach QLD',
+        siteContact: 'Solar Contact',
+      });
+    });
+
+    // Attempting to send unrequired Smoke Alarm certificate fails contract check
+    const unrequiredResult = ctx.sendCertificateEmail(solarJob.id, 'SMOKE_ALARM');
+    assert.equal(unrequiredResult.success, false, 'sendCertificateEmail rejects unrequired SMOKE_ALARM certificate');
+    assert.equal(unrequiredResult.message, 'Certificate not required by work order contract');
+
+    // 3. Attempting to send unsigned required certificate fails sign-off check
+    const unsignedResult = ctx.sendCertificateEmail(solarJob.id, 'ELECTRICAL');
+    assert.equal(unsignedResult.success, false, 'sendCertificateEmail rejects unsigned required certificate');
+    assert.equal(unsignedResult.message, 'Document unsigned');
+
+    // 4. Complete required electrical certificate and sign off
+    await act(async () => {
+      ctx.updateElectricalForm(solarJob.id, {
+        installationAddress: '200 Solar Way, Broadbeach QLD',
+      });
+      ctx.signOffElectrical(solarJob.id);
+    });
+
+    // Dispatch required signed certificate with simulateFail = true to generate FAILED delivery record
+    let failSimResult: any;
+    await act(async () => {
+      failSimResult = ctx.sendCertificateEmail(solarJob.id, 'ELECTRICAL', true);
+    });
+    assert.equal(failSimResult.success, false);
+    const failedRecord = ctx.certificateDeliveries.find(d => d.jobId === solarJob.id && d.status === 'FAILED')!;
+    assert.ok(failedRecord, 'Delivery record created with FAILED status');
+
+    // Retry required delivery record succeeds
+    await act(async () => {
+      ctx.retryCertificateDelivery(failedRecord.id);
+    });
+    const retriedRecord = ctx.certificateDeliveries.find(d => d.id === failedRecord.id)!;
+    assert.equal(retriedRecord.status, 'SENT', 'Retry transitions failed delivery to SENT for contractually required certificate');
+
+    // Retrying an already SENT record is rejected and does not mutate history
+    const sentAtBefore = retriedRecord.sentAt;
+    await act(async () => {
+      ctx.retryCertificateDelivery(retriedRecord.id);
+    });
+    const afterSecondRetry = ctx.certificateDeliveries.find(d => d.id === retriedRecord.id)!;
+    assert.equal(afterSecondRetry.status, 'SENT', 'Historical SENT record cannot be retried');
+    assert.equal(afterSecondRetry.sentAt, sentAtBefore, 'Rejected retry does not rewrite sentAt');
+
+    // 5. Test retry snapshot corruption protection
+    let jsaFailResult: any;
+    await act(async () => {
+      ctx.updateJsaForm(solarJob.id, {
+        inductionCompleted: true,
+        competencyVerified: true,
+      });
+      ctx.signOffJsa(solarJob.id);
+      jsaFailResult = ctx.sendCertificateEmail(solarJob.id, 'JSA', true);
+    });
+    assert.equal(jsaFailResult.success, false);
+    const jsaFailedRecord = ctx.certificateDeliveries.find(d => d.jobId === solarJob.id && d.formType === 'JSA' && d.status === 'FAILED')!;
+    assert.ok(jsaFailedRecord, 'JSA failed delivery record created');
+
+    // Corrupt snapshot
+    (jsaFailedRecord as any).fullFrozenDocumentSnapshot = '{"corrupted": true}';
+
+    await act(async () => {
+      ctx.retryCertificateDelivery(jsaFailedRecord.id);
+    });
+    const preservedFailedRecord = ctx.certificateDeliveries.find(d => d.id === jsaFailedRecord.id)!;
+    assert.equal(preservedFailedRecord.status, 'FAILED', 'Corrupted snapshot blocks retry and preserves FAILED status');
+
+    // 6. Successful normal delivery of required certificate
+    let validResult: any;
+    await act(async () => {
+      validResult = ctx.sendCertificateEmail(solarJob.id, 'ELECTRICAL', false);
+    });
+    assert.equal(validResult.success, true, 'sendCertificateEmail succeeds for valid signed required certificate');
+    assert.equal(validResult.message, 'Certificate delivered successfully');
+  });
+});
+
+
+test('LAYER 6: MAN-SEC-01 — certificate dispatch and retry enforce session authentication and authorized persona boundaries', async () => {
+  await withMountedContext(async (ctx) => {
+    await act(async () => { ctx.resetDemo(); });
+
+    // Create a valid job with required signed form
+    let job: any;
+    await act(async () => {
+      job = ctx.createJob({
+        brandId: 'solarcell',
+        title: 'MAN-SEC-01 Test Job',
+        jobType: 'Residential Solar Maintenance',
+        siteAddress: '100 Security Way, Southport QLD',
+        siteContact: 'Security Contact',
+      });
+      ctx.updateElectricalForm(job.id, {
+        installationAddress: '100 Security Way, Southport QLD',
+      });
+      ctx.signOffElectrical(job.id);
+    });
+
+    const deliveriesCountBefore = ctx.certificateDeliveries.length;
+
+    // 1. Signed-out session: dispatch is rejected without creating delivery records
+    await act(async () => {
+      ctx.simulateSignOut();
+    });
+    const signedOutDispatch = ctx.sendCertificateEmail(job.id, 'ELECTRICAL');
+    assert.equal(signedOutDispatch.success, false, 'Signed-out session cannot dispatch certificate');
+    assert.equal(signedOutDispatch.message, 'Session signed out');
+    assert.equal(ctx.certificateDeliveries.length, deliveriesCountBefore, 'No delivery record created when signed out');
+
+    // 2. Technician persona: dispatch is rejected without creating delivery records
+    await act(async () => {
+      ctx.simulateSignIn('technician');
+    });
+    const techDispatch = ctx.sendCertificateEmail(job.id, 'ELECTRICAL');
+    assert.equal(techDispatch.success, false, 'Technician cannot dispatch certificate');
+    assert.equal(techDispatch.message, 'Unauthorized persona');
+    assert.equal(ctx.certificateDeliveries.length, deliveriesCountBefore, 'No delivery record created by technician');
+
+    // 3. Authorized persona (Office Staff) dispatch succeeds and creates FAILED record for retry testing
+    await act(async () => {
+      ctx.setPersona('office_staff');
+    });
+    let failSimResult: any;
+    await act(async () => {
+      failSimResult = ctx.sendCertificateEmail(job.id, 'ELECTRICAL', true);
+    });
+    assert.equal(failSimResult.success, false);
+    assert.equal(ctx.certificateDeliveries.length, deliveriesCountBefore + 1, 'Delivery record created by authorized persona');
+    const failedRecord = ctx.certificateDeliveries.find(d => d.jobId === job.id && d.status === 'FAILED')!;
+    assert.ok(failedRecord, 'Failed delivery record exists');
+
+    // 4. Retry while signed out: rejected without changing record status
+    await act(async () => {
+      ctx.simulateSignOut();
+    });
+    await act(async () => {
+      ctx.retryCertificateDelivery(failedRecord.id);
+    });
+    const recordAfterSignedOutRetry = ctx.certificateDeliveries.find(d => d.id === failedRecord.id)!;
+    assert.equal(recordAfterSignedOutRetry.status, 'FAILED', 'Signed-out retry rejected; status remains FAILED');
+
+    // 5. Retry as technician: rejected without changing record status
+    await act(async () => {
+      ctx.simulateSignIn('technician');
+    });
+    await act(async () => {
+      ctx.retryCertificateDelivery(failedRecord.id);
+    });
+    const recordAfterTechRetry = ctx.certificateDeliveries.find(d => d.id === failedRecord.id)!;
+    assert.equal(recordAfterTechRetry.status, 'FAILED', 'Technician retry rejected; status remains FAILED');
+
+    // 6. Retry as Super Admin: succeeds and updates status to SENT
+    await act(async () => {
+      ctx.simulateSignIn('super_admin');
+    });
+    await act(async () => {
+      ctx.retryCertificateDelivery(failedRecord.id);
+    });
+    const recordAfterAdminRetry = ctx.certificateDeliveries.find(d => d.id === failedRecord.id)!;
+    assert.equal(recordAfterAdminRetry.status, 'SENT', 'Super Admin retry transitions status to SENT');
+
+    // 7. Verify Owner Admin can also dispatch
+    await act(async () => {
+      ctx.setPersona('owner_admin');
+      ctx.updateJsaForm(job.id, {
+        inductionCompleted: true,
+        competencyVerified: true,
+        customerName: 'Owner Admin Client',
+      });
+      ctx.signOffJsa(job.id);
+    });
+    const ownerDispatch = ctx.sendCertificateEmail(job.id, 'JSA');
+    assert.equal(ownerDispatch.success, true, 'Owner Admin dispatch succeeds');
   });
 });

@@ -1,0 +1,97 @@
+[
+  {
+    "id": "CUSTOMER-DEMO-001",
+    "myobCustomerId": "MYOB-DEMO-001",
+    "name": "John Citizen",
+    "contactPerson": "John Citizen",
+    "email": "john.citizen@example.invalid",
+    "phone": "0400 000 001",
+    "billingAddress": "[Fictional] 42 Orchid Avenue, Surfers Paradise QLD 4217",
+    "brandAffiliations": [
+      "solarcell",
+      "smart_home"
+    ],
+    "syncStatus": "SYNCED",
+    "notes": "Shared synthetic customer across Solarcell and Smart Home Solutions to demonstrate unified MYOB customer master identity.",
+    "createdAt": "2026-10-01",
+    "activityHistory": [
+      {
+        "timestamp": "2026-10-01 09:00",
+        "action": "Created & Synced to MYOB Business",
+        "actor": "Office Staff (Emma Wilson)",
+        "notes": "MYOB-DEMO-001 acknowledged"
+      },
+      {
+        "timestamp": "2026-10-27 10:00",
+        "action": "Quotation MYOB-Q-88204 Issued",
+        "actor": "Office Staff"
+      }
+    ]
+  },
+  {
+    "id": "CUSTOMER-DEMO-002",
+    "myobCustomerId": "MYOB-DEMO-002",
+    "name": "Mermaid Beach Apartments Body Corporate",
+    "contactPerson": "Sarah Jenkins (Strata Manager)",
+    "email": "sjenkins@strata-mermaid.example.invalid",
+    "phone": "0400 000 002",
+    "billingAddress": "[Fictional] Suite 4, 180 Hedges Avenue, Mermaid Beach QLD 4218",
+    "brandAffiliations": [
+      "smart_home"
+    ],
+    "syncStatus": "SYNCED",
+    "notes": "Residential complex requiring annual smoke alarm testing across multiple units.",
+    "createdAt": "2026-10-05",
+    "activityHistory": [
+      {
+        "timestamp": "2026-10-05 11:30",
+        "action": "Created & Synced to MYOB Business",
+        "actor": "Office Staff"
+      }
+    ]
+  },
+  {
+    "id": "CUSTOMER-DEMO-003",
+    "myobCustomerId": "MYOB-DEMO-003",
+    "name": "Vance Logistics Hub",
+    "contactPerson": "Marcus Vance",
+    "email": "marcus.v@vancelogistics.example.invalid",
+    "phone": "0400 000 003",
+    "billingAddress": "[Fictional] 88 Distribution Court, Yatala QLD 4207",
+    "brandAffiliations": [
+      "cctv"
+    ],
+    "syncStatus": "SYNCED",
+    "notes": "Industrial warehouse facility with security cameras and data cabling.",
+    "createdAt": "2026-10-10",
+    "activityHistory": [
+      {
+        "timestamp": "2026-10-10 14:00",
+        "action": "Created & Synced to MYOB Business",
+        "actor": "Office Staff"
+      }
+    ]
+  },
+  {
+    "id": "CUSTOMER-DEMO-004",
+    "myobCustomerId": "MYOB-DEMO-004",
+    "name": "Elena Rossi",
+    "contactPerson": "Elena Rossi",
+    "email": "elena.rossi@example.invalid",
+    "phone": "0400 000 004",
+    "billingAddress": "[Fictional] 15 Monaco Street, Broadbeach Waters QLD 4218",
+    "brandAffiliations": [
+      "solarcell"
+    ],
+    "syncStatus": "SYNCED",
+    "notes": "Luxury residential client with high-output 3-phase inverter solar installation.",
+    "createdAt": "2026-10-15",
+    "activityHistory": [
+      {
+        "timestamp": "2026-10-15 08:30",
+        "action": "Created & Synced to MYOB Business",
+        "actor": "Office Staff"
+      }
+    ]
+  }
+]

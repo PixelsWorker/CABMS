@@ -71,7 +71,7 @@ export function validateJobCompletion(
         if (!jsa) {
           missingRequirements.push('JSA / Risk Assessment record not started');
         } else if (!jsa.signedOff) {
-          missingRequirements.push('JSA / Risk Assessment requires technician DEMO sign-off');
+          missingRequirements.push('JSA / Risk Assessment requires technician Preview sign-off');
         } else if (!jsa.inductionCompleted || !jsa.competencyVerified) {
           missingRequirements.push('JSA requires site induction and competency verification to be confirmed');
         } else if (jsa.steps.length === 0) {
@@ -84,7 +84,7 @@ export function validateJobCompletion(
         if (!elec) {
           missingRequirements.push('Electrical Certificate record not started');
         } else if (!elec.signedOff) {
-          missingRequirements.push('Electrical Certificate requires technician DEMO sign-off');
+          missingRequirements.push('Electrical Certificate requires technician Preview sign-off');
         }
         // Always preserve unresolved Part B warning
         warnings.push('NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred.');
@@ -95,7 +95,7 @@ export function validateJobCompletion(
         if (!smoke) {
           missingRequirements.push('Smoke Alarm Certificate record not started');
         } else if (!smoke.signedOff) {
-          missingRequirements.push('Smoke Alarm Certificate requires technician DEMO sign-off');
+          missingRequirements.push('Smoke Alarm Certificate requires technician Preview sign-off');
         } else {
           // Check for any failing alarm in schedule
           const failingAlarms = smoke.alarmSchedule.filter(a => a.passFail === 'Fail');
@@ -111,7 +111,7 @@ export function validateJobCompletion(
         if (!tca1) {
           missingRequirements.push('TCA1 Cabling Compliance Certificate not started');
         } else if (!tca1.signedOff) {
-          missingRequirements.push('TCA1 Certificate requires registered cabler DEMO sign-off');
+          missingRequirements.push('TCA1 Certificate requires registered cabler Preview sign-off');
         }
         warnings.push('Notice: Cabler registration number and expiry status remain unresolved placeholders.');
         break;
@@ -122,7 +122,7 @@ export function validateJobCompletion(
           missingRequirements.push('TCA2 Cabling Non-Compliance report not started');
         } else {
           if (!tca2.signedOff) {
-            missingRequirements.push('TCA2 Report requires technician DEMO sign-off');
+            missingRequirements.push('TCA2 Report requires technician Preview sign-off');
           }
           // Authoritative audit separation: Check tca2Audit store strictly without legacy fallback
           if (!tca2Audit) {
@@ -220,17 +220,22 @@ export function checkCustomerDuplicate(
   candidate: { email: string; phone: string; name: string },
   existingCustomers: Customer[]
 ): { isDuplicate: boolean; matchedCustomer?: Customer; field?: string } {
-  const normEmail = candidate.email.trim().toLowerCase();
-  const normPhone = candidate.phone.replace(/[^0-9]/g, '');
+  const normEmail = candidate.email ? candidate.email.trim().toLowerCase() : '';
+  const rawPhone = candidate.phone ? candidate.phone.trim() : '';
+  const normPhone = rawPhone.replace(/[^0-9]/g, '');
 
   for (const c of existingCustomers) {
-    if (normEmail && c.email.toLowerCase() === normEmail) {
+    if (normEmail && (c.email || '').trim().toLowerCase() === normEmail) {
       return { isDuplicate: true, matchedCustomer: c, field: 'email' };
     }
-    if (normPhone && c.phone.replace(/[^0-9]/g, '') === normPhone) {
-      return { isDuplicate: true, matchedCustomer: c, field: 'phone' };
+    // FC-15: Check phone only if candidate provided a real non-placeholder phone number
+    if (normPhone && normPhone !== '0400000000') {
+      const existingNormPhone = c.phone ? c.phone.replace(/[^0-9]/g, '') : '';
+      if (existingNormPhone && existingNormPhone !== '0400000000' && existingNormPhone === normPhone) {
+        return { isDuplicate: true, matchedCustomer: c, field: 'phone' };
+      }
     }
-    if (candidate.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
+    if (candidate.name && candidate.name.trim() && candidate.name.trim().toLowerCase() === c.name.trim().toLowerCase()) {
       return { isDuplicate: true, matchedCustomer: c, field: 'name' };
     }
   }
@@ -251,7 +256,7 @@ export function verifyPersonaAccess(
       if (resource === 'technical_integrations') {
         return {
           allowed: false,
-          reason: 'Owner/Admin has operational oversight but cannot alter Super Admin technical credentials or bindings.',
+          reason: 'Admin has operational oversight but cannot alter Super Admin technical credentials or bindings.',
         };
       }
       return { allowed: true };

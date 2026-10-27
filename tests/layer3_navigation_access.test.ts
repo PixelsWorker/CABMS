@@ -150,7 +150,7 @@ test('LAYER 3: Gate S — hidden destinations remain denied by the actual App bo
   const destinations = ['dashboard', 'jobs', 'schedule', 'compliance', 'customers', 'quotes', 'communications', 'website_inbox', 'templates', 'super_admin_setup'];
   const expected = {
     super_admin: destinations,
-    owner_admin: destinations.slice(0, 9),
+    owner_admin: destinations,
     office_staff: destinations.slice(0, 8),
     technician: destinations.slice(0, 4),
   };
@@ -217,5 +217,111 @@ test('LAYER 3: Wave A — Technician dashboard and work-order selection stay ins
     });
     assert.equal(container.textContent?.includes('10kW Solar PV Inverter & Safety Audit'), false, 'brand switch cannot retain solar details');
     assert.ok(container.textContent?.includes('Emergency Aircon Automation Inverter Reset'), container.textContent || 'empty jobs view');
+  });
+});
+test('LAYER 3: WIN-CR-01 — Navigation accessible name announces pending enquiry count in aria-label (multiple, one, and zero)', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container) => {
+    // 1. Initial mounted state has multiple pending website enquiries
+    const initialPending = ctx.websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW');
+    assert.ok(initialPending.length >= 2, 'Seed data contains multiple pending enquiries');
+
+    const inboxButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      btn => btn.title === 'Website Enquiries'
+    );
+    assert.ok(inboxButton, 'Website Enquiries navigation button is rendered');
+    assert.equal(
+      inboxButton.getAttribute('aria-label'),
+      `Website Enquiries (${initialPending.length} pending enquiries)`,
+      'Navigation button aria-label announces plural count for screen readers'
+    );
+    const multiBadge = inboxButton.querySelector('.cabms-nav-badge');
+    assert.ok(multiBadge, 'Visual badge rendered for multiple enquiries');
+    assert.equal(multiBadge.getAttribute('aria-hidden'), 'true', 'Visual badge marked aria-hidden to avoid duplicate screen reader announcement');
+
+    // 2. Dismiss all but one pending enquiry to verify singular wording
+    await act(async () => {
+      for (let i = 1; i < initialPending.length; i++) {
+        ctx.dismissEnquiry(initialPending[i].id);
+      }
+    });
+
+    assert.equal(
+      inboxButton.getAttribute('aria-label'),
+      'Website Enquiries (1 pending enquiry)',
+      'Navigation button aria-label announces singular "1 pending enquiry"'
+    );
+    const singleBadge = inboxButton.querySelector('.cabms-nav-badge');
+    assert.ok(singleBadge, 'Visual badge rendered for single enquiry');
+    assert.equal(singleBadge.getAttribute('aria-hidden'), 'true', 'Single enquiry badge marked aria-hidden');
+    assert.equal(singleBadge.textContent, '1', 'Badge renders count 1');
+
+    // 3. Dismiss the final pending enquiry to verify badge removal and base aria-label
+    await act(async () => {
+      ctx.dismissEnquiry(initialPending[0].id);
+    });
+
+    assert.equal(
+      inboxButton.getAttribute('aria-label'),
+      'Website Enquiries',
+      'Navigation button aria-label reverts to base label when no pending enquiries exist'
+    );
+    const zeroBadge = inboxButton.querySelector('.cabms-nav-badge');
+    assert.equal(zeroBadge, null, 'Visual badge is removed when pending enquiry count reaches 0');
+  });
+});
+
+test('LAYER 3: Navigation — business switcher accessible disclosure and keyboard traversal', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
+    const trigger = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false', 'Switcher trigger initially aria-expanded false');
+
+    await act(async () => { trigger.click(); });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'true', 'Switcher trigger aria-expanded true when opened');
+
+    const menu = container.querySelector('#cabms-brand-dropdown-menu')!;
+    assert.equal(menu.getAttribute('role'), 'group');
+    assert.equal(menu.getAttribute('aria-label'), 'Switch business');
+
+    // Escape closes and restores focus to trigger
+    await act(async () => {
+      window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+    assert.equal(window.document.activeElement, trigger);
+  });
+});
+
+test('LAYER 3: Navigation — brand switcher badge initials and company-panel theme activation', async () => {
+  await mountView(React.createElement(Navigation), async (ctx, container, window) => {
+    const trigger = container.querySelector<HTMLButtonElement>('.cabms-brand-mark-btn')!;
+    const markBadge = trigger.querySelector('.cabms-brand-mark')!;
+
+    // 1. Initial brand: Solarcell -> badge "SC", no SVG mark in button, document data-company-panel is solarcell
+    assert.equal(trigger.querySelector('svg.cabms-brand-mark-svg'), null, 'No SVG mark in brand mark button');
+    assert.equal(markBadge.textContent?.trim(), 'SC', 'Solarcell displays SC badge');
+    assert.equal(window.document.documentElement.getAttribute('data-company-panel'), 'solarcell');
+
+    // Topbar identity contains enlarged full logo and business identity pill
+    const topbarIdentity = container.querySelector('.cabms-topbar-identity')!;
+    assert.ok(topbarIdentity, 'topbar-identity exists');
+    assert.ok(topbarIdentity.querySelector('.cabms-topbar-logo'), 'Full brand logo rendered in topbar identity');
+    assert.ok(topbarIdentity.textContent?.includes('Solarcell'), 'Solarcell identity rendered');
+
+    // 2. Switch to Smart Home Solutions -> badge "SHS", name "Smart Home Solutions"
+    await act(async () => {
+      ctx.setActiveBrandId('smart_home');
+    });
+    assert.equal(markBadge.textContent?.trim(), 'SHS', 'Smart Home Solutions displays SHS badge');
+    assert.equal(window.document.documentElement.getAttribute('data-company-panel'), 'smart_home', 'documentElement data-company-panel updated to smart_home');
+    assert.equal(ctx.brands.smart_home.name, 'Smart Home Solutions', 'Brand name is Smart Home Solutions');
+    assert.ok(topbarIdentity.textContent?.includes('Smart Home Solutions'), 'Smart Home Solutions identity rendered');
+
+    // 3. Switch to CCTV -> badge "C", document data-company-panel is cctv
+    await act(async () => {
+      ctx.setActiveBrandId('cctv');
+    });
+    assert.equal(markBadge.textContent?.trim(), 'C', 'CCTV displays C badge');
+    assert.equal(window.document.documentElement.getAttribute('data-company-panel'), 'cctv', 'documentElement data-company-panel updated to cctv');
+    assert.ok(topbarIdentity.textContent?.includes('CCTV'), 'CCTV identity rendered');
   });
 });

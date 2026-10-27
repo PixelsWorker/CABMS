@@ -1,0 +1,29 @@
+[
+  {
+    "id": "ENQ-2026-301",
+    "submissionDate": "2026-11-02 08:15",
+    "sourceWebsite": "Solarcell Public Website Contact Form",
+    "brandId": "solarcell",
+    "customerName": "John Citizen",
+    "email": "john.citizen@example.invalid",
+    "phone": "0400 000 001",
+    "address": "[Fictional] 42 Orchid Avenue, Surfers Paradise QLD 4217",
+    "serviceRequested": "Battery Storage Quotation & Inverter Health Check",
+    "notes": "Inquiring about adding a 10kWh battery to our existing 10kW solar system installed last year.",
+    "status": "PENDING_REVIEW",
+    "matchedExistingCustomerId": "CUSTOMER-DEMO-001"
+  },
+  {
+    "id": "ENQ-2026-302",
+    "submissionDate": "2026-11-02 07:45",
+    "sourceWebsite": "Gold Coast CCTV Online Quote Request",
+    "brandId": "cctv",
+    "customerName": "Kirsten Blake",
+    "email": "kirsten.blake@example.invalid",
+    "phone": "0400 111 222",
+    "address": "[Fictional] 72 Marine Parade, Southport QLD 4215",
+    "serviceRequested": "6-Camera 4K PoE CCTV System Installation",
+    "notes": "New retail boutique needing perimeter night-vision cameras and remote phone viewing.",
+    "status": "PENDING_REVIEW"
+  }
+]

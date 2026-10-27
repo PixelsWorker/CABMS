@@ -6,17 +6,19 @@
 import React from 'react';
 import { formatBusinessTime } from '../utils/businessTime.ts';
 import { useCabms, DemoScenario } from '../context/CabmsContext.tsx';
-import { Persona, BrandId } from '../types/cabms.ts';
+import { Persona, BrandId, AppearanceMode, VisualPreset } from '../types/cabms.ts';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
-  Clock,
-  RotateCcw,
-  UserCheck,
-  Building2,
-  Workflow,
-  FastForward,
-  HelpCircle,
-  Send,
-} from 'lucide-react';
+  faBuilding,
+  faCircleQuestion,
+  faClock,
+  faDiagramProject,
+  faForward,
+  faPalette,
+  faPaperPlane,
+  faRotateLeft,
+  faUserCheck,
+} from '@fortawesome/free-solid-svg-icons';
 
 export const DemoControlsBar: React.FC = () => {
   const {
@@ -26,6 +28,10 @@ export const DemoControlsBar: React.FC = () => {
     activeBrandId,
     setActiveBrandId,
     brands,
+    appearance,
+    setAppearance,
+    visualPreset,
+    setVisualPreset,
     demoClock,
     advanceClock,
     resetDemo,
@@ -49,14 +55,14 @@ export const DemoControlsBar: React.FC = () => {
 
   return (
     <details className="cabms-demo-controls" open={controlsOpen} onToggle={event => setControlsOpen(event.currentTarget.open)}>
-      <summary>Demo controls · persona, workspace, scenario and business clock</summary>
+      <summary>Workspace Simulator & Persona Switcher</summary>
     <div className="bg-slate-900 text-slate-100 border-b border-slate-800 px-3 py-2 text-xs md:text-sm">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
         {/* Left Section: Persona & Brand */}
         <div className="flex min-w-0 w-full flex-wrap items-center gap-3 sm:w-auto">
           {/* Persona Selector */}
           <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
-            <UserCheck className="w-3.5 h-3.5 text-sky-400" />
+            <FontAwesomeIcon icon={faUserCheck} className="w-3.5 h-3.5 text-sky-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Persona:</span>
             <select
               value={persona}
@@ -65,7 +71,7 @@ export const DemoControlsBar: React.FC = () => {
               aria-label="Demo Persona Selector"
             >
               <option value="super_admin" className="bg-slate-900 text-white">Super Admin</option>
-              <option value="owner_admin" className="bg-slate-900 text-white">Owner / Admin</option>
+              <option value="owner_admin" className="bg-slate-900 text-white">Admin</option>
               <option value="office_staff" className="bg-slate-900 text-white">Office Staff</option>
               <option value="technician" className="bg-slate-900 text-white">Technician (Dave M.)</option>
             </select>
@@ -73,7 +79,7 @@ export const DemoControlsBar: React.FC = () => {
 
           {/* Active Brand Switcher */}
           <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
-            <Building2 className="w-3.5 h-3.5 text-amber-400" />
+            <FontAwesomeIcon icon={faBuilding} className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Workspace:</span>
             <select
               value={activeBrandId}
@@ -94,7 +100,7 @@ export const DemoControlsBar: React.FC = () => {
 
           {/* Named Scenario Selector */}
           <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
-            <Workflow className="w-3.5 h-3.5 text-emerald-400" />
+            <FontAwesomeIcon icon={faDiagramProject} className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Scenario:</span>
             <select
               value={activeScenario}
@@ -110,13 +116,31 @@ export const DemoControlsBar: React.FC = () => {
               <option value="myob_failed" className="bg-slate-900 text-white">6. MYOB Write-Through Failure</option>
             </select>
           </div>
+
+          {/* Visual Preset Selector */}
+          <div className="cabms-control-select flex items-center gap-1.5 bg-slate-800 px-2 py-1 rounded border border-slate-700">
+            <FontAwesomeIcon icon={faPalette} className="w-3.5 h-3.5 text-purple-400" />
+            <span className="text-slate-400 text-xs hidden sm:inline">Theme:</span>
+            <select
+              value={visualPreset}
+              onChange={e => setVisualPreset(e.target.value as VisualPreset)}
+              className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
+              aria-label="Visual Preset Selector"
+            >
+              <option value="dark_company" className="bg-slate-900 text-white">Preset 2 — Dark + Company</option>
+              <option value="dark_neutral" className="bg-slate-900 text-white">Preset 1 — All Dark</option>
+              <option value="light_company" className="bg-slate-900 text-white">Preset 4 — Light + Company</option>
+              <option value="light_neutral" className="bg-slate-900 text-white">Preset 3 — All Light</option>
+              <option value="high_visibility_dark" className="bg-slate-900 text-white">High Visibility Dark</option>
+            </select>
+          </div>
         </div>
 
         {/* Right Section: Virtual Clock & Reset */}
         <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
           {/* Fictional Business Clock */}
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 bg-slate-800/80 px-2 py-1 rounded border border-slate-700/80 text-xs">
-            <Clock className="w-3.5 h-3.5 text-amber-300" />
+            <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5 text-amber-300" />
             <span className="cabms-clock min-w-0 text-slate-300 font-mono tracking-tight">{formattedDate}</span>
             <div className="flex items-center ml-1 space-x-0.5 border-l border-slate-700 pl-1">
               <button
@@ -143,7 +167,7 @@ export const DemoControlsBar: React.FC = () => {
               className="flex items-center space-x-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 px-2.5 py-1 rounded text-xs font-bold transition shadow-sm cursor-pointer animate-pulse"
               title="Dispatch and resolve all pending customer review requests"
             >
-              <Send className="w-3.5 h-3.5" />
+              <FontAwesomeIcon icon={faPaperPlane} className="w-3.5 h-3.5" />
               <span>Dispatch Review ({pendingReviewCount} Pending)</span>
             </button>
           )}
@@ -152,10 +176,10 @@ export const DemoControlsBar: React.FC = () => {
           <button
             onClick={resetDemo}
             className="flex items-center space-x-1 bg-red-950/60 hover:bg-red-900/80 text-red-200 border border-red-800/60 px-2.5 py-1 rounded text-xs font-medium transition cursor-pointer"
-            title="Reset all seed records, pending drafts, versions and virtual clock"
+            title="Reset all sample records, pending drafts, versions and virtual clock"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Reset Demo</span>
+            <FontAwesomeIcon icon={faRotateLeft} className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Reset Preview State</span>
           </button>
         </div>
       </div>

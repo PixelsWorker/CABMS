@@ -651,9 +651,13 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async revokeQuote(jobId: string, reason?: string): Promise<{ success: boolean; message: string }> {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job || !job.quote) throw new NotFoundError('Quote for Job', jobId);
+    if (job.quote.acceptanceStatus !== 'SENT' && job.quote.acceptanceStatus !== 'DRAFT') {
+      throw new ValidationError(`Cannot revoke quote in ${job.quote.acceptanceStatus} state.`);
+    }
 
     const timestamp = serializeBusinessInstant(this.clock());
     job.quote.acceptanceStatus = 'REVOKED';
+    job.quote.followUps = job.quote.followUps?.map(fu => fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' } : fu);
     job.quote.acceptanceHistory.push({
       timestamp,
       action: `Quote revoked${reason ? `: ${reason}` : ''}`,
@@ -665,10 +669,14 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async refuseQuote(jobId: string, reason?: string): Promise<{ success: boolean; message: string }> {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job || !job.quote) throw new NotFoundError('Quote for Job', jobId);
+    if (job.quote.acceptanceStatus !== 'SENT' && job.quote.acceptanceStatus !== 'DRAFT') {
+      throw new ValidationError(`Cannot decline quote in ${job.quote.acceptanceStatus} state.`);
+    }
 
     const timestamp = serializeBusinessInstant(this.clock());
     job.quote.acceptanceStatus = 'REVOKED';
     job.quote.refusalReason = reason || 'Declined by customer';
+    job.quote.followUps = job.quote.followUps?.map(fu => fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' } : fu);
     job.quote.acceptanceHistory.push({
       timestamp,
       action: `Customer declined quotation: ${job.quote.refusalReason}`,

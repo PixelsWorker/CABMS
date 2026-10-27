@@ -24,6 +24,7 @@ import {
   DraftBusinessProfile,
 } from '../src/types/cabms.ts';
 import {
+  CompletionValidationResult,
   validateJobCompletion,
   deduplicateReviewRequest,
   suppressOldReminders,
@@ -129,6 +130,87 @@ test('LAYER 6: PR16 adapter terminal jobs reject every mutation and preserve ded
   }
 });
 
+test('LAYER 6: PR16 context job guards preserve terminal jobs and allow only valid reopen transitions', async () => {
+  await withMountedContext(async ctx => {
+    const completedId = 'JOB-2026-101';
+    await act(async () => { ctx.updateJobStatus(completedId, 'IN_PROGRESS'); });
+    const completed = ctx.getAuthoritativeState().jobs.find(j => j.id === completedId)!;
+    // Install a terminal fixture after the public update detached it from shared seed data.
+    completed.status = 'COMPLETED';
+    const completedBefore = structuredClone(completed);
+    for (const operation of [
+      () => ctx.updateJobStatus(completedId, 'NEW'),
+      () => ctx.cancelWholeJob(completedId, 'Rejected completed-job cancellation'),
+      () => ctx.reopenCancelledJob(completedId),
+    ]) {
+      await act(async () => { operation(); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === completedId), completedBefore);
+      assert.equal(ctx.demoNotification?.type, 'error');
+    }
+
+    const cancelledId = 'JOB-2026-102';
+    await act(async () => { ctx.updateJobStatus(cancelledId, 'IN_PROGRESS'); });
+    const cancelled = ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId)!;
+    cancelled.status = 'CANCELLED';
+    const cancelledBefore = structuredClone(cancelled);
+    for (const operation of [
+      () => ctx.updateJobStatus(cancelledId, 'SCHEDULED'),
+      () => ctx.cancelWholeJob(cancelledId, 'Rejected repeated cancellation'),
+    ]) {
+      await act(async () => { operation(); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId), cancelledBefore);
+      assert.equal(ctx.demoNotification?.type, 'error');
+    }
+
+    await act(async () => { ctx.reopenCancelledJob(cancelledId); });
+    const reopened = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId)!);
+    assert.ok(reopened.status === 'NEW' || reopened.status === 'SCHEDULED');
+    assert.equal(reopened.activityHistory.length, cancelledBefore.activityHistory.length + 1);
+    await act(async () => { ctx.reopenCancelledJob(cancelledId); });
+    assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId), reopened);
+    assert.equal(ctx.demoNotification?.type, 'error');
+
+    await act(async () => { ctx.cancelWholeJob(cancelledId, 'Valid cancellation after reopening'); });
+    const cancelledAgain = ctx.getAuthoritativeState().jobs.find(j => j.id === cancelledId)!;
+    assert.equal(cancelledAgain.status, 'CANCELLED');
+    assert.ok(cancelledAgain.reminders.every(r => r.delivered || r.suppressed), 'dedicated cancellation suppresses pending reminders');
+
+    const beforeMissing = structuredClone(ctx.getAuthoritativeState().jobs);
+    for (const operation of [
+      () => ctx.updateJobStatus('MISSING-JOB', 'IN_PROGRESS'),
+      () => ctx.cancelWholeJob('MISSING-JOB', 'Missing fixture'),
+      () => ctx.reopenCancelledJob('MISSING-JOB'),
+    ]) {
+      await act(async () => { operation(); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs, beforeMissing);
+      assert.equal(ctx.demoNotification?.type, 'error');
+    }
+
+    const activeId = 'JOB-2026-103';
+    await act(async () => { ctx.updateJobStatus(activeId, 'IN_PROGRESS'); });
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === activeId)?.status, 'IN_PROGRESS');
+
+    const directTransitionId = 'JOB-2026-104';
+    await act(async () => { ctx.updateJobStatus(directTransitionId, 'IN_PROGRESS'); });
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId)?.status, 'IN_PROGRESS');
+    for (const terminalStatus of ['COMPLETED', 'CANCELLED'] as const) {
+      const before = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId)!);
+      await act(async () => { ctx.updateJobStatus(directTransitionId, terminalStatus); });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId), before);
+      assert.equal(ctx.demoNotification?.type, 'error');
+      assert.match(ctx.demoNotification?.message || '', new RegExp(terminalStatus === 'COMPLETED' ? 'validated completion' : 'whole-job cancellation'));
+    }
+
+    let completionAttempt!: CompletionValidationResult;
+    await act(async () => { completionAttempt = ctx.attemptCompleteJob(directTransitionId); });
+    assert.equal(
+      ctx.getAuthoritativeState().jobs.find(j => j.id === directTransitionId)?.status === 'COMPLETED',
+      completionAttempt.canComplete,
+      'only the validated completion workflow can move the job to COMPLETED'
+    );
+  });
+});
+
 test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps use one injected clock read', async () => {
   let clock = '2027-12-24T09:00:00+10:00';
   let reads = 0;
@@ -148,11 +230,13 @@ test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps us
     assert.ok(quote.followUps?.every(f => f.quoteId === quote.id));
   }
   for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
-    const beforeReads = reads;
     clock = '2027-12-26T10:30:00+10:00';
-    await adapter[operation]('JOB-2026-103', 'Synthetic operation');
+    const operationAdapter = new MockDataAdapter(() => { reads++; return clock; });
+    await operationAdapter.prepareQuoteForJob('JOB-2026-103', 'Independent operation fixture', items);
+    const beforeReads = reads;
+    await operationAdapter[operation]('JOB-2026-103', 'Synthetic operation');
     assert.equal(reads, beforeReads + 1);
-    assert.equal((await adapter.getQuoteForJob('JOB-2026-103'))!.acceptanceHistory.at(-1)!.timestamp, serializeBusinessInstant(clock));
+    assert.equal((await operationAdapter.getQuoteForJob('JOB-2026-103'))!.acceptanceHistory.at(-1)!.timestamp, serializeBusinessInstant(clock));
   }
   const before = adapter.getInitialBaseline();
   for (const unsupported of ['2028-12-29T09:00:00+10:00', '2030-01-01T09:00:00+10:00']) {
@@ -162,6 +246,53 @@ test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps us
   }
   const defaultQuote = await new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Default clock', items);
   assert.equal(defaultQuote.issuedAt, serializeBusinessInstant(INITIAL_BUSINESS_CLOCK));
+});
+
+test('LAYER 6: PR16 adapter revoke/refuse enforce quote states and process follow-ups atomically', async () => {
+  const operationClock = '2027-12-26T10:30:00+10:00';
+  const makeAdapter = (status: Quote['acceptanceStatus']) => {
+    let clockReads = 0;
+    const adapter = new MockDataAdapter(() => { clockReads++; return operationClock; });
+    const jobs = adapter.getInitialBaseline().jobs;
+    const quote = jobs.find(j => j.id === 'JOB-2026-103')!.quote!;
+    quote.acceptanceStatus = status;
+    quote.followUps = [
+      { ...quote.followUps![0], id: `scheduled-${status}`, status: 'SCHEDULED' },
+      { ...quote.followUps![1], id: `sent-${status}`, status: 'SENT', sentAt: '2026-11-04T00:00:00+10:00' },
+    ];
+    Object.assign(adapter, { jobs });
+    return { adapter, reads: () => clockReads };
+  };
+
+  for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+    for (const validStatus of ['SENT', 'DRAFT'] as const) {
+      const { adapter, reads } = makeAdapter(validStatus);
+      const before = await adapter.getQuoteForJob('JOB-2026-103');
+      assert.ok(before);
+      const readsBefore = reads();
+      await adapter[operation]('JOB-2026-103', 'Independent quote operation');
+      const after = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+      assert.equal(reads(), readsBefore + 1, 'successful operation captures one clock value');
+      assert.equal(after.acceptanceStatus, 'REVOKED');
+      assert.equal(after.acceptanceHistory.length, before.acceptanceHistory.length + 1);
+      assert.equal(after.acceptanceHistory.at(-1)!.timestamp, serializeBusinessInstant(operationClock));
+      assert.deepEqual(after.followUps?.map(f => f.status), ['CANCELLED', 'SENT']);
+
+      const afterSuccess = adapter.getInitialBaseline();
+      const readsAfterSuccess = reads();
+      await assert.rejects(adapter[operation]('JOB-2026-103', 'Repeated terminal operation'), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), afterSuccess, 'repeated revoke/refusal leaves state and history unchanged');
+      assert.equal(reads(), readsAfterSuccess, 'rejected transition does not read the clock');
+    }
+
+    for (const terminalStatus of ['ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+      const { adapter, reads } = makeAdapter(terminalStatus);
+      const before = adapter.getInitialBaseline();
+      await assert.rejects(adapter[operation]('JOB-2026-103', 'Rejected terminal quote'), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), before, `${operation} preserves ${terminalStatus} quote and history`);
+      assert.equal(reads(), 0, 'rejected transition does not read the clock');
+    }
+  }
 });
 
 test('LAYER 6: PR16 adapter acceptance rejects every invalid scenario/state and elapsed expiry atomically', async () => {

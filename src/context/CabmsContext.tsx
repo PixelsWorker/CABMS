@@ -1173,6 +1173,21 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateJobStatus = (jobId: string, newStatus: JobStatus) => {
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    if (!targetJob) {
+      showDemoNotification(`Cannot update status: Job ${jobId} was not found.`, 'error');
+      return;
+    }
+    if (newStatus === 'COMPLETED' || newStatus === 'CANCELLED') {
+      const requiredFlow = newStatus === 'COMPLETED' ? 'validated completion' : 'whole-job cancellation';
+      showDemoNotification(`Use the ${requiredFlow} workflow to set a job to ${newStatus}.`, 'error');
+      return;
+    }
+    if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
+      showDemoNotification(`Cannot update a ${targetJob.status.toLowerCase()} job.`, 'error');
+      return;
+    }
+
     commitJobsState(current => current.map(j =>
       j.id === jobId
         ? {
@@ -1341,6 +1356,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const cancelWholeJob = (jobId: string, reason: string) => {
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    if (!targetJob) {
+      showDemoNotification(`Cannot cancel job: Job ${jobId} was not found.`, 'error');
+      return;
+    }
+    if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
+      showDemoNotification(`Cannot cancel a ${targetJob.status.toLowerCase()} job.`, 'error');
+      return;
+    }
+
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId) {
@@ -1366,6 +1391,16 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const reopenCancelledJob = (jobId: string) => {
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    if (!targetJob) {
+      showDemoNotification(`Cannot reopen job: Job ${jobId} was not found.`, 'error');
+      return;
+    }
+    if (targetJob.status !== 'CANCELLED') {
+      showDemoNotification(`Cannot reopen a job in ${targetJob.status} state.`, 'error');
+      return;
+    }
+
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId) {

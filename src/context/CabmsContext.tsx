@@ -298,7 +298,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  const setVisualPreset = (preset: VisualPreset, syncActiveBrand: boolean = true) => {
+  const setVisualPreset = (preset: VisualPreset, syncActiveBrand: boolean = false) => {
     setVisualPresetState(preset);
     switch (preset) {
       case 'dark_neutral':

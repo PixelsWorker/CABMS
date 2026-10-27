@@ -37,7 +37,7 @@ const getBrandDefaults = (brand: BrandConfig, fallbackPreset: VisualPreset): Wor
   contactEmail: brand.contactEmail || '',
   operationalAddress: brand.operationalAddress || '',
   operatingHours: brand.operatingHours || '',
-  preferredPreset: brand.preferredPreset || fallbackPreset,
+  preferredPreset: brand.preferredPreset || (fallbackPreset === 'high_visibility_dark' ? 'dark_company' : fallbackPreset),
 });
 
 export const WorkspaceSettingsView: React.FC = () => {

@@ -2742,7 +2742,7 @@ test('LAYER 6: P1 — same-render certificate consistency across all five docume
       smokeJobId = ctx.createJob({
         brandId: 'smart_home',
         title: 'Smoke Alarm Consistency Test Job',
-        jobType: 'Residential Solar Maintenance',
+        jobType: 'JT-002',
         siteAddress: '200 Marine Pde, Southport QLD',
         siteContact: 'Smoke Tester',
       }).id;

@@ -1,15 +1,13 @@
 /**
  * Workspace Settings View (Tab 1 of System & Workspace Settings)
  * Accessible to Admin (owner_admin) and Super Admin (super_admin).
- * Allows managing operational contacts, hours, address, branding preferences,
- * and previewing official SVG branding and document presentations.
+ * Allows managing operational contacts, hours, address, and branding preferences.
  * Legal entities and technical credentials remain strictly read-only for Admins.
  */
 
 import React, { useState, useEffect } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { BrandConfig, BrandId, VisualPreset } from '../types/cabms.ts';
-import { BrandLogo } from '../components/BrandLogo.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBuilding,
@@ -20,11 +18,8 @@ import {
   faPalette,
   faLock,
   faCheck,
-  faEye,
   faCircleCheck,
   faTriangleExclamation,
-  faFileInvoiceDollar,
-  faFileLines,
 } from '@fortawesome/free-solid-svg-icons';
 
 interface WorkspaceDraft {
@@ -75,8 +70,6 @@ export const WorkspaceSettingsView: React.FC = () => {
     }));
   };
 
-  // Preview tab state
-  const [previewTab, setPreviewTab] = useState<'quote' | 'invoice' | 'email'>('quote');
   const [savedFeedback, setSavedFeedback] = useState(false);
 
   useEffect(() => {
@@ -199,14 +192,12 @@ export const WorkspaceSettingsView: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Editable Operational Settings & Read-Only Legal (7 cols) */}
-        <div className="lg:col-span-7 space-y-6">
-          <form onSubmit={handleSave} className="cabms-card p-6 space-y-4">
-            <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">
-              <FontAwesomeIcon icon={faBuilding} className="text-amber-500" />
-              Operational Contact & Preferences
-            </h3>
+      <div className="space-y-6">
+        <form onSubmit={handleSave} className="cabms-card p-6 space-y-4">
+          <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">
+            <FontAwesomeIcon icon={faBuilding} className="text-amber-500" />
+            Operational Contact & Preferences
+          </h3>
 
             {/* Tagline */}
             <div>
@@ -378,129 +369,6 @@ export const WorkspaceSettingsView: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Right Column: Official Logo Preview & Presentation Previews (5 cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Official Brand Logo Artwork Preview */}
-          <div className="cabms-card p-6 space-y-4">
-            <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">
-              <FontAwesomeIcon icon={faEye} className="text-amber-500" />
-              Authoritative SVG Brand Identity
-            </h3>
-
-            <div className="p-4 rounded-lg bg-(--cabms-surface-subtle) border border-(--cabms-border-base) flex flex-col items-center justify-center gap-4">
-              <div className="w-full max-w-[280px] p-2 bg-(--cabms-surface) rounded border border-(--cabms-border-base) flex items-center justify-center">
-                <BrandLogo brandId={currentBrand.id as BrandId} variant="full" className="max-h-16 w-auto" />
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-(--cabms-surface) rounded border border-(--cabms-border-base) flex items-center justify-center">
-                  <BrandLogo brandId={currentBrand.id as BrandId} variant="mark" className="w-10 h-10" />
-                </div>
-                <div className="text-xs text-(--cabms-text-secondary)">
-                  <span className="font-bold text-(--cabms-text-primary) block">{currentBrand.name}</span>
-                  <span>Primary Mark & Crest Vector</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Presentation Previews (Quote, Invoice, Email) */}
-          <div className="cabms-card p-6 space-y-4">
-            <div className="flex items-center justify-between border-b border-(--cabms-border-base) pb-3">
-              <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2">
-                <FontAwesomeIcon icon={faFileInvoiceDollar} className="text-amber-500" />
-                Customer Document Preview
-              </h3>
-              <div className="flex bg-(--cabms-surface-subtle) rounded p-0.5 border border-(--cabms-border-base)">
-                <button
-                  type="button"
-                  onClick={() => setPreviewTab('quote')}
-                  className={`px-2 py-1 text-xs rounded font-medium ${
-                    previewTab === 'quote' ? 'bg-(--cabms-surface) text-amber-400 font-bold' : 'text-(--cabms-text-secondary)'
-                  }`}
-                >
-                  Quote
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewTab('invoice')}
-                  className={`px-2 py-1 text-xs rounded font-medium ${
-                    previewTab === 'invoice' ? 'bg-(--cabms-surface) text-amber-400 font-bold' : 'text-(--cabms-text-secondary)'
-                  }`}
-                >
-                  Invoice
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewTab('email')}
-                  className={`px-2 py-1 text-xs rounded font-medium ${
-                    previewTab === 'email' ? 'bg-(--cabms-surface) text-amber-400 font-bold' : 'text-(--cabms-text-secondary)'
-                  }`}
-                >
-                  Email
-                </button>
-              </div>
-            </div>
-
-            {/* Document Render Mockup */}
-            <div className="p-4 rounded-lg bg-(--cabms-surface-subtle) border border-(--cabms-border-base) font-sans text-xs space-y-3">
-              <div className="flex justify-between items-start border-b border-(--cabms-border-base) pb-2">
-                <div>
-                  <BrandLogo brandId={currentBrand.id as BrandId} variant="mark" className="w-8 h-8 mb-1" />
-                  <span className="font-bold text-(--cabms-text-primary) block">{currentBrand.legalIssuerName}</span>
-                  <span className="font-mono text-[10px] text-(--cabms-text-secondary)">{currentBrand.abnPlaceholder}</span>
-                </div>
-                <div className="text-right">
-                  <span className="font-bold uppercase text-amber-400 block">
-                    {previewTab === 'quote' ? 'QUOTATION' : previewTab === 'invoice' ? 'TAX INVOICE' : 'SERVICE DISPATCH'}
-                  </span>
-                  <span className="font-mono text-[10px] text-(--cabms-text-secondary)">
-                    {previewTab === 'quote' ? 'QTE-2026-PREVIEW' : previewTab === 'invoice' ? 'INV-2026-PREVIEW' : 'REF #COMM-2026'}
-                  </span>
-                </div>
-              </div>
-
-              {previewTab === 'email' ? (
-                <div className="space-y-1.5 text-xs text-(--cabms-text-secondary)">
-                  <p>
-                    <span className="font-semibold text-(--cabms-text-primary)">From: </span>
-                    {currentBrand.name} Operations &lt;{currentFormValues.contactEmail || currentBrand.contactEmail}&gt;
-                  </p>
-                  <p>
-                    <span className="font-semibold text-(--cabms-text-primary)">Subject: </span>
-                    Quotation Follow-Up & Acceptance Portal Link
-                  </p>
-                  <div className="p-2 rounded bg-(--cabms-surface) border border-(--cabms-border-base) text-[11px] leading-relaxed text-(--cabms-text-primary)">
-                    Dear Customer, please review your detailed service proposal and digital sign-off link. Standard 14-day
-                    validity period applies. Call {currentFormValues.contactPhone || currentBrand.contactPhone} with any queries.
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-[11px] text-(--cabms-text-secondary)">
-                    <span>Facility: {currentFormValues.operationalAddress || 'Brendale QLD 4500'}</span>
-                    <span>Ph: {currentFormValues.contactPhone || currentBrand.contactPhone}</span>
-                  </div>
-                  <div className="p-2 rounded bg-(--cabms-surface) border border-(--cabms-border-base) space-y-1">
-                    <div className="flex justify-between font-mono text-[11px] text-(--cabms-text-primary)">
-                      <span>Trade Service Scope & Commissioning</span>
-                      <span>$580.00</span>
-                    </div>
-                    <div className="flex justify-between font-mono text-[10px] text-(--cabms-text-secondary)">
-                      <span>10% GST</span>
-                      <span>$58.00</span>
-                    </div>
-                    <div className="flex justify-between font-mono font-bold text-[11px] text-amber-400 border-t border-(--cabms-border-base) pt-1">
-                      <span>Total Inc GST</span>
-                      <span>$638.00</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

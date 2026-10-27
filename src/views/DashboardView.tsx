@@ -238,7 +238,7 @@ export const DashboardView: React.FC = () => {
                           setActiveTab('jobs');
                         }
                       }}
-                      className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-3.5 rounded-lg cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-(--cabms-border-base) focus:outline-none focus:ring-2 focus:ring-(--cabms-accent)"
+                      className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-3.5 rounded-lg cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-(--cabms-border-base) focus:outline-none focus-visible:ring-2 focus-visible:ring-(--cabms-border-focus)"
                     >
                       <div className="space-y-1.5 min-w-0">
                         <div className="flex flex-wrap items-center gap-2">

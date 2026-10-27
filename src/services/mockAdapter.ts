@@ -399,6 +399,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async signOffJsaForm(jobId: string, signer: SignOffPayload): Promise<JsaFormData> {
     const existing = this.complianceForms.jsa[jobId];
     if (!existing) throw new NotFoundError('JsaForm', jobId);
+    if (existing.signedOff) {
+      throw new ForbiddenError('JSA is already signed off. Snapshot is immutable.');
+    }
 
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
@@ -424,6 +427,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async signOffElectricalForm(jobId: string, signer: SignOffPayload): Promise<ElectricalCertData> {
     const existing = this.complianceForms.electrical[jobId];
     if (!existing) throw new NotFoundError('ElectricalForm', jobId);
+    if (existing.signedOff) {
+      throw new ForbiddenError('Electrical Certificate is already signed off. Snapshot is immutable.');
+    }
 
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
@@ -449,6 +455,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async signOffSmokeAlarmForm(jobId: string, signer: SignOffPayload): Promise<SmokeAlarmCertData> {
     const existing = this.complianceForms.smokeAlarm[jobId];
     if (!existing) throw new NotFoundError('SmokeAlarmForm', jobId);
+    if (existing.signedOff) {
+      throw new ForbiddenError('Smoke Alarm Certificate is already signed off. Snapshot is immutable.');
+    }
 
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
@@ -474,6 +483,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async signOffTca1Form(jobId: string, signer: SignOffPayload): Promise<Tca1CertData> {
     const existing = this.complianceForms.tca1[jobId];
     if (!existing) throw new NotFoundError('Tca1Form', jobId);
+    if (existing.signedOff) {
+      throw new ForbiddenError('TCA1 form is already signed off. Snapshot is immutable.');
+    }
 
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
@@ -499,6 +511,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async signOffTca2Form(jobId: string, signer: SignOffPayload): Promise<Tca2CertData> {
     const existing = this.complianceForms.tca2[jobId];
     if (!existing) throw new NotFoundError('Tca2Form', jobId);
+    if (existing.signedOff) {
+      throw new ForbiddenError('TCA2 form is already signed off. Snapshot is immutable.');
+    }
 
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;

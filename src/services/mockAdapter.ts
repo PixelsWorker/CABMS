@@ -656,6 +656,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
     }
 
     const timestamp = serializeBusinessInstant(this.clock());
+    if (job.quote.expiresAt && !(Date.parse(timestamp) < Date.parse(job.quote.expiresAt))) {
+      throw new ValidationError('Cannot revoke an expired quote.');
+    }
     job.quote.acceptanceStatus = 'REVOKED';
     job.quote.followUps = job.quote.followUps?.map(fu => fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' } : fu);
     job.quote.acceptanceHistory.push({
@@ -674,6 +677,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
     }
 
     const timestamp = serializeBusinessInstant(this.clock());
+    if (job.quote.expiresAt && !(Date.parse(timestamp) < Date.parse(job.quote.expiresAt))) {
+      throw new ValidationError('Cannot decline an expired quote.');
+    }
     job.quote.acceptanceStatus = 'REVOKED';
     job.quote.refusalReason = reason || 'Declined by customer';
     job.quote.followUps = job.quote.followUps?.map(fu => fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' } : fu);

@@ -256,6 +256,7 @@ test('LAYER 6: PR16 adapter revoke/refuse enforce quote states and process follo
     const jobs = adapter.getInitialBaseline().jobs;
     const quote = jobs.find(j => j.id === 'JOB-2026-103')!.quote!;
     quote.acceptanceStatus = status;
+    quote.expiresAt = '2027-12-26T10:30:00.001+10:00';
     quote.followUps = [
       { ...quote.followUps![0], id: `scheduled-${status}`, status: 'SCHEDULED' },
       { ...quote.followUps![1], id: `sent-${status}`, status: 'SENT', sentAt: '2026-11-04T00:00:00+10:00' },
@@ -293,6 +294,163 @@ test('LAYER 6: PR16 adapter revoke/refuse enforce quote states and process follo
       assert.equal(reads(), 0, 'rejected transition does not read the clock');
     }
   }
+});
+
+test('LAYER 6: adapter revoke/refuse enforce quote expiry at the exact timestamp', async () => {
+  const expiresAt = '2027-12-26T10:30:00.000+10:00';
+  const deltas = [-1, 0, 1] as const;
+
+  for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+    for (const status of ['SENT', 'DRAFT'] as const) {
+      for (const delta of deltas) {
+        const now = serializeBusinessInstant(Date.parse(expiresAt) + delta);
+        let clockReads = 0;
+        const adapter = new MockDataAdapter(() => { clockReads++; return now; });
+        const jobs = adapter.getInitialBaseline().jobs;
+        const quote = jobs.find(job => job.id === 'JOB-2026-103')!.quote!;
+        quote.acceptanceStatus = status;
+        quote.expiresAt = expiresAt;
+        quote.refusalReason = 'Existing refusal reason';
+        quote.followUps = [
+          { ...quote.followUps![0], id: 'scheduled-before-expiry', status: 'SCHEDULED' },
+          { ...quote.followUps![1], id: 'already-sent', status: 'SENT', sentAt: '2027-12-25T10:30:00.000+10:00' },
+        ];
+        Object.assign(adapter, { jobs });
+        const before = await adapter.getQuoteForJob('JOB-2026-103');
+        assert.ok(before);
+        const readsBefore = clockReads;
+
+        if (delta < 0) {
+          await adapter[operation]('JOB-2026-103', 'Expiry boundary fixture');
+          const after = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+          assert.equal(clockReads, readsBefore + 1, 'successful operation captures one deterministic timestamp');
+          assert.equal(after.acceptanceStatus, 'REVOKED');
+          assert.equal(after.acceptanceHistory.at(-1)!.timestamp, now);
+          assert.deepEqual(after.followUps?.map(followUp => followUp.status), ['CANCELLED', 'SENT']);
+          if (operation === 'revokeQuote') assert.equal(after.refusalReason, 'Existing refusal reason');
+          else assert.equal(after.refusalReason, 'Expiry boundary fixture');
+
+          const afterSuccess = await adapter.getQuoteForJob('JOB-2026-103');
+          await assert.rejects(adapter[operation]('JOB-2026-103', 'Repeated operation'), ValidationError);
+          assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), afterSuccess, 'repeated operation preserves complete quote');
+        } else {
+          await assert.rejects(adapter[operation]('JOB-2026-103', 'Rejected expired operation'), ValidationError);
+          assert.equal(clockReads, readsBefore + 1, 'expiry validation uses one captured clock value');
+          assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), before, 'rejected operation preserves quote, history, follow-ups and refusal reason');
+        }
+      }
+    }
+
+    for (const status of ['ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+      let clockReads = 0;
+      const adapter = new MockDataAdapter(() => { clockReads++; return '2027-12-26T10:29:59.999+10:00'; });
+      const jobs = adapter.getInitialBaseline().jobs;
+      const quote = jobs.find(job => job.id === 'JOB-2026-103')!.quote!;
+      quote.acceptanceStatus = status;
+      quote.expiresAt = expiresAt;
+      Object.assign(adapter, { jobs });
+      const before = await adapter.getQuoteForJob('JOB-2026-103');
+      await assert.rejects(adapter[operation]('JOB-2026-103', 'Rejected terminal quote'), ValidationError);
+      assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), before);
+      assert.equal(clockReads, 0, 'terminal-state validation occurs before reading the clock');
+    }
+
+    for (const status of ['SENT', 'DRAFT'] as const) {
+      const adapter = new MockDataAdapter(() => '2030-01-01T00:00:00.000+10:00');
+      const jobs = adapter.getInitialBaseline().jobs;
+      const quote = jobs.find(job => job.id === 'JOB-2026-103')!.quote!;
+      quote.acceptanceStatus = status;
+      quote.expiresAt = undefined;
+      Object.assign(adapter, { jobs });
+      assert.deepEqual(await adapter[operation]('JOB-2026-103', 'No-expiry quote'), {
+        success: true,
+        message: operation === 'revokeQuote' ? 'Quote revoked.' : 'Quote declined.',
+      });
+    }
+  }
+});
+
+test('LAYER 6: context revoke/refuse reject expired quotes without changing quote state', async () => {
+  await withMountedContext(async ctx => {
+    for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+      for (const status of ['SENT', 'DRAFT'] as const) {
+        for (const delta of [-1, 0, 1] as const) {
+          await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+          let quote!: Quote;
+          await act(async () => {
+            quote = ctx.prepareQuoteForJob('JOB-2026-101', 'Expiry boundary fixture', [
+              { id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 },
+            ]);
+          });
+          const expiry = quote.expiresAt!;
+          const job = ctx.getAuthoritativeState().jobs.find(item => item.id === 'JOB-2026-101')!;
+          job.quote!.acceptanceStatus = status;
+          job.quote!.refusalReason = 'Existing refusal reason';
+          job.quote!.followUps = [
+            { ...job.quote!.followUps![0], id: 'scheduled-before-expiry', status: 'SCHEDULED' },
+            { ...job.quote!.followUps![1], id: 'already-sent', status: 'SENT', sentAt: '2026-11-01T00:00:00.000+10:00' },
+          ];
+          const now = serializeBusinessInstant(Date.parse(expiry) + delta);
+          await act(async () => { ctx.setDemoClock(now); });
+          const before = structuredClone(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote!);
+          let result!: { success: boolean; message: string };
+          await act(async () => { result = ctx[operation](job.id, 'Expiry boundary fixture'); });
+          const after = ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote!;
+
+          if (delta < 0) {
+            assert.equal(result.success, true);
+            assert.equal(after.acceptanceStatus, 'REVOKED');
+            assert.equal(after.acceptanceHistory.at(-1)!.timestamp, now);
+            assert.deepEqual(after.followUps?.map(followUp => followUp.status), ['CANCELLED', 'SENT']);
+            assert.equal(after.refusalReason, 'Expiry boundary fixture');
+            const afterSuccess = structuredClone(after);
+            await act(async () => { result = ctx[operation](job.id, 'Repeated operation'); });
+            assert.equal(result.success, false);
+            assert.deepEqual(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote, afterSuccess);
+          } else {
+            assert.equal(result.success, false);
+            assert.match(result.message, /expired/i);
+            assert.equal(ctx.demoNotification?.type, 'error');
+            assert.deepEqual(after, before, 'rejected operation preserves complete quote state');
+          }
+        }
+      }
+
+      for (const status of ['ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+        await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+        await act(async () => {
+          ctx.prepareQuoteForJob('JOB-2026-101', 'Terminal quote fixture', [
+            { id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 },
+          ]);
+        });
+        const job = ctx.getAuthoritativeState().jobs.find(item => item.id === 'JOB-2026-101')!;
+        job.quote!.acceptanceStatus = status;
+        const before = structuredClone(job.quote!);
+        let result!: { success: boolean; message: string };
+        await act(async () => { result = ctx[operation](job.id, 'Rejected terminal quote'); });
+        assert.equal(result.success, false);
+        assert.deepEqual(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote, before);
+      }
+
+      for (const status of ['SENT', 'DRAFT'] as const) {
+        await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+        await act(async () => {
+          ctx.prepareQuoteForJob('JOB-2026-101', 'No-expiry quote fixture', [
+            { id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 },
+          ]);
+        });
+        const job = ctx.getAuthoritativeState().jobs.find(item => item.id === 'JOB-2026-101')!;
+        job.quote!.acceptanceStatus = status;
+        job.quote!.expiresAt = undefined;
+        const lateClock = serializeBusinessInstant(Date.parse(job.quote!.issuedAt!) + 30 * 24 * 60 * 60 * 1000);
+        await act(async () => { ctx.setDemoClock(lateClock); });
+        let result!: { success: boolean; message: string };
+        await act(async () => { result = ctx[operation](job.id, 'No-expiry quote'); });
+        assert.equal(result.success, true);
+        assert.equal(ctx.getAuthoritativeState().jobs.find(item => item.id === job.id)!.quote!.acceptanceStatus, 'REVOKED');
+      }
+    }
+  });
 });
 
 test('LAYER 6: PR16 adapter acceptance rejects every invalid scenario/state and elapsed expiry atomically', async () => {

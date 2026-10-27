@@ -2428,6 +2428,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message };
     }
     const timestamp = serializeBusinessInstant(demoClock);
+    if (job.quote.expiresAt && !(Date.parse(timestamp) < Date.parse(job.quote.expiresAt))) {
+      const message = 'Cannot revoke an expired quote.';
+      showDemoNotification(message, 'error');
+      return { success: false, message };
+    }
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId && j.quote) {
@@ -2471,6 +2476,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return { success: false, message };
     }
     const timestamp = serializeBusinessInstant(demoClock);
+    if (job.quote.expiresAt && !(Date.parse(timestamp) < Date.parse(job.quote.expiresAt))) {
+      const message = 'Cannot decline an expired quote.';
+      showDemoNotification(message, 'error');
+      return { success: false, message };
+    }
     commitJobsState(current =>
       current.map(j => {
         if (j.id === jobId && j.quote) {

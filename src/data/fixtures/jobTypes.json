@@ -1,0 +1,44 @@
+[
+  {
+    "id": "JT-001",
+    "name": "Commercial Solar PV Installation",
+    "brandId": "solarcell",
+    "formsRequired": [
+      "JSA",
+      "ELECTRICAL"
+    ],
+    "isDirectToInvoice": false,
+    "version": "v4.2"
+  },
+  {
+    "id": "JT-002",
+    "name": "Residential Smoke Safety Audit",
+    "brandId": "smart_home",
+    "formsRequired": [
+      "JSA",
+      "SMOKE_ALARM"
+    ],
+    "isDirectToInvoice": false,
+    "version": "v3.0"
+  },
+  {
+    "id": "JT-003",
+    "name": "Enterprise CCTV & Cabling Inspection",
+    "brandId": "cctv",
+    "formsRequired": [
+      "JSA",
+      "TCA1",
+      "TCA2"
+    ],
+    "isDirectToInvoice": false,
+    "version": "v2.1"
+  },
+  {
+    "id": "JT-004",
+    "name": "Direct-to-Invoice Emergency Service",
+    "brandId": "smart_home",
+    "formsRequired": [],
+    "isDirectToInvoice": true,
+    "version": "v1.0"
+  }
+]

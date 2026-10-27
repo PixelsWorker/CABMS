@@ -180,7 +180,7 @@ export const CommunicationsView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs text-(--cabms-text-secondary) mt-1">
-              Deterministic simulation of email appointment reminders, certificate delivery, and deduplicated Google review dispatches.
+              Appointment reminders, compliance certificate staging, and deduplicated customer review requests (Local Preview Outbox).
             </p>
           </div>
 
@@ -522,7 +522,7 @@ export const CommunicationsView: React.FC = () => {
               Completed Compliance Certificate Email Dispatch ({currentJob.id})
             </h2>
             <p className="text-xs text-(--cabms-text-secondary)">
-              Only signed compliance certificates with preserved immutable snapshots are eligible for simulated dispatch to property owners.
+              Only signed compliance certificates with preserved immutable snapshots are eligible for dispatch to property owners.
             </p>
           </div>
 
@@ -660,7 +660,7 @@ export const CommunicationsView: React.FC = () => {
 
             {certificateDeliveries.filter(d => d.jobId === currentJob.id).length === 0 ? (
               <div className="cabms-card-subtle p-4 text-xs text-slate-500 text-center">
-                No certificate delivery simulations recorded for this work order yet. Use the dispatch buttons above.
+                No certificate delivery records for this work order yet. Use the dispatch buttons above.
               </div>
             ) : (
               <div className="space-y-2 text-xs">

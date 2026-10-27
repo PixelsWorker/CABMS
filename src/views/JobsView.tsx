@@ -111,8 +111,8 @@ export const JobsView: React.FC = () => {
   const selectedJob = (selectedJobId ? filteredJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
 
   useEffect(() => {
-    // If selectedJobId just changed to an authorized job that is outside the current filter,
-    // widen statusFilter to 'all' so the newly selected job remains visible and selected.
+    // If selectedJobId just changed to an authorized job that is outside the current filter or search,
+    // widen statusFilter to 'all' and clear search query so the newly selected job remains visible and selected.
     if (selectedJobId && selectedJobId !== lastSelectedJobIdRef.current) {
       lastSelectedJobIdRef.current = selectedJobId;
       const target = authorizedJobs.find(j => j.id === selectedJobId);
@@ -123,8 +123,15 @@ export const JobsView: React.FC = () => {
             : statusFilter === 'open'
             ? target.status !== 'COMPLETED' && target.status !== 'CANCELLED'
             : target.status === statusFilter;
-        if (!matchesFilter) {
-          setStatusFilter('all');
+        const matchesSearch =
+          !searchQuery ||
+          target.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          target.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          target.siteContact.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          target.siteAddress.toLowerCase().includes(searchQuery.toLowerCase());
+        if (!matchesFilter || !matchesSearch) {
+          if (!matchesFilter) setStatusFilter('all');
+          if (!matchesSearch) setSearchQuery('');
           return;
         }
       }
@@ -135,7 +142,7 @@ export const JobsView: React.FC = () => {
     if (selectedJob && selectedJob.id !== selectedJobId) {
       setSelectedJobId(selectedJob.id);
     }
-  }, [selectedJob?.id, selectedJobId, statusFilter, authorizedJobs, setSelectedJobId]);
+  }, [selectedJob?.id, selectedJobId, statusFilter, searchQuery, authorizedJobs, setSelectedJobId]);
 
   const handleCompleteAttempt = () => {
     if (!selectedJob) return;
@@ -621,7 +628,7 @@ export const JobsView: React.FC = () => {
               <div>
                 <h3 className="text-base font-bold text-(--cabms-text-primary)">
                   {validationModalResult.canComplete
-                    ? 'Job Completion Approved (Simulated)'
+                    ? 'Job Completion Approved & Recorded in Preview'
                     : 'Job Completion Blocked — Requirements Missing'}
                 </h3>
                 <p className="text-xs text-(--cabms-text-secondary)">

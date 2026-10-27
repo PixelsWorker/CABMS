@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Area J: Existing-Website Handoff
  * Internal website submission simulation, pending review inbox,
  * duplicate/customer matching, and explicit office conversion to draft work orders.
@@ -101,7 +101,7 @@ export const WebsiteInboxView: React.FC = () => {
               className="flex w-full shrink-0 items-center justify-center gap-1.5 whitespace-normal px-3 py-1.5 bg-purple-600 sm:w-auto hover:bg-purple-500 text-white text-xs font-bold rounded transition shadow-sm cursor-pointer"
             >
               <FontAwesomeIcon icon={faPlus} className="w-3.5 h-3.5" />
-              <span>Simulate Web Submission</span>
+              <span>Generate Sample Enquiry (Preview)</span>
             </button>
           </div>
         </div>
@@ -128,7 +128,7 @@ export const WebsiteInboxView: React.FC = () => {
 
         {pendingEnquiries.length === 0 ? (
           <div className="cabms-card p-8 text-center text-(--cabms-text-secondary) text-xs">
-            Inbox is clean. Click &quot;Simulate Web Submission&quot; above to create a synthetic enquiry.
+            Inbox is clean. Click &quot;Generate Sample Enquiry (Preview)&quot; above to create a sample enquiry.
           </div>
         ) : (
           <div className="space-y-4">

@@ -162,8 +162,8 @@ export const ScheduleView: React.FC = () => {
             <div className="cabms-card-subtle p-2.5">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
               <span className="text-(--cabms-text-primary) font-semibold">CABMS Operations Hub</span>
-              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced (Simulated)
+              <div className="text-[10px] text-amber-400 flex items-center gap-1 mt-0.5">
+                <FontAwesomeIcon icon={faClock} className="w-3 h-3" /> Calendar integration pending
               </div>
             </div>
 
@@ -358,7 +358,7 @@ export const ScheduleView: React.FC = () => {
                     title="Opens safe public Google Maps navigation example"
                   >
                     <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3.5 h-3.5" />
-                    <span>Open in Google Maps (Public Demo Destination)</span>
+                    <span>Open in Google Maps (Safe Public Destination Preview)</span>
                   </a>
                 </div>
 

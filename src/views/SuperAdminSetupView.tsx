@@ -187,7 +187,7 @@ export const SuperAdminSetupView: React.FC = () => {
               One Shared Accounting Link
             </span>
             <h2 className="text-base font-bold text-(--cabms-text-primary) mt-0.5">
-              MYOB Business — Client-Reported Shared Company File (Simulated)
+              MYOB Business — Shared Company File (Integration Pending)
             </h2>
             <p className="text-xs text-(--cabms-text-secondary)">
               Single shared MYOB company file used across all business profiles. No separate company file authentication required.
@@ -204,7 +204,7 @@ export const SuperAdminSetupView: React.FC = () => {
                   : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
               }`}
             >
-              Simulate Connected
+              Preview Connected
             </button>
             <button
               onClick={() => setMyobStatus('DISCONNECTED')}
@@ -214,7 +214,7 @@ export const SuperAdminSetupView: React.FC = () => {
                   : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
               }`}
             >
-              Simulate Disconnected
+              Preview Disconnected
             </button>
             <button
               onClick={() => setMyobStatus('FAILED')}
@@ -224,7 +224,7 @@ export const SuperAdminSetupView: React.FC = () => {
                   : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
               }`}
             >
-              Simulate Token Expired
+              Preview Error
             </button>
           </div>
         </div>
@@ -476,12 +476,12 @@ export const SuperAdminSetupView: React.FC = () => {
             <h3 className="font-bold text-(--cabms-text-primary) text-sm">Email Sender & SMTP Status</h3>
           </div>
           <p className="text-(--cabms-text-secondary) text-xs">
-            Simulation mock only. Email is the single approved communication channel.
+            Local mock adapter. Email is the single approved communication channel.
           </p>
           <div className="cabms-surface-subtle p-3 rounded border cabms-border space-y-1 font-mono text-[11px] text-(--cabms-text-secondary)">
             <div>Sender: <span className="text-sky-400">noreply-cabms@example.invalid</span></div>
             <div>SMTP Host: <span className="text-(--cabms-text-secondary)">smtp.internal.cabms-mock.invalid (Port 587)</span></div>
-            <div>Credential Security: <span className="text-emerald-400 font-bold">Isolated Demo Mock</span></div>
+            <div>Credential Security: <span className="text-emerald-400 font-bold">Local Mock Adapter</span></div>
           </div>
         </div>
 

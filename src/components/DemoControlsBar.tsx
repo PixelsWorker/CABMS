@@ -55,7 +55,7 @@ export const DemoControlsBar: React.FC = () => {
 
   return (
     <details className="cabms-demo-controls" open={controlsOpen} onToggle={event => setControlsOpen(event.currentTarget.open)}>
-      <summary>Demo controls · persona, workspace, scenario and business clock</summary>
+      <summary>Workspace Simulator & Persona Switcher</summary>
     <div className="bg-slate-900 text-slate-100 border-b border-slate-800 px-3 py-2 text-xs md:text-sm">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
         {/* Left Section: Persona & Brand */}
@@ -175,10 +175,10 @@ export const DemoControlsBar: React.FC = () => {
           <button
             onClick={resetDemo}
             className="flex items-center space-x-1 bg-red-950/60 hover:bg-red-900/80 text-red-200 border border-red-800/60 px-2.5 py-1 rounded text-xs font-medium transition cursor-pointer"
-            title="Reset all seed records, pending drafts, versions and virtual clock"
+            title="Reset all sample records, pending drafts, versions and virtual clock"
           >
             <FontAwesomeIcon icon={faRotateLeft} className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Reset Demo</span>
+            <span className="hidden sm:inline">Reset Preview State</span>
           </button>
         </div>
       </div>

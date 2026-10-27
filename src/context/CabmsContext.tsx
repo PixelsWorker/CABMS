@@ -49,6 +49,7 @@ import {
   INITIAL_TEMPLATES,
   INITIAL_WEBSITE_ENQUIRIES,
 } from '../data/seedData.ts';
+import { getMockDataAdapter } from '../services/index.ts';
 import {
   validateJobCompletion,
   deduplicateReviewRequest,
@@ -726,7 +727,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setSelectedJobId('JOB-2026-101');
     setActiveTab('dashboard');
     setActiveScenario('default');
-    showDemoNotification('Demo restored to clean initial seed state.', 'success');
+    void getMockDataAdapter().resetToBaseline();
+    showDemoNotification('Preview restored to clean initial baseline state.', 'success');
   };
 
   const resolveReviewJob = (

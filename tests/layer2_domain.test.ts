@@ -227,7 +227,7 @@ test('LAYER 2: Domain — JSA requires induction, competency verification, task 
   };
   const res3 = validateJobCompletion(job, { jsa: unsignedJsa });
   assert.equal(res3.canComplete, false);
-  assert.ok(res3.missingRequirements.some(r => r.includes('technician DEMO sign-off')));
+  assert.ok(res3.missingRequirements.some(r => r.includes('technician Preview sign-off')));
 
   // Fully compliant JSA
   const compliantJsa: JsaFormData = {

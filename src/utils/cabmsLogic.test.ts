@@ -272,7 +272,7 @@ test('validateJobCompletion: documentation job fails when JSA is not signed', ()
   });
 
   assert.equal(result.canComplete, false);
-  assert.ok(result.missingRequirements.includes('JSA / Risk Assessment requires technician DEMO sign-off'));
+  assert.ok(result.missingRequirements.includes('JSA / Risk Assessment requires technician Preview sign-off'));
 });
 
 test('validateJobCompletion: succeeds once JSA is signed off', () => {

@@ -122,7 +122,7 @@ export const QuotesAcceptanceView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs text-(--cabms-text-secondary) mt-1">
-              Simulated MYOB quote preparation, frozen Terms snapshots, and customer online acceptance testing.
+              MYOB quote preparation, frozen Terms snapshots, and customer online acceptance testing (Preview Mode).
             </p>
           </div>
 
@@ -226,7 +226,7 @@ export const QuotesAcceptanceView: React.FC = () => {
             </div>
 
             <div className="flex items-center space-x-2">
-              <span className="text-(--cabms-text-secondary) font-semibold">Simulate Link Token State:</span>
+              <span className="text-(--cabms-text-secondary) font-semibold">Customer Acceptance Link Preview:</span>
               <select
                 value={activeLinkScenario}
                 onChange={e => setActiveLinkScenario(e.target.value as any)}
@@ -565,7 +565,7 @@ export const QuotesAcceptanceView: React.FC = () => {
 
                 <div className="pt-3 border-t border-slate-800">
                   <label className="text-(--cabms-text-secondary) block font-semibold mb-1">
-                    Simulate Quick Token Condition
+                    Test Link Condition (Preview)
                   </label>
                   <select
                     value={activeLinkScenario}

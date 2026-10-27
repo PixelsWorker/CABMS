@@ -176,9 +176,9 @@ export const WorkspaceSettingsView: React.FC = () => {
 
           <div className="flex items-center justify-between p-2.5 rounded bg-(--cabms-surface) border border-(--cabms-border-base)">
             <span className="text-xs font-medium text-(--cabms-text-secondary)">SMTP Email Relay:</span>
-            <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold cabms-badge-completed flex items-center gap-1.5">
-              <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" />
-              ONLINE (Simulated)
+            <span className="text-xs px-2 py-0.5 rounded font-mono font-semibold cabms-badge-needs-revisit flex items-center gap-1.5">
+              <FontAwesomeIcon icon={faClock} className="w-3 h-3" />
+              Local Configuration Mode
             </span>
           </div>
 

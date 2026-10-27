@@ -57,7 +57,7 @@ test('LAYER 7: SSR markup — default shell and dashboard in a labelled desktop 
   );
 
   assert.ok(html.includes('data-viewport="1440x900"'));
-  assert.ok(html.includes('DEMO — NO LIVE INTEGRATIONS'));
+  assert.ok(html.includes('Sample Data · Preview Mode'));
   assert.ok(html.includes('Smart Home') && html.includes('CCTV'), 'distinct business switch names are present');
 });
 

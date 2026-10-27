@@ -1,6 +1,7 @@
 import { HolidayRegion } from '../types/cabms.ts';
 /** Brisbane has no daylight saving: all demo business dates use AEST (UTC+10). */
 export const BUSINESS_TIME_ZONE = 'Australia/Brisbane';
+export const INITIAL_BUSINESS_CLOCK = '2026-11-02T09:00:00+10:00';
 const BUSINESS_OFFSET_MS = 10 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;

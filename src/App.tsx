@@ -47,10 +47,10 @@ export const AppContent: React.FC = () => {
         <footer className="cabms-footer py-4 px-4 text-center text-xs">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>
-              CABMS G00 Prototype Demo • Solarcell • GC Smart Home Solutions • GC CCTV
+              CABMS Operations Console • Solarcell • Smart Home Solutions • Gold Coast CCTV
             </span>
             <span className="font-mono text-[11px] text-(--cabms-text-secondary)">
-              DEMO — NO LIVE INTEGRATIONS • Resettable Seed State
+              Sample Data · Preview Mode
             </span>
           </div>
         </footer>
@@ -87,10 +87,10 @@ export const AppContent: React.FC = () => {
         <footer className="cabms-footer py-4 px-4 text-center text-xs">
           <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>
-              CABMS G00 Prototype Demo • Solarcell • GC Smart Home Solutions • GC CCTV
+              CABMS Operations Console • Solarcell • Smart Home Solutions • Gold Coast CCTV
             </span>
             <span className="font-mono text-[11px] text-(--cabms-text-secondary)">
-              DEMO — NO LIVE INTEGRATIONS • Resettable Seed State
+              Sample Data · Preview Mode
             </span>
           </div>
         </footer>

@@ -44,7 +44,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
       </div>
 
       <span className="text-[11px] font-bold tracking-widest text-(--cabms-accent-danger) uppercase cabms-surface-subtle px-3 py-1 rounded-full border border-red-700">
-        Simulated UX Role Boundary
+        Access Restricted · Role Authorization Required
       </span>
 
       <h2 className="text-xl font-bold text-(--cabms-text-primary) mt-4 mb-2">

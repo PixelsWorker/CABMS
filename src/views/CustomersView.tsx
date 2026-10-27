@@ -151,7 +151,7 @@ export const CustomersView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs text-(--cabms-text-secondary) mt-1">
-              Shared cross-brand client records synchronized directly with MYOB Business — Client-Reported Shared Company File (Simulated).
+              Shared cross-brand client records with multi-brand affiliations and local preview synchronization.
             </p>
           </div>
 
@@ -175,7 +175,7 @@ export const CustomersView: React.FC = () => {
             <FontAwesomeIcon icon={faDatabase} className="w-4 h-4 text-emerald-400" />
             <span className="text-(--cabms-text-secondary)">Connection:</span>
             <strong className="text-(--cabms-text-primary) font-mono">
-              MYOB Business — Client-Reported Shared Company File (Simulated)
+              MYOB Business — Shared Company File (Integration Pending)
             </strong>
           </div>
           <div className="flex items-center space-x-2">
@@ -385,7 +385,7 @@ export const CustomersView: React.FC = () => {
               {/* Simulation Outcome Selector */}
               <div className="cabms-card-subtle p-3 space-y-2">
                 <label className="text-(--cabms-text-secondary) block font-semibold text-[11px]">
-                  Simulated Write-Through Outcome (Test Resilience)
+                  Write-Through Test Outcome (Preview Resilience)
                 </label>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -436,7 +436,7 @@ export const CustomersView: React.FC = () => {
                   type="submit"
                   className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded font-bold transition cursor-pointer"
                 >
-                  Simulate Write-Through
+                  Save Customer (Preview Mode)
                 </button>
               </div>
             </form>

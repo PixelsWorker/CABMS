@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Pure business logic and validation rules for CABMS G00 Demo
  * Decoupled from UI to enable fast unit testing via node:test and tsx
  */
@@ -71,7 +71,7 @@ export function validateJobCompletion(
         if (!jsa) {
           missingRequirements.push('JSA / Risk Assessment record not started');
         } else if (!jsa.signedOff) {
-          missingRequirements.push('JSA / Risk Assessment requires technician DEMO sign-off');
+          missingRequirements.push('JSA / Risk Assessment requires technician Preview sign-off');
         } else if (!jsa.inductionCompleted || !jsa.competencyVerified) {
           missingRequirements.push('JSA requires site induction and competency verification to be confirmed');
         } else if (jsa.steps.length === 0) {
@@ -84,7 +84,7 @@ export function validateJobCompletion(
         if (!elec) {
           missingRequirements.push('Electrical Certificate record not started');
         } else if (!elec.signedOff) {
-          missingRequirements.push('Electrical Certificate requires technician DEMO sign-off');
+          missingRequirements.push('Electrical Certificate requires technician Preview sign-off');
         }
         // Always preserve unresolved Part B warning
         warnings.push('NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred.');
@@ -95,7 +95,7 @@ export function validateJobCompletion(
         if (!smoke) {
           missingRequirements.push('Smoke Alarm Certificate record not started');
         } else if (!smoke.signedOff) {
-          missingRequirements.push('Smoke Alarm Certificate requires technician DEMO sign-off');
+          missingRequirements.push('Smoke Alarm Certificate requires technician Preview sign-off');
         } else {
           // Check for any failing alarm in schedule
           const failingAlarms = smoke.alarmSchedule.filter(a => a.passFail === 'Fail');
@@ -111,7 +111,7 @@ export function validateJobCompletion(
         if (!tca1) {
           missingRequirements.push('TCA1 Cabling Compliance Certificate not started');
         } else if (!tca1.signedOff) {
-          missingRequirements.push('TCA1 Certificate requires registered cabler DEMO sign-off');
+          missingRequirements.push('TCA1 Certificate requires registered cabler Preview sign-off');
         }
         warnings.push('Notice: Cabler registration number and expiry status remain unresolved placeholders.');
         break;
@@ -122,7 +122,7 @@ export function validateJobCompletion(
           missingRequirements.push('TCA2 Cabling Non-Compliance report not started');
         } else {
           if (!tca2.signedOff) {
-            missingRequirements.push('TCA2 Report requires technician DEMO sign-off');
+            missingRequirements.push('TCA2 Report requires technician Preview sign-off');
           }
           // Authoritative audit separation: Check tca2Audit store strictly without legacy fallback
           if (!tca2Audit) {

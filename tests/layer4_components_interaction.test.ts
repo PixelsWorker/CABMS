@@ -62,7 +62,7 @@ test('LAYER 4: Components — ComplianceFormsView renders JSA, Electrical, Smoke
   assert.ok(html.includes('Job Safety Analysis (JSA)'));
   assert.ok(html.includes('TCA1 Cabling'));
   assert.ok(html.includes('TCA2 Defect Notice'));
-  assert.ok(html.includes('Apply Technician DEMO Sign-off') || html.includes('DEMO Sign-off Applied'));
+  assert.ok(html.includes('Apply Technician Preview Sign-off') || html.includes('Preview Sign-off Applied'));
   assert.ok(html.includes('Site Induction Completed'));
   assert.ok(html.includes('Competencies Verified'));
 });
@@ -107,7 +107,7 @@ test('LAYER 4: Components — TemplatesSettingsView renders template lifecycle (
     React.createElement(CabmsProvider, null, React.createElement(TemplatesSettingsView))
   );
   assert.ok(html.includes('Admin Content &amp; Template Settings') || html.includes('Template Settings'));
-  assert.ok(html.includes('Required Compliance Documents by Demo Job Type'));
+  assert.ok(html.includes('Required Compliance Documents by Job Type'));
 });
 
 
@@ -160,7 +160,7 @@ test('LAYER 4: CP-01 — Website Inbox submission control creates an enquiry for
         select.dispatchEvent(new window.Event('change', { bubbles: true }));
       });
       const previous = ctx.websiteEnquiries.length;
-      const button = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Simulate Web Submission'))!;
+      const button = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Generate Sample Enquiry'))!;
       await act(async () => { button.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); });
       assert.equal(ctx.websiteEnquiries.length, previous + 1);
       assert.equal(ctx.websiteEnquiries[0].brandId, brand);

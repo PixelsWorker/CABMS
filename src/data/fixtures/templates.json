@@ -1,0 +1,142 @@
+[
+  {
+    "id": "TPL-001",
+    "name": "General Commercial Service Terms & Conditions",
+    "type": "TERMS",
+    "currentVersion": "v2.4",
+    "activeStatus": "PUBLISHED",
+    "content": "CABMS Standard Service Terms v2.4 (Non-legal demonstration text): Service performed subject to standard trade warranties and access conditions.",
+    "sampleFileName": "terms-and-conditions-v2.4.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v2.4",
+        "status": "PUBLISHED",
+        "content": "CABMS Standard Service Terms v2.4 (Non-legal demonstration text): Service performed subject to standard trade warranties and access conditions.",
+        "updatedAt": "2026-10-15 11:30",
+        "updatedBy": "Owner / Admin"
+      },
+      {
+        "version": "v2.3",
+        "status": "PUBLISHED",
+        "content": "CABMS Standard Service Terms v2.3 (Archived historical snapshot): Prior terms edition with standard 14-day settlement.",
+        "updatedAt": "2026-08-01 09:00",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  },
+  {
+    "id": "TPL-002",
+    "name": "JSA Safe Work Method Statement Matrix",
+    "type": "JSA",
+    "currentVersion": "v4.2",
+    "activeStatus": "PUBLISHED",
+    "content": "JSA Template with 9 Sanitised Field Groups: Job/Site, Competency, Risk Rating L/M/H/E, Steps, PPE, Isolations, Emergency, Sign-off, Doc Control.",
+    "sampleFileName": "jsa-risk-assessment-template.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v4.2",
+        "status": "PUBLISHED",
+        "content": "JSA Template v4.2 with 9 Sanitised Field Groups.",
+        "updatedAt": "2026-10-20 14:00",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  },
+  {
+    "id": "TPL-003",
+    "name": "Smoke Alarm QLD Legislation Compliance Certificate",
+    "type": "SMOKE_ALARM",
+    "currentVersion": "v3.0",
+    "activeStatus": "PUBLISHED",
+    "content": "Sanitised smoke alarm schedule with per-alarm Pass/Fail, provisional notes, and testing verification.",
+    "sampleFileName": "smoke-alarm-cert-template.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v3.0",
+        "status": "PUBLISHED",
+        "content": "Smoke Alarm Certificate v3.0 per Queensland 2022 smoke alarm mandate.",
+        "updatedAt": "2026-10-18 09:15",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  },
+  {
+    "id": "TPL-004",
+    "name": "Electrical Safety Certificate (Part A Sanitised)",
+    "type": "ELECTRICAL",
+    "currentVersion": "v1.8",
+    "activeStatus": "PUBLISHED",
+    "content": "Sanitised Part A fields with mandatory persistent notice: Electrical Part B / sections 7-8 not supplied or unresolved.",
+    "sampleFileName": "electrical-safety-cert-template.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v1.8",
+        "status": "PUBLISHED",
+        "content": "Electrical Part A test certificate with permanent unresolved Part B notice.",
+        "updatedAt": "2026-10-12 16:40",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  },
+  {
+    "id": "TPL-005",
+    "name": "TCA1 & TCA2 Telecommunications Compliance Forms",
+    "type": "TCA1",
+    "currentVersion": "v2.1",
+    "activeStatus": "PUBLISHED",
+    "content": "ACMA Telecommunications cabling compliance certificate and non-compliance defect report forms.",
+    "sampleFileName": "tca1-tca2-cabling-templates.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v2.1",
+        "status": "PUBLISHED",
+        "content": "ACMA TCA1/TCA2 templates with non-compliance risk categories.",
+        "updatedAt": "2026-10-10 10:00",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  },
+  {
+    "id": "TPL-006",
+    "name": "Quotation Follow-Up — Stage 1 (3 Business Days Courtesy)",
+    "type": "QUOTE_FOLLOWUP",
+    "currentVersion": "v1.0",
+    "activeStatus": "PUBLISHED",
+    "content": "Friendly courtesy follow-up for quotation {{quote_number}}. Review proposal details, terms, and digital acceptance link.",
+    "sampleFileName": "quote-followup-stage1.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v1.0",
+        "status": "PUBLISHED",
+        "content": "Stage 1 courtesy reminder template.",
+        "updatedAt": "2026-10-24 10:00",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  },
+  {
+    "id": "TPL-007",
+    "name": "Quotation Follow-Up — Stage 2 (7 Business Days Expiry Warning)",
+    "type": "QUOTE_FOLLOWUP",
+    "currentVersion": "v1.0",
+    "activeStatus": "PUBLISHED",
+    "content": "Final courtesy notice for quotation {{quote_number}}. Quotation will expire 14 calendar days after issuance per standard terms.",
+    "sampleFileName": "quote-followup-stage2.docx",
+    "mappingStatus": "Mapped",
+    "revisions": [
+      {
+        "version": "v1.0",
+        "status": "PUBLISHED",
+        "content": "Stage 2 expiry warning template.",
+        "updatedAt": "2026-10-24 10:00",
+        "updatedBy": "Owner / Admin"
+      }
+    ]
+  }
+]

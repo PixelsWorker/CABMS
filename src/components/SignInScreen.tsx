@@ -67,13 +67,13 @@ export const SignInScreen: React.FC = () => {
       <div className="text-center space-y-3">
         <div className="inline-flex items-center space-x-2 cabms-surface-subtle border cabms-border px-3 py-1.5 rounded-full text-xs text-(--cabms-text-secondary)">
           <FontAwesomeIcon icon={faLock} className="w-3.5 h-3.5 text-amber-400" />
-          <span>Simulated Authentication & Role Boundary</span>
+          <span>Role-Based Authentication Gateway</span>
         </div>
         <h1 className="text-3xl font-extrabold text-(--cabms-text-primary) tracking-tight">
           CABMS Session Access
         </h1>
         <p className="text-sm text-(--cabms-text-secondary) max-w-xl mx-auto">
-          The application requires an authenticated session. Select a persona below to simulate authenticated access with explicit role-based permissions.
+          The application requires an authenticated session. Authentication backend pending — select a preview persona below to explore role-based permissions.
         </p>
       </div>
 
@@ -114,7 +114,7 @@ export const SignInScreen: React.FC = () => {
       </div>
 
       <div className="cabms-card p-4 text-xs text-(--cabms-text-secondary) flex items-center justify-between">
-        <span>No external OAuth or identity server required — simulated authentication session.</span>
+        <span>Authentication backend pending — local role-based preview active.</span>
         <span className="font-mono text-[11px] text-slate-500">CABMS-AUTH-SIM-V1</span>
       </div>
     </div>

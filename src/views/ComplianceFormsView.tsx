@@ -408,7 +408,7 @@ export const ComplianceFormsView: React.FC = () => {
                   <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-3.5 py-2.5 rounded-lg text-sm font-semibold flex items-center space-x-2">
                     <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                     <div>
-                      <div>DEMO Sign-off Applied</div>
+                      <div>Preview Sign-off Applied</div>
                       <div className="text-xs text-(--cabms-text-secondary) font-mono mt-0.5">
                         {currentJsa.signedByTechName || 'Dave Miller'} ({currentJsa.signedTimestamp})
                       </div>
@@ -420,7 +420,7 @@ export const ComplianceFormsView: React.FC = () => {
                     className="px-4 py-2.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-sm rounded-lg transition shadow-md cursor-pointer flex items-center space-x-2"
                   >
                     <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
-                    <span>Apply Technician DEMO Sign-off</span>
+                    <span>Apply Technician Preview Sign-off</span>
                   </button>
                 )}
               </div>
@@ -701,7 +701,7 @@ export const ComplianceFormsView: React.FC = () => {
                   <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2">
                     <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                     <div>
-                      <div>DEMO Sign-off Applied</div>
+                      <div>Preview Sign-off Applied</div>
                       <div className="text-[10px] text-(--cabms-text-secondary) font-mono">
                         {currentElec.signedByTechName || 'Dave Miller (Lic 88204)'} ({currentElec.signedTimestamp})
                       </div>
@@ -835,7 +835,7 @@ export const ComplianceFormsView: React.FC = () => {
                   <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2">
                     <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                     <div>
-                      <div>DEMO Sign-off Applied</div>
+                      <div>Preview Sign-off Applied</div>
                       <div className="text-[10px] text-(--cabms-text-secondary) font-mono">
                         {currentSmoke.signedByTechName || 'Dave Miller'} ({currentSmoke.signedTimestamp})
                       </div>
@@ -1000,7 +1000,7 @@ export const ComplianceFormsView: React.FC = () => {
                   <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center space-x-2">
                     <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4 text-emerald-400" />
                     <div>
-                      <div>DEMO Sign-off Applied</div>
+                      <div>Preview Sign-off Applied</div>
                       <div className="text-[10px] text-(--cabms-text-secondary) font-mono">
                         {currentTca1.signedByTechName || currentTca1.registeredCablerPlaceholder} ({currentTca1.signedTimestamp})
                       </div>
@@ -1155,7 +1155,7 @@ export const ComplianceFormsView: React.FC = () => {
                     onClick={() => customerAckTca2(currentJob.id)}
                     className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold cursor-pointer"
                   >
-                    Simulate Customer Ack
+                    Record Customer Acknowledgment
                   </button>
                 )}
               </div>
@@ -1401,7 +1401,7 @@ export const ComplianceFormsView: React.FC = () => {
                       : 'bg-red-700 text-white font-mono tracking-wider'
                   }`}
                 >
-                  {activeStatus.signedOff ? 'DEMO SIGN-OFF APPLIED' : 'DRAFT — NOT SIGNED'}
+                  {activeStatus.signedOff ? 'PREVIEW SIGN-OFF RECORDED' : 'DRAFT — NOT SIGNED'}
                 </span>
               </div>
 

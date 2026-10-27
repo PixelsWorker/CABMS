@@ -292,7 +292,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
         </button>
       </div>
       <nav id="cabms-desktop-navigation" aria-label="Main navigation" className="cabms-nav-scroll" onScroll={() => setHint(null)}>{links(false)}</nav>
-      <p className={`cabms-sidebar-disclosure ${collapsed ? 'cabms-sr-only' : ''}`}>Demo workspace<br />No live integrations</p>
+      <p className={`cabms-sidebar-disclosure ${collapsed ? 'cabms-sr-only' : ''}`}>Operations Console<br />Preview Adapter</p>
     </aside>
     <div className="cabms-workspace">
       <header className="cabms-topbar">
@@ -397,7 +397,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
         </div>
         <span className="cabms-persona">{personaLabels[persona]}</span>
         <button type="button" className="cabms-icon-button" aria-label="Sign out"
-          title="Simulate signing out of the current demo session" onClick={simulateSignOut}>
+          title="Sign out of preview session" onClick={simulateSignOut}>
           <FontAwesomeIcon icon={faRightFromBracket} aria-hidden="true" /><span className="cabms-sr-only">Sign out</span>
         </button>
       </header>
@@ -422,7 +422,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
           </div>
           <p className="cabms-drawer-identity">{activeBrand.name}<br /><span>{personaLabels[persona]}</span></p>
           <nav aria-label="Mobile navigation" className="cabms-nav-scroll">{links(true)}</nav>
-          <p className="cabms-sidebar-disclosure">Demo workspace · No live integrations</p>
+          <p className="cabms-sidebar-disclosure">Operations Console · Preview Adapter</p>
         </div>
       </div>, document.body
     )}

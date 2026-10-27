@@ -94,7 +94,7 @@ export const TemplatesSettingsView: React.FC = () => {
               Compliance Gating Policy (Dynamically Linked Matrix)
             </span>
             <h2 className="text-base font-bold text-(--cabms-text-primary) mt-0.5">
-              Required Compliance Documents by Demo Job Type
+              Required Compliance Documents by Job Type
             </h2>
             <p className="text-xs text-(--cabms-text-secondary)">
               Rules governing operational completion requirements. Connected directly to work order creation and form validation.
@@ -259,7 +259,7 @@ export const TemplatesSettingsView: React.FC = () => {
           {/* Bounded Text Content Editor */}
           <div className="space-y-2 text-xs">
             <label className="block text-(--cabms-text-secondary) font-semibold">
-              Supported Standard Wording & Form Clauses (Non-legal demonstration text):
+              Supported Standard Wording & Form Clauses (Sample Regulatory Wording):
             </label>
             <textarea
               rows={5}
@@ -371,7 +371,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 {previewModalDoc.content}
               </p>
               <div className="text-[10px] text-amber-300/80 bg-amber-950/30 p-2 rounded border border-amber-800/40">
-                Demonstration Notice: Uploading or viewing sample templates does not establish statutory or legal compliance.
+                Compliance Notice: Sample template clauses must be reviewed and published under corporate governance.
               </div>
             </div>
 

@@ -94,15 +94,20 @@ export const QuotesAcceptanceView: React.FC = () => {
     // GST convention: Gross total / 1.1 = Subtotal ex-GST
     const exSubtotal = Math.round((grossTotal / 1.1) * 100) / 100;
 
-    prepareQuoteForJob(currentJob.id, quoteTitle, [
-      {
-        id: 'ITEM-01',
-        description: quoteTitle,
-        quantity: 1,
-        unitPrice: exSubtotal,
-        total: exSubtotal,
-      },
-    ]);
+    try {
+      prepareQuoteForJob(currentJob.id, quoteTitle, [
+        {
+          id: 'ITEM-01',
+          description: quoteTitle,
+          quantity: 1,
+          unitPrice: exSubtotal,
+          total: exSubtotal,
+        },
+      ]);
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.startsWith('Cannot prepare quote:')) return;
+      throw error;
+    }
 
     setIsPrepareModalOpen(false);
   };
@@ -296,7 +301,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-(--cabms-text-secondary) text-[11px]">
-                  Stage 1 (3 business days courtesy) • Stage 2 (7 business days expiry warning) • Strict 14-calendar-day validity cap.
+                  Stage 1 (3 business days courtesy) • Stage 2 (expiry warning): seven business days is the target, capped before expiration. Strict 14-calendar-day validity cap.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -312,7 +317,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                           : 'bg-sky-950/60 text-sky-300 border-sky-800/60'
                       }`}
                     >
-                      {fu.stage === 'STAGE_1_COURTESY' ? 'Stage 1 (3d)' : 'Stage 2 (7d)'}: {fu.status} ({fu.scheduledDate})
+                      {fu.stage === 'STAGE_1_COURTESY' ? 'Stage 1 (3d)' : 'Stage 2 (expiry warning)'}: {fu.status} ({fu.scheduledDate})
                     </span>
                   ))
                 ) : (

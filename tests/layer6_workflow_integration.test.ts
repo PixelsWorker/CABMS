@@ -7,6 +7,8 @@ import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
 import { ComplianceFormsView } from '../src/views/ComplianceFormsView.tsx';
 import { JobsView } from '../src/views/JobsView.tsx';
 import { WebsiteInboxView } from '../src/views/WebsiteInboxView.tsx';
+import { MockDataAdapter, getMockDataAdapter, ValidationError, NotFoundError } from '../src/services/index.ts';
+import { INITIAL_BUSINESS_CLOCK, serializeBusinessInstant, calculateQuoteExpiration, calculateQuoteFollowUpDates } from '../src/utils/businessTime.ts';
 import {
   Customer,
   Job,
@@ -55,6 +57,224 @@ Object.defineProperty(globalThis, 'document', { value: dom.window.document, writ
 Object.defineProperty(globalThis, 'HTMLDivElement', { value: dom.window.HTMLDivElement, writable: true, configurable: true });
 Object.defineProperty(globalThis, 'HTMLElement', { value: dom.window.HTMLElement, writable: true, configurable: true });
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+test('LAYER 6: PR16 detached baselines protect exported seeds and provider reset', async () => {
+  const adapter = getMockDataAdapter();
+  await adapter.resetToBaseline();
+  const baseline = adapter.getInitialBaseline();
+  const seeds = structuredClone({ jobs: INITIAL_JOBS, brands: INITIAL_BRANDS, types: INITIAL_JOB_TYPES, templates: INITIAL_TEMPLATES });
+  const other = adapter.getInitialBaseline();
+  for (const field of Object.keys(baseline) as (keyof typeof baseline)[]) {
+    assert.notStrictEqual(baseline[field], other[field], `${field} is detached`);
+  }
+  baseline.jobs[0].activityHistory.push({ action: 'Returned snapshot only', actor: 'Test', timestamp: INITIAL_BUSINESS_CLOCK });
+  baseline.complianceForms.jsa['JOB-2026-101'].signedByTechName = 'Returned snapshot only';
+  assert.deepEqual(adapter.getInitialBaseline(), other);
+  try {
+    await adapter.updateJobStatus('JOB-2026-101', 'IN_PROGRESS');
+    await adapter.updateBrandOperationalSettings('solarcell', { contact_phone: 'Adapter only' });
+    await adapter.publishTemplateVersion(other.templates.find(t => t.activeStatus !== 'PUBLISHED')?.id || other.templates[0].id);
+    await adapter.prepareQuoteForJob('JOB-2026-103', 'Adapter only', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 1, total: 1 }]);
+    assert.deepEqual({ jobs: INITIAL_JOBS, brands: INITIAL_BRANDS, types: INITIAL_JOB_TYPES, templates: INITIAL_TEMPLATES }, seeds);
+    await withMountedContext(async ctx => {
+      await act(async () => { ctx.updateJobStatus('JOB-2026-101', 'IN_PROGRESS'); ctx.resetDemo(); });
+      assert.deepEqual(ctx.jobs, seeds.jobs);
+      assert.deepEqual(ctx.brands, seeds.brands);
+    });
+    assert.deepEqual(adapter.getInitialBaseline(), other, 'provider reset restores adapter fixtures too');
+  } finally { await adapter.resetToBaseline(); }
+});
+
+test('LAYER 6: PR16 adapter job types reject unknown and cross-brand requests without partial conversion', async () => {
+  const adapter = new MockDataAdapter();
+  const before = adapter.getInitialBaseline();
+  const type = before.jobTypes.find(t => t.brandId === 'solarcell')!;
+  const payload = { brand_id: 'smart_home' as const, customer_id: before.customers[0].id, title: 'Synthetic type validation', job_type_id: type.id, site_address: 'Synthetic site', site_contact: 'Synthetic contact', site_phone: '0400000000', description: 'Fixture' };
+  await assert.rejects(adapter.createJob({ ...payload, job_type_id: 'UNKNOWN-TYPE' }), ValidationError);
+  await assert.rejects(adapter.createJob(payload), ValidationError);
+  assert.deepEqual(adapter.getInitialBaseline(), before);
+  const enquiry = before.enquiries[0];
+  await assert.rejects(adapter.convertEnquiry(enquiry.id, before.customers[0].id, 'UNKNOWN-TYPE'), ValidationError);
+  assert.deepEqual(adapter.getInitialBaseline(), before, 'failed conversion cannot mutate enquiry or jobs');
+  const job = await adapter.createJob({ ...payload, brand_id: 'solarcell' });
+  assert.equal(job.jobType, type.name);
+  assert.equal(job.jobTypeVersion, type.version);
+  assert.deepEqual(job.formsRequired, type.formsRequired);
+});
+
+test('LAYER 6: PR16 adapter terminal jobs reject every mutation and preserve dedicated reopening', async () => {
+  for (const status of ['COMPLETED', 'CANCELLED'] as const) {
+    const adapter = new MockDataAdapter();
+    await adapter.updateJobStatus('JOB-2026-101', status);
+    const before = adapter.getInitialBaseline();
+    for (const operation of [
+      () => adapter.updateJobStatus('JOB-2026-101', 'NEW'),
+      () => adapter.updateJobStatus('JOB-2026-101', status),
+      () => adapter.rescheduleJob('JOB-2026-101', '2026-11-20', '12:00'),
+      () => adapter.cancelWholeJob('JOB-2026-101', 'Rejected terminal cancellation'),
+      () => adapter.cancelJobAppointment('JOB-2026-101', 'Rejected terminal visit cancellation'),
+    ]) {
+      await assert.rejects(operation(), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), before);
+    }
+    if (status === 'CANCELLED') {
+      const reopened = await adapter.reopenCancelledJob('JOB-2026-101');
+      assert.ok(['NEW', 'SCHEDULED'].includes(reopened.status));
+      await adapter.rescheduleJob(reopened.id, '2026-11-20', '12:00');
+      await adapter.cancelWholeJob(reopened.id, 'Valid active cancellation');
+    } else {
+      await assert.rejects(adapter.reopenCancelledJob('JOB-2026-101'), ValidationError);
+      assert.deepEqual(adapter.getInitialBaseline(), before);
+    }
+  }
+});
+
+test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps use one injected clock read', async () => {
+  let clock = '2027-12-24T09:00:00+10:00';
+  let reads = 0;
+  const adapter = new MockDataAdapter(() => { reads++; return clock; });
+  const items = [{ id: '1', description: 'Fraction A', quantity: 1, unitPrice: 0.1, total: 0.1 }, { id: '2', description: 'Fraction B', quantity: 1, unitPrice: 0.2, total: 0.2 }];
+  for (const brand of ['solarcell', 'smart_home', 'cctv'] as const) {
+    const job = (await adapter.getJobs({ brandId: brand }))[0];
+    const beforeReads = reads;
+    const quote = await adapter.prepareQuoteForJob(job.id, 'Deterministic quote', items);
+    assert.equal(reads, beforeReads + 1);
+    assert.deepEqual([quote.subtotal, quote.gst, quote.total], [0.3, 0.03, 0.33]);
+    assert.equal(quote.issuedAt, serializeBusinessInstant(clock));
+    assert.equal(quote.acceptanceHistory[0].timestamp, quote.issuedAt);
+    assert.equal(quote.expiresAt, calculateQuoteExpiration(clock));
+    const dates = calculateQuoteFollowUpDates(clock, adapter.getInitialBaseline().brands[brand].holidayRegion);
+    assert.deepEqual(quote.followUps?.map(f => f.scheduledDate), [dates.stage1Date, dates.stage2Date]);
+    assert.ok(quote.followUps?.every(f => f.quoteId === quote.id));
+  }
+  for (const operation of ['revokeQuote', 'refuseQuote'] as const) {
+    const beforeReads = reads;
+    clock = '2027-12-26T10:30:00+10:00';
+    await adapter[operation]('JOB-2026-103', 'Synthetic operation');
+    assert.equal(reads, beforeReads + 1);
+    assert.equal((await adapter.getQuoteForJob('JOB-2026-103'))!.acceptanceHistory.at(-1)!.timestamp, serializeBusinessInstant(clock));
+  }
+  const before = adapter.getInitialBaseline();
+  for (const unsupported of ['2028-12-29T09:00:00+10:00', '2030-01-01T09:00:00+10:00']) {
+    clock = unsupported;
+    await assert.rejects(adapter.prepareQuoteForJob('JOB-2026-103', 'Unsupported', items), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+  const defaultQuote = await new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Default clock', items);
+  assert.equal(defaultQuote.issuedAt, serializeBusinessInstant(INITIAL_BUSINESS_CLOCK));
+});
+
+test('LAYER 6: PR16 adapter acceptance rejects every invalid scenario/state and elapsed expiry atomically', async () => {
+  let clock = INITIAL_BUSINESS_CLOCK;
+  let reads = 0;
+  const adapter = new MockDataAdapter(() => { reads++; return clock; });
+  const sent = await adapter.getQuoteForJob('JOB-2026-103');
+  assert.ok(sent);
+  const before = adapter.getInitialBaseline();
+  for (const scenario of ['invalid', 'expired', 'revoked', 'superseded', 'already_accepted', 'unknown']) {
+    await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-103', scenario), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+  for (const status of ['DRAFT', 'ACCEPTED', 'EXPIRED', 'REVOKED', 'SUPERSEDED'] as const) {
+    const seeded = new MockDataAdapter();
+    // Test-only fixture installation for states without an adapter transition API.
+    const jobs = seeded.getInitialBaseline().jobs;
+    jobs.find(j => j.id === 'JOB-2026-103')!.quote!.acceptanceStatus = status;
+    Object.assign(seeded, { jobs });
+    const snapshot = seeded.getInitialBaseline();
+    await assert.rejects(seeded.recordQuoteAcceptance('JOB-2026-103', 'valid'), ValidationError);
+    assert.deepEqual(seeded.getInitialBaseline(), snapshot);
+  }
+  for (const timestamp of [sent.expiresAt!, serializeBusinessInstant(Date.parse(sent.expiresAt!) + 1)]) {
+    clock = timestamp;
+    await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-103', 'valid'), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+  clock = serializeBusinessInstant(Date.parse(sent.expiresAt!) - 1);
+  const beforeReads = reads;
+  assert.deepEqual(await adapter.recordQuoteAcceptance('JOB-2026-103', 'valid'), { success: true, message: 'Quote accepted and recorded in preview.' });
+  assert.equal(reads, beforeReads + 1);
+  const accepted = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+  assert.equal(accepted.acceptanceHistory.length, sent.acceptanceHistory.length + 1);
+  assert.equal(accepted.acceptedAt, clock);
+  assert.equal(accepted.acceptanceHistory.at(-1)!.timestamp, clock);
+  assert.ok(accepted.followUps?.every(f => f.status === 'CANCELLED'));
+  await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-103', 'valid'), ValidationError);
+  assert.deepEqual(await adapter.getQuoteForJob('JOB-2026-103'), accepted);
+  await assert.rejects(adapter.recordQuoteAcceptance('MISSING', 'valid'), NotFoundError);
+  await assert.rejects(adapter.recordQuoteAcceptance('JOB-2026-102', 'valid'), NotFoundError);
+});
+
+test('LAYER 6: PR16 quote follow-up replay is independent of clock step size and idempotent at expiry', async () => {
+  const replay = async (hours: number[]) => {
+    let result!: Quote;
+    await withMountedContext(async ctx => {
+      await act(async () => { ctx.resetDemo(); });
+      await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Replay fixture', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+      for (const step of hours) await act(async () => { ctx.advanceClock(step); });
+      result = structuredClone(ctx.jobs.find(j => j.id === 'JOB-2026-101')!.quote!);
+      await act(async () => { ctx.advanceClock(0); ctx.advanceClock(24); });
+      assert.deepEqual(ctx.jobs.find(j => j.id === 'JOB-2026-101')!.quote, result, 'later/repeated advancement does not duplicate events');
+    });
+    return result;
+  };
+  const large = await replay([14 * 24]);
+  assert.deepEqual(large, await replay(Array(14).fill(24)));
+  assert.equal(large.acceptanceStatus, 'EXPIRED');
+  assert.ok(large.followUps?.every(f => f.status === 'SENT'));
+  assert.deepEqual(large.followUps?.map(f => f.sentAt), large.followUps?.map(f => serializeBusinessInstant(`${f.scheduledDate}T00:00:00+10:00`)));
+  assert.deepEqual(large.acceptanceHistory.slice(-3).map(h => h.timestamp), [...large.followUps!.map(f => f.sentAt!), large.expiresAt!]);
+  assert.deepEqual(large, await replay([20 * 24]), 'jump past expiry replays the same events');
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Isolated terminal fixtures', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+    const terminalQuotes = ctx.getAuthoritativeState().jobs.filter(j => j.quote).map(j => j.quote!);
+    // Install all states into job-owned fixture objects; no production testing seam is added.
+    const base = structuredClone(terminalQuotes[0]);
+    const states = ['DRAFT', 'ACCEPTED', 'REVOKED', 'SUPERSEDED', 'EXPIRED'] as const;
+    for (const status of states) {
+      const quote = structuredClone(base);
+      quote.acceptanceStatus = status;
+      quote.acceptanceHistory = [];
+      quote.followUps = [
+        { id: 'future', quoteId: quote.id, stage: 'STAGE_2_EXPIRY', scheduledDate: '2026-11-30', status: 'SCHEDULED', channel: 'EMAIL_SIMULATED' },
+        { id: 'due', quoteId: quote.id, stage: 'STAGE_1_COURTESY', scheduledDate: '2026-11-03', status: 'SCHEDULED', channel: 'EMAIL_SIMULATED' },
+      ];
+      ctx.getAuthoritativeState().jobs[0].quote = quote;
+      await act(async () => { ctx.setDemoClock(INITIAL_BUSINESS_CLOCK); });
+      await act(async () => { ctx.advanceClock(24); });
+      assert.ok(!ctx.jobs[0].quote!.acceptanceHistory.some(h => h.action.includes('follow-up email dispatched')), `${status} cannot dispatch before expiry`);
+      await act(async () => { ctx.advanceClock(20 * 24); });
+      const processed = ctx.jobs[0].quote!;
+      assert.ok(processed.followUps!.every(f => f.status === 'CANCELLED'));
+      assert.ok(!processed.acceptanceHistory.some(h => h.action.includes('follow-up email dispatched')));
+      assert.equal(processed.acceptanceStatus, status === 'DRAFT' ? 'EXPIRED' : status);
+    }
+  });
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Unsorted event fixture', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+    const quote = ctx.getAuthoritativeState().jobs[0].quote!;
+    quote.expiresAt = '2026-11-16T00:00:00+10:00';
+    const followUp = quote.followUps![0];
+    quote.followUps = [
+      { ...followUp, id: 'late', scheduledDate: '2026-11-10' },
+      { ...followUp, id: 'already-sent', scheduledDate: '2026-11-03', status: 'SENT', sentAt: '2026-11-03T00:00:00.000+10:00' },
+      { ...followUp, id: 'early', scheduledDate: '2026-11-05' },
+      { ...followUp, id: 'at-expiry', scheduledDate: '2026-11-16' },
+      { ...followUp, id: 'future', scheduledDate: '2026-11-30' },
+    ];
+    const oldHistory = structuredClone(quote.acceptanceHistory);
+    await act(async () => { ctx.advanceClock(20 * 24); });
+    const processed = ctx.jobs[0].quote!;
+    assert.deepEqual(processed.acceptanceHistory.slice(0, oldHistory.length), oldHistory);
+    assert.deepEqual(processed.acceptanceHistory.slice(oldHistory.length).map(h => h.timestamp), [
+      '2026-11-05T00:00:00.000+10:00', '2026-11-10T00:00:00.000+10:00', quote.expiresAt,
+    ]);
+    assert.deepEqual(processed.followUps?.map(f => f.status), ['SENT', 'SENT', 'SENT', 'CANCELLED', 'CANCELLED']);
+    assert.equal(processed.followUps![1].sentAt, '2026-11-03T00:00:00.000+10:00', 'processed event timestamp is preserved');
+  });
+});
 
 // Executable Mounted React Context Runner
 export async function withMountedContext(

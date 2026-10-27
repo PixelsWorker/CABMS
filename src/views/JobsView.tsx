@@ -75,6 +75,14 @@ export const JobsView: React.FC = () => {
   const [activeJobDetailTab, setActiveJobDetailTab] = useState<'details' | 'history'>('details');
 
   const lastSelectedJobIdRef = useRef<string | null>(selectedJobId);
+  const previousSelectionRef = useRef({
+    id: selectedJobId,
+    status: authorizedJobs.find(j => j.id === selectedJobId)?.status,
+    brandId: activeBrandId,
+    persona,
+    statusFilter,
+    searchQuery,
+  });
 
   // New Job Form State
   const [newTitle, setNewTitle] = useState('');
@@ -111,6 +119,21 @@ export const JobsView: React.FC = () => {
   const selectedJob = (selectedJobId ? filteredJobs.find(j => j.id === selectedJobId) : undefined) || filteredJobs[0];
 
   useEffect(() => {
+    const target = authorizedJobs.find(j => j.id === selectedJobId);
+    const previous = previousSelectionRef.current;
+    previousSelectionRef.current = {
+      id: selectedJobId, status: target?.status, brandId: activeBrandId, persona, statusFilter, searchQuery,
+    };
+    if (
+      target && previous.id === selectedJobId && previous.brandId === activeBrandId && previous.persona === persona &&
+      previous.status && previous.status !== 'COMPLETED' && previous.status !== 'CANCELLED' &&
+      (target.status === 'COMPLETED' || target.status === 'CANCELLED') &&
+      statusFilter === 'open' && previous.statusFilter === statusFilter && previous.searchQuery === searchQuery &&
+      [target.id, target.title, target.siteContact, target.siteAddress].some(value => value.toLowerCase().includes(searchQuery.toLowerCase()))
+    ) {
+      setStatusFilter('all');
+      return;
+    }
     // If selectedJobId just changed to an authorized job that is outside the current filter or search,
     // widen statusFilter to 'all' and clear search query so the newly selected job remains visible and selected.
     if (selectedJobId && selectedJobId !== lastSelectedJobIdRef.current) {

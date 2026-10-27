@@ -131,6 +131,7 @@ export const DemoControlsBar: React.FC = () => {
               <option value="dark_neutral" className="bg-slate-900 text-white">Preset 1 — All Dark</option>
               <option value="light_company" className="bg-slate-900 text-white">Preset 4 — Light + Company</option>
               <option value="light_neutral" className="bg-slate-900 text-white">Preset 3 — All Light</option>
+              <option value="high_visibility_dark" className="bg-slate-900 text-white">High Visibility Dark</option>
             </select>
           </div>
         </div>

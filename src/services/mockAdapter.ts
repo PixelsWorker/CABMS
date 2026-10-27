@@ -36,6 +36,8 @@ import {
   ValidationError,
 } from './types.ts';
 
+import { INITIAL_BUSINESS_CLOCK, serializeBusinessInstant, calculateQuoteExpiration, calculateQuoteFollowUpDates } from '../utils/businessTime.ts';
+
 // Direct fixture imports
 import brandsFixture from '../data/fixtures/brands.json';
 import techniciansFixture from '../data/fixtures/technicians.json';
@@ -69,7 +71,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
   private tca2Audits!: Record<string, Tca2AuditRecord>;
   private draftBusinesses: DraftBusinessProfile[] = [];
 
-  constructor() {
+  constructor(private readonly clock: () => string = () => INITIAL_BUSINESS_CLOCK) {
     this.hydrateFromFixtures();
   }
 
@@ -92,7 +94,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
    * Guarantees zero blank flashes or missing-record crashes on initial component mounts.
    */
   public getInitialBaseline() {
-    return {
+    return structuredClone({
       brands: this.brands,
       technicians: this.technicians,
       jobTypes: this.jobTypes,
@@ -104,7 +106,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
       complianceForms: this.complianceForms,
       tca2Audits: this.tca2Audits,
       draftBusinesses: this.draftBusinesses,
-    };
+    });
   }
 
   // Brand Configuration
@@ -248,7 +250,10 @@ export class MockDataAdapter implements CabmsDataAdapter {
   }
 
   async createJob(payload: CreateJobPayload): Promise<Job> {
-    const jobType = this.jobTypes.find(jt => jt.id === payload.job_type_id) ?? this.jobTypes[0];
+    const jobType = this.jobTypes.find(jt => jt.id === payload.job_type_id);
+    if (!jobType || jobType.brandId !== payload.brand_id) {
+      throw new ValidationError('Job type must exist and belong to the requested brand.');
+    }
     const newId = `JOB-2026-${String(this.jobs.length + 101)}`;
     const newJob: Job = {
       id: newId,
@@ -292,6 +297,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async updateJobStatus(id: string, status: JobStatus, notes?: string): Promise<Job> {
     const job = this.jobs.find(j => j.id === id);
     if (!job) throw new NotFoundError('Job', id);
+    if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+      throw new ValidationError(`Cannot modify a ${job.status.toLowerCase()} job. Use the dedicated reopening flow for cancelled jobs.`);
+    }
 
     job.status = status;
     job.activityHistory.push({
@@ -305,6 +313,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async rescheduleJob(id: string, date: string, time: string): Promise<Job> {
     const job = this.jobs.find(j => j.id === id);
     if (!job) throw new NotFoundError('Job', id);
+    if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+      throw new ValidationError(`Cannot modify a ${job.status.toLowerCase()} job. Use the dedicated reopening flow for cancelled jobs.`);
+    }
 
     job.scheduledDate = date;
     job.scheduledTime = time;
@@ -338,6 +349,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async cancelWholeJob(id: string, reason: string): Promise<Job> {
     const job = this.jobs.find(j => j.id === id);
     if (!job) throw new NotFoundError('Job', id);
+    if (job.status === 'COMPLETED' || job.status === 'CANCELLED') {
+      throw new ValidationError(`Cannot modify a ${job.status.toLowerCase()} job. Use the dedicated reopening flow for cancelled jobs.`);
+    }
 
     job.status = 'CANCELLED';
     job.activityHistory.push({
@@ -561,12 +575,24 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job) throw new NotFoundError('Job', jobId);
 
-    const subtotal = lineItems.reduce((acc, item) => acc + item.total, 0);
+    let issuedAt: string;
+    let expiresAt: string;
+    let dates: ReturnType<typeof calculateQuoteFollowUpDates>;
+    try {
+      issuedAt = serializeBusinessInstant(this.clock());
+      expiresAt = calculateQuoteExpiration(issuedAt);
+      dates = calculateQuoteFollowUpDates(issuedAt, this.brands[job.brandId]?.holidayRegion || 'brisbane');
+    } catch (error: unknown) {
+      if (!(error instanceof RangeError)) throw error;
+      throw new ValidationError(`Cannot prepare quote: ${error.message}`);
+    }
+    const subtotal = Math.round(lineItems.reduce((acc, item) => acc + item.total, 0) * 100) / 100;
     const gst = Math.round(subtotal * 0.10 * 100) / 100;
-    const total = subtotal + gst;
+    const total = Math.round((subtotal + gst) * 100) / 100;
+    const quoteId = `QUOTE-2026-${String(jobId).replace(/[^\d]/g, '')}`;
 
     const newQuote: Quote = {
-      id: `QUOTE-2026-${String(jobId).replace(/[^\d]/g, '')}`,
+      id: quoteId,
       jobId,
       customerId: job.customerId,
       brandId: job.brandId,
@@ -575,15 +601,26 @@ export class MockDataAdapter implements CabmsDataAdapter {
       subtotal,
       gst,
       total,
-      lineItems,
+      lineItems: structuredClone(lineItems),
       termsVersion: 'v2026.1',
       termsContentSnapshot: 'Standard commercial service terms.',
       frozenIssuerSnapshot: this.brands[job.brandId]?.legalIssuerName || '',
       acceptanceStatus: 'SENT',
       linkScenario: 'valid',
-      issuedAt: new Date().toISOString(),
+      issuedAt,
+      expiresAt,
+      followUps: [
+        {
+          id: `QFU-${quoteId}-1`, quoteId, stage: 'STAGE_1_COURTESY',
+          scheduledDate: dates.stage1Date, status: 'SCHEDULED', channel: 'EMAIL_SIMULATED',
+        },
+        {
+          id: `QFU-${quoteId}-2`, quoteId, stage: 'STAGE_2_EXPIRY',
+          scheduledDate: dates.stage2Date, status: 'SCHEDULED', channel: 'EMAIL_SIMULATED',
+        },
+      ],
       acceptanceHistory: [
-        { timestamp: new Date().toISOString(), action: 'Quote prepared & staged', actor: 'System' },
+        { timestamp: issuedAt, action: 'Quote prepared & staged', actor: 'System' },
       ],
     };
 
@@ -591,14 +628,20 @@ export class MockDataAdapter implements CabmsDataAdapter {
     return structuredClone(newQuote);
   }
 
-  async recordQuoteAcceptance(jobId: string, _scenario: string): Promise<{ success: boolean; message: string }> {
+  async recordQuoteAcceptance(jobId: string, scenario: string): Promise<{ success: boolean; message: string }> {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job || !job.quote) throw new NotFoundError('Quote for Job', jobId);
 
+    const timestamp = serializeBusinessInstant(this.clock());
+    if (scenario !== 'valid' || job.quote.acceptanceStatus !== 'SENT' ||
+      (job.quote.expiresAt && !(Date.parse(timestamp) < Date.parse(job.quote.expiresAt)))) {
+      throw new ValidationError('Quote acceptance requires a valid scenario and a SENT, unexpired quote.');
+    }
     job.quote.acceptanceStatus = 'ACCEPTED';
-    job.quote.acceptedAt = new Date().toISOString();
+    job.quote.acceptedAt = timestamp;
+    job.quote.followUps = job.quote.followUps?.map(fu => fu.status === 'SCHEDULED' ? { ...fu, status: 'CANCELLED' } : fu);
     job.quote.acceptanceHistory.push({
-      timestamp: new Date().toISOString(),
+      timestamp,
       action: 'Quote accepted (Recorded in Preview)',
       actor: job.siteContact,
     });
@@ -609,9 +652,10 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job || !job.quote) throw new NotFoundError('Quote for Job', jobId);
 
+    const timestamp = serializeBusinessInstant(this.clock());
     job.quote.acceptanceStatus = 'REVOKED';
     job.quote.acceptanceHistory.push({
-      timestamp: new Date().toISOString(),
+      timestamp,
       action: `Quote revoked${reason ? `: ${reason}` : ''}`,
       actor: 'System',
     });
@@ -622,10 +666,11 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job || !job.quote) throw new NotFoundError('Quote for Job', jobId);
 
+    const timestamp = serializeBusinessInstant(this.clock());
     job.quote.acceptanceStatus = 'REVOKED';
     job.quote.refusalReason = reason || 'Declined by customer';
     job.quote.acceptanceHistory.push({
-      timestamp: new Date().toISOString(),
+      timestamp,
       action: `Customer declined quotation: ${job.quote.refusalReason}`,
       actor: job.siteContact,
     });

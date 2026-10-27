@@ -74,7 +74,9 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
 
       {/* Tab Viewport */}
       <div>
-        {activeSubTab === 'workspace' && <WorkspaceSettingsView />}
+        <div hidden={activeSubTab !== 'workspace'}>
+          <WorkspaceSettingsView />
+        </div>
         {activeSubTab === 'system' && (
           isSuperAdmin ? (
             <SuperAdminSetupView />

@@ -811,69 +811,46 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // 3. Process quote follow-ups and expiration (14 calendar days expiry & cap)
         if (updatedJob.quote) {
           const q = updatedJob.quote;
-          const quoteCurrentDate = businessCalendarDate(newClock);
-          const isQuoteExpired = q.expiresAt ? new Date(newClock) >= new Date(q.expiresAt) : false;
+          const expiresAt = q.expiresAt ? Date.parse(q.expiresAt) : Infinity;
+          const isQuoteExpired = Date.parse(newClock) >= expiresAt;
+          const history = [...q.acceptanceHistory];
+          let changed = false;
+          const processed = new Map<string, QuoteFollowUp>();
 
-          let quoteUpdated = false;
-          let newAcceptanceStatus = q.acceptanceStatus;
-          let newAcceptanceHistory = [...q.acceptanceHistory];
+          // Replay due events in scheduled order before the expiry transition.
+          for (const fu of [...(q.followUps || [])].sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate))) {
+            if (fu.status !== 'SCHEDULED') continue;
+            const scheduledAt = serializeBusinessInstant(`${fu.scheduledDate}T00:00:00+10:00`);
+            if (q.acceptanceStatus === 'SENT' && Date.parse(scheduledAt) <= Date.parse(newClock) && Date.parse(scheduledAt) < expiresAt) {
+              changed = true;
+              deliveredCount++;
+              history.push({
+                timestamp: scheduledAt,
+                action: `Quotation follow-up email dispatched (${fu.stage === 'STAGE_1_COURTESY' ? 'Stage 1 Courtesy' : 'Stage 2 Expiry Warning'})`,
+                actor: 'Automated System Service',
+              });
+              processed.set(fu.id, { ...fu, status: 'SENT', sentAt: scheduledAt });
+            } else if (isQuoteExpired || ['ACCEPTED', 'REVOKED', 'SUPERSEDED', 'EXPIRED'].includes(q.acceptanceStatus)) {
+              changed = true;
+              processed.set(fu.id, { ...fu, status: 'CANCELLED' });
+            }
+          }
 
-          // Transition to EXPIRED if past 14 calendar days
-          if (isQuoteExpired && (q.acceptanceStatus === 'SENT' || q.acceptanceStatus === 'DRAFT')) {
-            newAcceptanceStatus = 'EXPIRED';
-            newAcceptanceHistory.push({
-              timestamp: newClock,
+          const shouldExpire = isQuoteExpired && (q.acceptanceStatus === 'SENT' || q.acceptanceStatus === 'DRAFT');
+          if (shouldExpire) {
+            changed = true;
+            history.push({
+              timestamp: q.expiresAt!,
               action: 'Quotation expired (14-calendar-day validity period exceeded)',
               actor: 'Automated System Clock',
             });
-            quoteUpdated = true;
           }
-
-          if (q.followUps && q.followUps.length > 0) {
-            let followUpsChanged = false;
-            const updatedFollowUps = q.followUps.map(fu => {
-              if (fu.status === 'SCHEDULED') {
-                if (
-                  newAcceptanceStatus === 'EXPIRED' ||
-                  newAcceptanceStatus === 'ACCEPTED' ||
-                  newAcceptanceStatus === 'REVOKED' ||
-                  newAcceptanceStatus === 'SUPERSEDED'
-                ) {
-                  followUpsChanged = true;
-                  return { ...fu, status: 'CANCELLED' as const };
-                }
-
-                if (fu.scheduledDate <= quoteCurrentDate && !isQuoteExpired) {
-                  followUpsChanged = true;
-                  deliveredCount++;
-                  newAcceptanceHistory.push({
-                    timestamp: newClock,
-                    action: `Quotation follow-up email dispatched (${fu.stage === 'STAGE_1_COURTESY' ? 'Stage 1 Courtesy' : 'Stage 2 Expiry Warning'})`,
-                    actor: 'Automated System Service',
-                  });
-                  return {
-                    ...fu,
-                    status: 'SENT' as const,
-                    sentAt: newClock,
-                  };
-                }
-              }
-              return fu;
-            });
-
-            if (followUpsChanged || quoteUpdated) {
-              updatedJob.quote = {
-                ...q,
-                acceptanceStatus: newAcceptanceStatus,
-                acceptanceHistory: newAcceptanceHistory,
-                followUps: updatedFollowUps,
-              };
-            }
-          } else if (quoteUpdated) {
+          if (changed) {
             updatedJob.quote = {
               ...q,
-              acceptanceStatus: newAcceptanceStatus,
-              acceptanceHistory: newAcceptanceHistory,
+              acceptanceStatus: shouldExpire ? 'EXPIRED' : q.acceptanceStatus,
+              acceptanceHistory: history,
+              followUps: q.followUps?.map(fu => processed.get(fu.id) || fu),
             };
           }
         }
@@ -2243,7 +2220,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(message);
     }
 
-    seqCounters.quote++;
     // Clear subtotal (ex-GST) + GST (10%) = Total (inc-GST) convention
     const subtotal = Math.round(lineItems.reduce((acc, item) => acc + item.total, 0) * 100) / 100;
     const gst = Math.round(subtotal * 0.1 * 100) / 100;
@@ -2251,24 +2227,28 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const brand = brands[job.brandId || activeBrandId];
     const termsTpl = templates.find(t => t.type === 'TERMS') || templates[0];
-    const quoteId = `QUOTE-2026-${seqCounters.quote}`;
-    const issuedAt = serializeBusinessInstant(demoClock);
-    const expiresAt = calculateQuoteExpiration(demoClock);
+    let issuedAt: string;
+    let expiresAt: string;
     const region = brand?.holidayRegion || 'brisbane';
 
     let stage1Date: string;
     let stage2Date: string;
     try {
-      const dates = calculateQuoteFollowUpDates(demoClock, region);
+      issuedAt = serializeBusinessInstant(demoClock);
+      expiresAt = calculateQuoteExpiration(issuedAt);
+      const dates = calculateQuoteFollowUpDates(issuedAt, region);
       stage1Date = dates.stage1Date;
       stage2Date = dates.stage2Date;
     } catch (err: unknown) {
-      const errMessage = err instanceof Error ? err.message : 'Date is outside the supported business calendar.';
+      if (!(err instanceof RangeError)) throw err;
+      const errMessage = err.message;
       const message = `Cannot prepare quote: ${errMessage}`;
       showDemoNotification(message, 'error');
       throw new Error(message);
     }
 
+    seqCounters.quote++;
+    const quoteId = `QUOTE-2026-${seqCounters.quote}`;
     const followUps: QuoteFollowUp[] = [
       {
         id: `QFU-${quoteId}-1`,

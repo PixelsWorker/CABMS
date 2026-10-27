@@ -18,7 +18,156 @@ import { ScheduleView } from '../src/views/ScheduleView.tsx';
 import { CommunicationsView } from '../src/views/CommunicationsView.tsx';
 import { TemplatesSettingsView } from '../src/views/TemplatesSettingsView.tsx';
 import { WorkspaceSettingsView } from '../src/views/WorkspaceSettingsView.tsx';
+import { SystemWorkspaceSettingsView } from '../src/views/SystemWorkspaceSettingsView.tsx';
 import { INITIAL_TEMPLATES } from '../src/data/seedData.ts';
+
+function changeMountedInput(element: HTMLInputElement, value: string, window: JSDOM['window']) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  setter.call(element, value);
+  element.dispatchEvent(new window.Event('input', { bubbles: true }));
+  element.dispatchEvent(new window.Event('change', { bubbles: true }));
+  // React's input-event polyfill may be selected before this file installs JSDOM.
+  const key = Object.keys(element).find(k => k.startsWith('__reactProps$'));
+  if (key) (element as any)[key].onChange({ target: { value } });
+}
+
+test('LAYER 4: PR16 workspace saves preserve active theme and hub drafts stay isolated per brand', async () => {
+  await mountView(React.createElement(SystemWorkspaceSettingsView), async (ctx, container, window) => {
+    await act(async () => { ctx.simulateSignIn('super_admin'); ctx.setVisualPreset('light_neutral'); });
+    const phone = () => container.querySelector<HTMLInputElement>('#ws-phone')!;
+    const preset = () => container.querySelector<HTMLSelectElement>('#ws-preset')!;
+    const save = async () => act(async () => { container.querySelector('form')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); });
+    const tab = async (label: string) => act(async () => {
+      Array.from(container.querySelectorAll('button')).find(b => b.textContent?.trim().startsWith(label))!.click();
+    });
+    await act(async () => { changeMountedInput(phone(), 'Solar saved phone', window); });
+    await save();
+    assert.equal(ctx.visualPreset, 'light_neutral', 'unrelated save preserves the active demo theme');
+    assert.ok(preset().querySelector('option[value="high_visibility_dark"]'));
+    await act(async () => {
+      changeMountedInput(phone(), 'Solar unsaved phone', window);
+      preset().value = 'high_visibility_dark';
+      preset().dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    await tab('System & Integrations');
+    assert.equal(container.querySelector('[data-testid="workspace-settings-view"]')!.parentElement!.hidden, true);
+    await tab('Workspace Settings');
+    assert.equal(phone().value, 'Solar unsaved phone');
+    assert.equal(preset().value, 'high_visibility_dark');
+    await act(async () => { ctx.setActiveBrandId('smart_home'); });
+    assert.notEqual(phone().value, 'Solar unsaved phone');
+    await act(async () => { changeMountedInput(phone(), 'Smart unsaved phone', window); });
+    await tab('System & Integrations');
+    await tab('Workspace Settings');
+    assert.equal(phone().value, 'Smart unsaved phone');
+    await act(async () => { ctx.setActiveBrandId('solarcell'); });
+    assert.equal(phone().value, 'Solar unsaved phone');
+    await save();
+    assert.equal(ctx.visualPreset, 'high_visibility_dark', 'explicitly changed preference applies');
+    assert.equal(window.document.documentElement.dataset.appearance, 'high_visibility_dark');
+    await act(async () => { ctx.setActiveBrandId('smart_home'); });
+    assert.equal(phone().value, 'Smart unsaved phone', 'saving Solarcell preserves Smart Home draft');
+    await act(async () => { ctx.simulateSignIn('owner_admin'); });
+    await tab('System & Integrations');
+    assert.ok(container.textContent?.includes('Access Denied'));
+    await tab('Workspace Settings');
+    assert.equal(phone().value, 'Smart unsaved phone');
+  });
+});
+
+test('LAYER 4: PR16 unsupported quote form submissions retain values and do not consume public IDs', async () => {
+  await mountView(React.createElement(QuotesAcceptanceView), async (ctx, container, window) => {
+    let before!: ReturnType<typeof ctx.prepareQuoteForJob>;
+    const items = [{ id: '1', description: 'Synthetic scope', quantity: 1, unitPrice: 100, total: 100 }];
+    await act(async () => { before = ctx.prepareQuoteForJob('JOB-2026-101', 'Before rejection', items); ctx.setSelectedJobId('JOB-2026-102'); });
+    const open = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Prepare') && b.textContent?.includes('Quote'))!;
+    assert.ok(open);
+    await act(async () => { open.click(); });
+    await act(async () => {
+      changeMountedInput(container.querySelector('form input[type="text"]')!, 'Retained synthetic scope', window);
+      changeMountedInput(container.querySelector('form input[type="number"]')!, '456.78', window);
+    });
+    const jobsBefore = structuredClone(ctx.jobs);
+    for (const clock of ['2030-01-01T09:00:00+10:00', '2028-12-29T09:00:00+10:00']) {
+      await act(async () => { ctx.setDemoClock(clock); });
+      await act(async () => { container.querySelector('form')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); });
+      assert.deepEqual(ctx.jobs, jobsBefore);
+      assert.equal(ctx.demoNotification?.type, 'error');
+      assert.ok(ctx.demoNotification?.message.startsWith('Cannot prepare quote:'));
+      assert.equal(container.querySelector<HTMLInputElement>('form input[type="text"]')?.value, 'Retained synthetic scope');
+      assert.equal(container.querySelector<HTMLInputElement>('form input[type="number"]')?.value, '456.78');
+    }
+    await act(async () => { ctx.setDemoClock('2026-11-02T09:00:00+10:00'); });
+    let after!: typeof before;
+    await act(async () => { after = ctx.prepareQuoteForJob('JOB-2026-102', 'After rejection', items); });
+    assert.equal(Number(after.id.split('-').at(-1)), Number(before.id.split('-').at(-1)) + 1);
+  });
+});
+
+test('LAYER 4: PR16 quote form rethrows unexpected preparation failures', async () => {
+  function FailingQuotes() {
+    const ctx = useCabms();
+    ctx.prepareQuoteForJob = () => { throw new Error('Unexpected preparation failure'); };
+    return React.createElement(QuotesAcceptanceView);
+  }
+  await mountView(React.createElement(FailingQuotes), async (ctx, container) => {
+    await act(async () => { ctx.setSelectedJobId('JOB-2026-102'); });
+    await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Prepare') && b.textContent?.includes('Quote'))!.click(); });
+    const form = container.querySelector('form')!;
+    const key = Object.keys(form).find(k => k.startsWith('__reactProps$'))!;
+    assert.throws(() => (form as any)[key].onSubmit({ preventDefault() {} }), /Unexpected preparation failure/);
+    assert.ok(container.querySelector('form'), 'modal remains available');
+  });
+});
+
+test('LAYER 4: PR16 terminal transitions retain job selection while explicit filters and boundaries remain effective', async () => {
+  await mountView(React.createElement(JobsView), async (ctx, container, window) => {
+    const filter = () => container.querySelector<HTMLSelectElement>('select.cabms-card-subtle')!;
+    const click = async (text: string) => act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.trim() === text)!.click(); });
+    await click('Cancel Job');
+    assert.equal(ctx.selectedJobId, 'JOB-2026-101');
+    assert.equal(filter().value, 'all');
+    assert.ok(container.textContent?.includes('Reopen Cancelled Job'));
+    await act(async () => { filter().value = 'open'; filter().dispatchEvent(new window.Event('change', { bubbles: true })); });
+    assert.equal(filter().value, 'open', 'deliberate Open filter stays effective');
+    assert.notEqual(ctx.selectedJobId, 'JOB-2026-101');
+    let id = '';
+    await act(async () => { ctx.setActiveBrandId('smart_home'); });
+    await act(async () => {
+      id = ctx.createJob({ brandId: 'smart_home', title: 'Synthetic direct completion', jobType: 'JT-004', isDirectToInvoice: true, formsRequired: [] }).id;
+      ctx.setSelectedJobId(id);
+    });
+    assert.equal(ctx.selectedJobId, id, 'newly created selected job survives current filter');
+    await click('Complete Work Order');
+    assert.equal(ctx.selectedJobId, id);
+    assert.equal(filter().value, 'all');
+    assert.ok(container.textContent?.includes('Work Order Completed'));
+    const search = container.querySelector<HTMLInputElement>('input[placeholder*="Search"]')!;
+    await act(async () => { changeMountedInput(search, 'no matching synthetic job', window); });
+    assert.ok(!container.textContent?.includes('Work Order Completed'), 'search excludes terminal detail pane');
+    await act(async () => { changeMountedInput(search, '', window); ctx.setActiveBrandId('solarcell'); });
+    assert.equal(ctx.jobs.find(j => j.id === ctx.selectedJobId)?.brandId, 'solarcell');
+    await act(async () => { ctx.simulateSignIn('technician'); });
+    const selected = ctx.jobs.find(j => j.id === ctx.selectedJobId);
+    if (selected?.brandId === ctx.activeBrandId) assert.equal(selected.assignedTechId, 'TECH-001');
+  });
+});
+
+test('LAYER 4: PR16 expiry-warning copy and displayed compliance issuer describe current behavior', async () => {
+  await mountView(React.createElement(QuotesAcceptanceView), async (ctx, container) => {
+    await act(async () => { ctx.setDemoClock('2027-12-24T09:00:00+10:00'); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Holiday example', [{ id: '1', description: 'Scope', quantity: 1, unitPrice: 100, total: 100 }]); });
+    await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Recipient Portal View'))!.click(); });
+    assert.ok(container.textContent?.includes('Stage 2 (expiry warning)'));
+    assert.ok(container.textContent?.includes('seven business days is the target, capped before expiration'));
+    assert.ok(container.textContent?.includes('2028-01-06'));
+  });
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container) => {
+    await act(async () => { ctx.setSelectedJobId('JOB-2026-104'); ctx.setActiveBrandId('solarcell'); });
+    assert.equal(container.querySelector<HTMLSelectElement>('#compliance-work-order')?.value, 'JOB-2026-104');
+    assert.ok(container.textContent?.includes(`Issuer: ${ctx.brands.cctv.legalIssuerName}`), 'issuer describes the currently displayed CCTV job');
+  });
+});
 
 test('LAYER 4: Components — DashboardView renders KPI metrics and workflow queues', () => {
   const html = renderToString(
@@ -723,8 +872,12 @@ test('LAYER 4: Gate T — Visual Preset switcher updates context state and synch
     assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light');
     assert.equal(window.document.documentElement.getAttribute('data-branding'), 'neutral');
 
-    // High visibility dark is removed from dropdown; only Presets 1-4 are selectable options
-    assert.equal(select.querySelector('option[value="high_visibility_dark"]'), null, 'OLED option removed from dropdown');
+    await act(async () => {
+      select.value = 'high_visibility_dark';
+      select.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(ctx.visualPreset, 'high_visibility_dark');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_dark');
 
     // Reset Demo restores dark_company
     await act(async () => {

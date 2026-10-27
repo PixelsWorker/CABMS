@@ -37,7 +37,7 @@ const getBrandDefaults = (brand: BrandConfig, fallbackPreset: VisualPreset): Wor
   contactEmail: brand.contactEmail || '',
   operationalAddress: brand.operationalAddress || '',
   operatingHours: brand.operatingHours || '',
-  preferredPreset: brand.preferredPreset || (fallbackPreset === 'high_visibility_dark' ? 'dark_company' : fallbackPreset),
+  preferredPreset: brand.preferredPreset || fallbackPreset,
 });
 
 export const WorkspaceSettingsView: React.FC = () => {
@@ -89,7 +89,7 @@ export const WorkspaceSettingsView: React.FC = () => {
     };
     const result = updateBrandConfig(updated);
     if (result && !result.success) return;
-    if (currentFormValues.preferredPreset) {
+    if (currentFormValues.preferredPreset !== currentBrand.preferredPreset) {
       setVisualPreset(currentFormValues.preferredPreset);
     }
     // Clear draft for this brand upon successful save
@@ -293,6 +293,7 @@ export const WorkspaceSettingsView: React.FC = () => {
                 <option value="dark_company">Preset 2 — Dark + Company Branding (Recommended)</option>
                 <option value="light_neutral">Preset 3 — All Light (Neutral Panels)</option>
                 <option value="light_company">Preset 4 — Light + Company Branding</option>
+                <option value="high_visibility_dark">High Visibility Dark</option>
               </select>
               <p className="text-[11px] text-(--cabms-text-secondary) mt-1">
                 Active theme preset: <span className="font-mono">{visualPreset}</span>.

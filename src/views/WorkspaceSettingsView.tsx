@@ -27,6 +27,24 @@ import {
   faFileLines,
 } from '@fortawesome/free-solid-svg-icons';
 
+interface WorkspaceDraft {
+  tagline: string;
+  contactPhone: string;
+  contactEmail: string;
+  operationalAddress: string;
+  operatingHours: string;
+  preferredPreset: VisualPreset;
+}
+
+const getBrandDefaults = (brand: BrandConfig): WorkspaceDraft => ({
+  tagline: brand.tagline || '',
+  contactPhone: brand.contactPhone || '',
+  contactEmail: brand.contactEmail || '',
+  operationalAddress: brand.operationalAddress || '',
+  operatingHours: brand.operatingHours || '',
+  preferredPreset: brand.preferredPreset || 'dark_company',
+});
+
 export const WorkspaceSettingsView: React.FC = () => {
   const {
     persona,
@@ -41,26 +59,25 @@ export const WorkspaceSettingsView: React.FC = () => {
 
   const currentBrand = brands[activeBrandId] || brands.solarcell;
 
-  // Form local state
-  const [tagline, setTagline] = useState(currentBrand.tagline || '');
-  const [contactPhone, setContactPhone] = useState(currentBrand.contactPhone || '');
-  const [contactEmail, setContactEmail] = useState(currentBrand.contactEmail || '');
-  const [operationalAddress, setOperationalAddress] = useState(currentBrand.operationalAddress || '');
-  const [operatingHours, setOperatingHours] = useState(currentBrand.operatingHours || '');
-  const [preferredPreset, setPreferredPreset] = useState<VisualPreset>(currentBrand.preferredPreset || 'dark_company');
+  // Retain unsaved form drafts per brand across workspace tab switches
+  const [drafts, setDrafts] = useState<Record<string, WorkspaceDraft>>({});
+
+  // Active form values fall back to current brand config if no draft exists
+  const currentFormValues: WorkspaceDraft = drafts[activeBrandId] ?? getBrandDefaults(currentBrand);
+
+  const updateDraftField = <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => {
+    setDrafts(prev => ({
+      ...prev,
+      [activeBrandId]: {
+        ...(prev[activeBrandId] ?? getBrandDefaults(currentBrand)),
+        [key]: value,
+      },
+    }));
+  };
 
   // Preview tab state
   const [previewTab, setPreviewTab] = useState<'quote' | 'invoice' | 'email'>('quote');
   const [savedFeedback, setSavedFeedback] = useState(false);
-
-  useEffect(() => {
-    setTagline(currentBrand.tagline || '');
-    setContactPhone(currentBrand.contactPhone || '');
-    setContactEmail(currentBrand.contactEmail || '');
-    setOperationalAddress(currentBrand.operationalAddress || '');
-    setOperatingHours(currentBrand.operatingHours || '');
-    setPreferredPreset(currentBrand.preferredPreset || 'dark_company');
-  }, [activeBrandId]);
 
   useEffect(() => {
     setSavedFeedback(false);
@@ -70,18 +87,24 @@ export const WorkspaceSettingsView: React.FC = () => {
     e.preventDefault();
     const updated: BrandConfig = {
       ...currentBrand,
-      tagline,
-      contactPhone,
-      contactEmail,
-      operationalAddress,
-      operatingHours,
-      preferredPreset,
+      tagline: currentFormValues.tagline,
+      contactPhone: currentFormValues.contactPhone,
+      contactEmail: currentFormValues.contactEmail,
+      operationalAddress: currentFormValues.operationalAddress,
+      operatingHours: currentFormValues.operatingHours,
+      preferredPreset: currentFormValues.preferredPreset,
     };
     const result = updateBrandConfig(updated);
     if (result && !result.success) return;
-    if (preferredPreset) {
-      setVisualPreset(preferredPreset);
+    if (currentFormValues.preferredPreset) {
+      setVisualPreset(currentFormValues.preferredPreset);
     }
+    // Clear draft for this brand upon successful save
+    setDrafts(prev => {
+      const next = { ...prev };
+      delete next[activeBrandId];
+      return next;
+    });
     setSavedFeedback(true);
     setTimeout(() => setSavedFeedback(false), 4000);
   };
@@ -107,21 +130,30 @@ export const WorkspaceSettingsView: React.FC = () => {
             Active Workspace:
           </span>
           <div className="flex bg-(--cabms-surface-subtle) rounded-lg p-1 border border-(--cabms-border-base)">
-            {operationalBrandList.map(b => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => setActiveBrandId(b.id as BrandId)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                  activeBrandId === b.id
-                    ? 'bg-(--cabms-surface) text-(--cabms-text-primary) shadow-sm border border-(--cabms-border-focus)'
-                    : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
-                }`}
-                aria-pressed={activeBrandId === b.id}
-              >
-                {b.name}
-              </button>
-            ))}
+            {operationalBrandList.map(b => {
+              const hasDraft = Boolean(drafts[b.id]);
+              return (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => setActiveBrandId(b.id as BrandId)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center gap-1.5 ${
+                    activeBrandId === b.id
+                      ? 'bg-(--cabms-surface) text-(--cabms-text-primary) shadow-sm border border-(--cabms-border-focus)'
+                      : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
+                  }`}
+                  aria-pressed={activeBrandId === b.id}
+                >
+                  <span>{b.name}</span>
+                  {hasDraft && (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full bg-amber-400"
+                      title="Unsaved draft changes"
+                    />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -184,8 +216,8 @@ export const WorkspaceSettingsView: React.FC = () => {
               <input
                 id="ws-tagline"
                 type="text"
-                value={tagline}
-                onChange={e => setTagline(e.target.value)}
+                value={currentFormValues.tagline}
+                onChange={e => updateDraftField('tagline', e.target.value)}
                 className="w-full px-3 py-2 rounded bg-(--cabms-surface-subtle) border border-(--cabms-border-base) text-(--cabms-text-primary) text-sm focus:border-(--cabms-border-focus) focus:outline-none"
                 placeholder="e.g. Commercial & Residential Solar Energy Systems"
               />
@@ -201,8 +233,8 @@ export const WorkspaceSettingsView: React.FC = () => {
                 <input
                   id="ws-phone"
                   type="text"
-                  value={contactPhone}
-                  onChange={e => setContactPhone(e.target.value)}
+                  value={currentFormValues.contactPhone}
+                  onChange={e => updateDraftField('contactPhone', e.target.value)}
                   className="w-full px-3 py-2 rounded bg-(--cabms-surface-subtle) border border-(--cabms-border-base) text-(--cabms-text-primary) text-sm focus:border-(--cabms-border-focus) focus:outline-none"
                   placeholder="(07) 5500 0000"
                 />
@@ -215,8 +247,8 @@ export const WorkspaceSettingsView: React.FC = () => {
                 <input
                   id="ws-email"
                   type="email"
-                  value={contactEmail}
-                  onChange={e => setContactEmail(e.target.value)}
+                  value={currentFormValues.contactEmail}
+                  onChange={e => updateDraftField('contactEmail', e.target.value)}
                   className="w-full px-3 py-2 rounded bg-(--cabms-surface-subtle) border border-(--cabms-border-base) text-(--cabms-text-primary) text-sm focus:border-(--cabms-border-focus) focus:outline-none"
                   placeholder="operations@example.invalid"
                 />
@@ -232,8 +264,8 @@ export const WorkspaceSettingsView: React.FC = () => {
               <input
                 id="ws-address"
                 type="text"
-                value={operationalAddress}
-                onChange={e => setOperationalAddress(e.target.value)}
+                value={currentFormValues.operationalAddress}
+                onChange={e => updateDraftField('operationalAddress', e.target.value)}
                 className="w-full px-3 py-2 rounded bg-(--cabms-surface-subtle) border border-(--cabms-border-base) text-(--cabms-text-primary) text-sm focus:border-(--cabms-border-focus) focus:outline-none"
                 placeholder="12 Industry Way, Brendale QLD 4500"
               />
@@ -247,8 +279,8 @@ export const WorkspaceSettingsView: React.FC = () => {
               <input
                 id="ws-hours"
                 type="text"
-                value={operatingHours}
-                onChange={e => setOperatingHours(e.target.value)}
+                value={currentFormValues.operatingHours}
+                onChange={e => updateDraftField('operatingHours', e.target.value)}
                 className="w-full px-3 py-2 rounded bg-(--cabms-surface-subtle) border border-(--cabms-border-base) text-(--cabms-text-primary) text-sm focus:border-(--cabms-border-focus) focus:outline-none"
                 placeholder="Mon-Fri 7:00 AM - 5:00 PM AEST"
               />
@@ -262,8 +294,8 @@ export const WorkspaceSettingsView: React.FC = () => {
               </label>
               <select
                 id="ws-preset"
-                value={preferredPreset}
-                onChange={e => setPreferredPreset(e.target.value as VisualPreset)}
+                value={currentFormValues.preferredPreset}
+                onChange={e => updateDraftField('preferredPreset', e.target.value as VisualPreset)}
                 className="w-full px-3 py-2 rounded bg-(--cabms-surface-subtle) border border-(--cabms-border-base) text-(--cabms-text-primary) text-sm focus:border-(--cabms-border-focus) focus:outline-none"
               >
                 <option value="dark_neutral">Preset 1 — All Dark (Neutral Panels)</option>
@@ -433,7 +465,7 @@ export const WorkspaceSettingsView: React.FC = () => {
                 <div className="space-y-1.5 text-xs text-(--cabms-text-secondary)">
                   <p>
                     <span className="font-semibold text-(--cabms-text-primary)">From: </span>
-                    {currentBrand.name} Operations &lt;{contactEmail || currentBrand.contactEmail}&gt;
+                    {currentBrand.name} Operations &lt;{currentFormValues.contactEmail || currentBrand.contactEmail}&gt;
                   </p>
                   <p>
                     <span className="font-semibold text-(--cabms-text-primary)">Subject: </span>
@@ -441,14 +473,14 @@ export const WorkspaceSettingsView: React.FC = () => {
                   </p>
                   <div className="p-2 rounded bg-(--cabms-surface) border border-(--cabms-border-base) text-[11px] leading-relaxed text-(--cabms-text-primary)">
                     Dear Customer, please review your detailed service proposal and digital sign-off link. Standard 14-day
-                    validity period applies. Call {contactPhone || currentBrand.contactPhone} with any queries.
+                    validity period applies. Call {currentFormValues.contactPhone || currentBrand.contactPhone} with any queries.
                   </div>
                 </div>
               ) : (
                 <div className="space-y-2">
                   <div className="flex justify-between text-[11px] text-(--cabms-text-secondary)">
-                    <span>Facility: {operationalAddress || 'Brendale QLD 4500'}</span>
-                    <span>Ph: {contactPhone || currentBrand.contactPhone}</span>
+                    <span>Facility: {currentFormValues.operationalAddress || 'Brendale QLD 4500'}</span>
+                    <span>Ph: {currentFormValues.contactPhone || currentBrand.contactPhone}</span>
                   </div>
                   <div className="p-2 rounded bg-(--cabms-surface) border border-(--cabms-border-base) space-y-1">
                     <div className="flex justify-between font-mono text-[11px] text-(--cabms-text-primary)">

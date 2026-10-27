@@ -1071,3 +1071,58 @@ test('LAYER 4: WorkspaceSettings — switching active workspace applies its save
     assert.equal(ctx.visualPreset, 'dark_company', 'solarcell saved preset restored on workspace activation');
   });
 });
+
+test('LAYER 4: WorkspaceSettings — retains unsaved form drafts across workspace tab switches', async () => {
+  await mountView(React.createElement(WorkspaceSettingsView), async (ctx, container, window) => {
+    assert.equal(ctx.activeBrandId, 'solarcell');
+
+    const phoneInput = container.querySelector('#ws-phone') as HTMLInputElement;
+    const presetSelect = container.querySelector('#ws-preset') as HTMLSelectElement;
+    assert.ok(phoneInput, '#ws-phone input exists');
+    assert.ok(presetSelect, '#ws-preset select exists');
+
+    // 1. Edit the phone input and visual preset for Solarcell (dirty draft)
+    await act(async () => {
+      const propsKey = Object.keys(phoneInput).find(k => k.startsWith('__reactProps$'));
+      if (propsKey && (phoneInput as any)[propsKey]?.onChange) {
+        (phoneInput as any)[propsKey].onChange({ target: { value: '(07) 5555 9999' } });
+      } else {
+        phoneInput.value = '(07) 5555 9999';
+        phoneInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+      }
+
+      presetSelect.value = 'light_neutral';
+      presetSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    assert.equal(phoneInput.value, '(07) 5555 9999');
+    assert.equal(presetSelect.value, 'light_neutral');
+
+    // 2. Switch workspace to smart_home
+    await act(async () => {
+      ctx.setActiveBrandId('smart_home');
+    });
+    assert.equal(ctx.activeBrandId, 'smart_home');
+    const smartHomePhone = (container.querySelector('#ws-phone') as HTMLInputElement).value;
+    assert.notEqual(smartHomePhone, '(07) 5555 9999', 'Smart Home displays its own phone');
+
+    // 3. Switch back to solarcell without saving
+    await act(async () => {
+      ctx.setActiveBrandId('solarcell');
+    });
+    assert.equal(ctx.activeBrandId, 'solarcell');
+    const solarRestoredPhone = (container.querySelector('#ws-phone') as HTMLInputElement).value;
+    const solarRestoredPreset = (container.querySelector('#ws-preset') as HTMLSelectElement).value;
+    assert.equal(solarRestoredPhone, '(07) 5555 9999', 'Solarcell draft phone was retained across workspace tab switch');
+    assert.equal(solarRestoredPreset, 'light_neutral', 'Solarcell draft preset was retained across workspace tab switch');
+
+    // 4. Save settings
+    const form = container.querySelector('form');
+    assert.ok(form, 'form element exists');
+    await act(async () => {
+      form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    });
+
+    assert.equal(ctx.brands.solarcell.contactPhone, '(07) 5555 9999', 'Saved draft committed to brand configuration');
+    assert.equal(ctx.brands.solarcell.preferredPreset, 'light_neutral', 'Saved draft preset committed to brand configuration');
+  });
+});

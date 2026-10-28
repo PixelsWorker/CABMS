@@ -19,6 +19,7 @@
   ],
   "vars": {
     "ENVIRONMENT": "production",
-    "FIREBASE_PROJECT_ID": "cabms-panel"
+    "FIREBASE_PROJECT_ID": "cabms-panel",
+    "FIREBASE_API_KEY": "AIzaSyD_y4n7pK9H7XwmFxBcFxAOxCWKfR4Rd9M"
   }
 }

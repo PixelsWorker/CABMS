@@ -225,10 +225,10 @@ export async function handlePatchWorkspaceSettings(
       validationErrors.push({ pointer: '/contact_email', code: 'INVALID_TYPE', message: 'Contact email must be string or null' });
     } else if (typeof body.contact_email === 'string' && body.contact_email.trim() && !EMAIL_REGEX.test(body.contact_email.trim())) {
       validationErrors.push({ pointer: '/contact_email', code: 'INVALID_EMAIL', message: 'Contact email format is invalid' });
-    } else if (typeof body.contact_email === 'string' && body.contact_email.length > 254) {
+    } else if (typeof body.contact_email === 'string' && body.contact_email.trim().length > 254) {
       validationErrors.push({ pointer: '/contact_email', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 254 characters' });
     } else {
-      patch.contact_email = body.contact_email ? body.contact_email.trim() : null;
+      patch.contact_email = typeof body.contact_email === 'string' && body.contact_email.trim() ? body.contact_email.trim() : null;
     }
   }
 

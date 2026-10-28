@@ -4,6 +4,14 @@ This file records evidence-backed CABMS development history. It follows a Keep a
 
 **Historical G00 documentation baseline:** 28 October 2026. The local integration baseline was `2b04f87bbb6dc4f81b65c6f2844d76488161e62d`, whose merge subject records PR #16. Entries dated 27 October below preserve historical observations and reported evidence; they are not current remote status. GitHub refresh was unavailable in that historical audit. Current G01 implementation continues on `feat/g01-identity-workspaces` / PR #17 as recorded below.
 
+## 28 October 2026 — Safe Super Admin Bootstrap, Identity Revocation & Runtime Pinning (Proposals A–E)
+
+- **Proposal A (Safe Bootstrap & Historical Seed Remediation):** Replaced real domain email with `admin@chine.example.invalid` and removed synthetic `super_admin` memberships in `migrations/0002_g01_seed_synthetic_data.sql`. Added compensating migration `migrations/0003_g01_revoke_unauthorized_seed_super_admin.sql` to revoke unauthorized seed Super Admin roles and identity mappings while preserving user and audit records. Created operator bootstrap script `scripts/bootstrap_first_super_admin.sql` with double-checked placeholder guards (`NOT LIKE 'OPERATOR_FIREBASE_UID_%'`) for safe first-time Super Admin enrollment.
+- **Proposal B (Live Provider Revocation & Disabled Accounts):** Added additive migration `migrations/0004_g01_user_account_status.sql` adding `disabled INTEGER NOT NULL DEFAULT 0` and `status_updated_at TEXT` to `users`. Implemented Google Identity Platform `accounts:lookup` status and `validSince` check in `backend/workers/auth.ts` with fail-closed semantics across all non-test environments (`env?.ENVIRONMENT !== 'test'`).
+- **Proposal C (Runtime & Toolchain Pinning):** Pinned `wrangler` to `4.154.0` and specified `node` engines `^22.22.2 || ^24.15.0` across `package.json` and lockfiles. Synchronized `wrangler.jsonc` compatibility date (`2026-10-28`).
+- **Proposal D (Document Path & Governance Alignment):** Corrected alternate Node test loader path in `AGENTS.md` and repository references across `ARCHITECTURE.md` and `BRANCH-NAMING-PLAN.md`.
+- **Proposal E (Worker Static Asset Serving & Protection):** Configured Cloudflare Worker static assets binding (`"run_worker_first": ["/api/*"]`) and added `public/.assetsignore` to prevent planning artifacts (`assets/aistudio/`) from being published.
+
 ## 28 October 2026 - G01 implementation review checkpoint
 
 - Connected the preserved React UI to Firebase Google session observation, Worker `/api/v1/auth/me`, trusted workspace memberships and independent Workspace Settings/Legal Details GET/PATCH operations with separate ETags, retained drafts and safe conflict/error feedback.

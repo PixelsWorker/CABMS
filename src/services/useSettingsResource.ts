@@ -49,7 +49,8 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
       : status === 422 ? 'Correct the highlighted validation errors before saving.'
       : 'The save outcome could not be confirmed. Review the latest server values before retrying.';
     const details = status === 422 ? (response.problem?.errors || []).map(e => `${e.pointer}: ${e.message}`).join(' ') : '';
-    update(target, { error: true, message: `${message} ${details}`.trim(), reviewRequired: status !== 422,
+    const reqRef = response.problem?.request_id ? `(Ref: ${response.problem.request_id})` : '';
+    update(target, { error: true, message: `${message} ${details} ${reqRef}`.trim(), reviewRequired: status !== 422,
       ...(status === 403 || status === 404 ? { row: undefined, etag: undefined, draft: {} } : {}) });
     if (status === 401 || status === 403) sessionRef.current?.invalidate();
   };

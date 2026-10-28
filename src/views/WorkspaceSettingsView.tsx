@@ -11,6 +11,7 @@ import { SettingsFeedback } from '../components/SettingsFeedback.tsx';
 import type { WorkspaceSettingsRow } from '../../contracts/settings.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { BrandConfig, BrandId, VisualPreset } from '../types/cabms.ts';
+import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBuilding,
@@ -57,8 +58,9 @@ export const WorkspaceSettingsView: React.FC = () => {
 
   const resource = useSettingsResource('settings');
   const serverValues = resource.value as WorkspaceSettingsRow | undefined;
-  const currentBrand = brands[activeBrandId] || brands.solarcell;
+  const currentBrand = brands[activeBrandId];
   const canEdit = persona === 'super_admin' || persona === 'owner_admin';
+
   useEffect(() => {
     if (resource.active && resource.row && 'preferred_preset' in resource.row) setVisualPreset(resource.row.preferred_preset as VisualPreset);
   }, [resource.row?.version, activeBrandId]);
@@ -71,7 +73,7 @@ export const WorkspaceSettingsView: React.FC = () => {
     tagline: serverValues?.tagline || '', contactPhone: serverValues?.contact_phone || '',
     contactEmail: serverValues?.contact_email || '', operationalAddress: serverValues?.operational_address || '',
     operatingHours: serverValues?.operating_hours || '', preferredPreset: (serverValues?.preferred_preset || 'dark_company') as VisualPreset,
-  } : drafts[activeBrandId] ?? getBrandDefaults(currentBrand, visualPreset);
+  } : drafts[activeBrandId] ?? (currentBrand ? getBrandDefaults(currentBrand, visualPreset) : ({} as WorkspaceDraft));
 
   const updateDraftField = <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => {
     if (resource.active) {
@@ -79,6 +81,7 @@ export const WorkspaceSettingsView: React.FC = () => {
       resource.setField(fields[key], value);
       return;
     }
+    if (!currentBrand) return;
     setDrafts(prev => ({
       ...prev,
       [activeBrandId]: {
@@ -96,6 +99,7 @@ export const WorkspaceSettingsView: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentBrand) return;
     if (resource.active) { void resource.save(); return; }
     const updated: BrandConfig = {
       ...currentBrand,
@@ -124,6 +128,16 @@ export const WorkspaceSettingsView: React.FC = () => {
   const operationalBrandList = (['solarcell', 'smart_home', 'cctv'] as BrandId[]).filter(id => !!brands[id]).map(
     id => brands[id] || { id, name: id }
   );
+
+  if (!currentBrand) {
+    return (
+      <AccessDeniedView
+        resourceName="Workspace Settings"
+        requiredRoleDescription="Authorized Workspace Administrator"
+        customExplanation="The selected workspace is not accessible to your account."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6" data-testid="workspace-settings-view">

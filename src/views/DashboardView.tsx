@@ -199,7 +199,11 @@ export const DashboardView: React.FC = () => {
                   Cross-Company Outstanding Jobs
                 </h2>
                 <p className="text-sm text-(--cabms-text-secondary) mt-1">
-                  Consolidated queue across Solarcell, Smart Home, and CCTV
+                  {Object.keys(brands).length >= 3
+                    ? 'Consolidated queue across Solarcell, Smart Home, and CCTV'
+                    : Object.keys(brands).length > 1
+                      ? `Consolidated queue across ${Object.values(brands).map(b => b.name).join(' and ')}`
+                      : `Consolidated queue for ${activeBrand.name}`}
                 </p>
               </div>
               <span className="text-xs px-2.5 py-1 rounded-full font-mono font-semibold bg-sky-950/60 text-sky-300 border border-sky-800/60">
@@ -214,7 +218,8 @@ export const DashboardView: React.FC = () => {
                 </div>
               ) : (
                 outstandingJobs.map(job => {
-                  const jobBrand = brands[job.brandId] || brands.solarcell;
+                  const jobBrand = brands[job.brandId];
+                  if (!jobBrand) return null;
                   return (
                     <div
                       key={job.id}

@@ -84,6 +84,17 @@ export const ComplianceFormsView: React.FC = () => {
 
   // Target job
   const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
+  const jobBrand = currentJob ? brands[currentJob.brandId] : undefined;
+
+  if (!currentJob || !jobBrand) {
+    return (
+      <AccessDeniedView
+        resourceName="Compliance Forms"
+        requiredRoleDescription="Authorized Workspace Member"
+        customExplanation="This work order is not associated with an authorized workspace for your account."
+      />
+    );
+  }
 
   // Independent job-owned forms (G00-005)
   const currentJsa = getOrCreateJsa(currentJob.id);
@@ -107,9 +118,6 @@ export const ComplianceFormsView: React.FC = () => {
       case 'TCA2': return currentTca2.signedOff;
     }
   })();
-
-  // Brand config for legal issuer (G00-003)
-  const jobBrand = brands[currentJob.brandId] || brands.solarcell;
 
   // Persona boundary: Technicians can only access jobs assigned to them (G00-001)
   const isTechnicianRestricted =

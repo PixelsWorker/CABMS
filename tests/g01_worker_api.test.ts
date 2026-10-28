@@ -553,4 +553,14 @@ describe('G01 Worker API Endpoints', () => {
     assert.equal(patchBody.version, 2);
     assert.equal(patchBody.legal_issuer_name, 'Solarcell Technologies (Updated by Chine Digital)');
   });
+
+  it('Firebase client: correctly initializes Firebase Auth with GoogleAuthProvider for cabms-panel', async () => {
+    const { app, auth, googleAuthProvider, firebaseConfig, firebaseProjectMetadata } = await import('../src/services/firebase.ts');
+    assert.equal(app.name, '[DEFAULT]');
+    assert.equal(auth.app.name, '[DEFAULT]');
+    assert.equal(googleAuthProvider.providerId, 'google.com');
+    assert.equal(firebaseConfig.projectId, 'cabms-panel');
+    assert.equal(firebaseProjectMetadata.projectId, 'cabms-panel');
+    assert.equal(firebaseProjectMetadata.supportEmail, 'admin@chinedigital.com.au');
+  });
 });

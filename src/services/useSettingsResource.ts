@@ -44,13 +44,14 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
     const message = status === 412 ? 'Settings changed on the server. Review the latest version before saving your retained edits.'
       : status === 428 ? 'A current version is required. Review the latest values before retrying.'
       : status === 401 ? 'Your session expired. Sign in again.'
-      : status === 403 || status === 404 ? 'You no longer have permission to access these settings.'
+      : status === 403 ? 'You no longer have permission to access these settings.'
+      : status === 404 ? 'These settings are not available for this workspace.'
       : status === 422 ? 'Correct the highlighted validation errors before saving.'
       : 'The save outcome could not be confirmed. Review the latest server values before retrying.';
     const details = status === 422 ? (response.problem?.errors || []).map(e => `${e.pointer}: ${e.message}`).join(' ') : '';
     update(target, { error: true, message: `${message} ${details}`.trim(), reviewRequired: status !== 422,
       ...(status === 403 || status === 404 ? { row: undefined, etag: undefined, draft: {} } : {}) });
-    if (status === 401 || status === 403 || status === 404) sessionRef.current?.invalidate();
+    if (status === 401 || status === 403) sessionRef.current?.invalidate();
   };
   const load = async (review = false) => {
     const currentSession = sessionRef.current;

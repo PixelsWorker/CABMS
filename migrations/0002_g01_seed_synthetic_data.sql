@@ -39,7 +39,7 @@ INSERT OR IGNORE INTO legal_issuers (
 -- Seed synthetic users
 INSERT OR IGNORE INTO users (id, email, display_name, created_at, updated_at) VALUES
 ('usr_super_admin', 'admin@cabms.example.invalid', 'Synthetic Super Admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
-('usr_chine_super_admin', 'admin@chinedigital.com.au', 'Chine Digital Admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
+('usr_chine_super_admin', 'admin@chine.example.invalid', 'Chine Digital Admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 ('usr_owner_admin', 'owner@solarcell.example.invalid', 'Synthetic Owner Admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 ('usr_office_staff', 'staff@solarcell.example.invalid', 'Synthetic Office Staff', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 ('usr_technician', 'tech@solarcell.example.invalid', 'Synthetic Technician', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z');
@@ -57,10 +57,6 @@ INSERT OR IGNORE INTO workspace_memberships (id, workspace_id, user_id, role, cr
 ('mem_sa_solarcell', 'solarcell', 'usr_super_admin', 'super_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 ('mem_sa_smart_home', 'smart_home', 'usr_super_admin', 'super_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 ('mem_sa_cctv', 'cctv', 'usr_super_admin', 'super_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
--- Chine Digital Super Admin in all workspaces
-('mem_cd_solarcell', 'solarcell', 'usr_chine_super_admin', 'super_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
-('mem_cd_smart_home', 'smart_home', 'usr_chine_super_admin', 'super_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
-('mem_cd_cctv', 'cctv', 'usr_chine_super_admin', 'super_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 -- Owner admin in solarcell
 ('mem_oa_solarcell', 'solarcell', 'usr_owner_admin', 'owner_admin', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z'),
 -- Office staff in solarcell

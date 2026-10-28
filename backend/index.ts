@@ -35,14 +35,17 @@ export default {
     const requestId = `req_${crypto.randomUUID()}`;
     const logger = new StructuredLogger(requestId);
 
-    // Handle CORS preflight in development
+    // Handle CORS preflight in development / test
     if (method === 'OPTIONS') {
+      if (env.ENVIRONMENT === 'production') {
+        return new Response(null, { status: 405 });
+      }
       return new Response(null, {
         status: 204,
         headers: {
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': env.ENVIRONMENT === 'development' ? 'http://localhost:3000' : '*',
           'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, If-Match, X-Request-Id, X-Force-Audit-Failure',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, If-Match, X-Request-Id',
           'Access-Control-Expose-Headers': 'ETag, X-Request-Id',
         },
       });
@@ -53,7 +56,7 @@ export default {
       if (pathname === '/api/v1/auth/me' && method === 'GET') {
         const auth = await authenticateRequest(env.DB, request, env);
         if (!auth) {
-          return addCors(authenticationRequiredResponse('Valid staff authentication token is required', requestId));
+          return addCors(authenticationRequiredResponse('Valid staff authentication token is required', requestId), env);
         }
 
         // Fetch memberships
@@ -81,7 +84,7 @@ export default {
                 'X-Request-Id': requestId,
               },
             }
-          )
+          ), env
         );
       }
 
@@ -89,7 +92,7 @@ export default {
       if (pathname === '/api/v1/workspaces' && method === 'GET') {
         const auth = await authenticateRequest(env.DB, request, env);
         if (!auth) {
-          return addCors(authenticationRequiredResponse('Valid staff authentication token is required', requestId));
+          return addCors(authenticationRequiredResponse('Valid staff authentication token is required', requestId), env);
         }
 
         const res = await env.DB.prepare(
@@ -106,7 +109,7 @@ export default {
               'Content-Type': 'application/json',
               'X-Request-Id': requestId,
             },
-          })
+          }), env
         );
       }
 
@@ -120,9 +123,9 @@ export default {
         } else if (method === 'PATCH') {
           resp = await handlePatchWorkspaceSettings(request, env.DB, workspaceId, requestId, env);
         } else {
-          return addCors(new Response('Method Not Allowed', { status: 405 }));
+          return addCors(new Response('Method Not Allowed', { status: 405 }), env);
         }
-        return addCors(resp);
+        return addCors(resp, env);
       }
 
       // 4. /api/v1/workspaces/:workspaceId/legal-details
@@ -135,31 +138,44 @@ export default {
         } else if (method === 'PATCH') {
           resp = await handlePatchLegalDetails(request, env.DB, workspaceId, requestId, env);
         } else {
-          return addCors(new Response('Method Not Allowed', { status: 405 }));
+          return addCors(new Response('Method Not Allowed', { status: 405 }), env);
         }
-        return addCors(resp);
+        return addCors(resp, env);
       }
 
       // Unknown API route
       if (pathname.startsWith('/api/')) {
-        return addCors(resourceNotFoundResponse(`Route '${pathname}' not found`, requestId));
+        return addCors(resourceNotFoundResponse(`Route '${pathname}' not found`, requestId), env);
+      }
+
+      // Serve static frontend assets from Vite build output if configured
+      if (env.ASSETS) {
+        return env.ASSETS.fetch(request);
       }
 
       return new Response('Not Found', { status: 404 });
     } catch (err) {
-      if (err instanceof AuthenticationUnavailable) return addCors(createProblemResponse(503, 'SERVICE_UNAVAILABLE', 'service-unavailable', 'Service Unavailable', 'Identity verification is temporarily unavailable. Retry later.', requestId));
+      if (err instanceof AuthenticationUnavailable) return addCors(createProblemResponse(503, 'SERVICE_UNAVAILABLE', 'service-unavailable', 'Service Unavailable', 'Identity verification is temporarily unavailable. Retry later.', requestId), env);
       logger.error('WORKER_UNHANDLED_EXCEPTION', 'Unhandled exception in Worker fetch', {
         error: err instanceof Error ? err : new Error(String(err)),
       });
-      return addCors(internalErrorResponse('Unexpected server error', requestId));
+      return addCors(internalErrorResponse('Unexpected server error', requestId), env);
     }
   },
 };
 
-function addCors(resp: Response): Response {
+function addCors(resp: Response, env?: Env): Response {
   const headers = new Headers(resp.headers);
-  headers.set('Access-Control-Allow-Origin', '*');
-  headers.set('Access-Control-Expose-Headers', 'ETag, X-Request-Id');
+  if (env?.ENVIRONMENT === 'development') {
+    headers.set('Access-Control-Allow-Origin', 'http://localhost:3000');
+    headers.set('Access-Control-Expose-Headers', 'ETag, X-Request-Id');
+
+  } else if (env?.ENVIRONMENT === 'test') {
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Expose-Headers', 'ETag, X-Request-Id');
+
+  }
+
   headers.set('Cache-Control', 'no-store');
   return new Response(resp.body, {
     status: resp.status,

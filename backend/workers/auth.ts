@@ -17,6 +17,8 @@ export interface DecodedToken {
   emailVerified?: boolean;
   name?: string;
   exp: number;
+  iat: number;
+  authTime: number;
   iss: string;
   aud?: string;
 }
@@ -44,11 +46,12 @@ export async function getGoogleJwks(): Promise<Record<string, JsonWebKey>> {
   if (cachedJwks && cachedJwks.expiresAt > now) {
     return cachedJwks.keys;
   }
-  if (pendingJwks) return pendingJwks;
-  pendingJwks = fetchGoogleJwks();
-  try { return await pendingJwks; }
-  catch { throw new AuthenticationUnavailable('Identity verification is temporarily unavailable'); }
-  finally { pendingJwks = null; }
+  if (!pendingJwks) {
+    pendingJwks = fetchGoogleJwks()
+      .catch(() => { throw new AuthenticationUnavailable('Identity verification is temporarily unavailable'); })
+      .finally(() => { pendingJwks = null; });
+  }
+  return pendingJwks;
 }
 
 async function fetchGoogleJwks(): Promise<Record<string, JsonWebKey>> {
@@ -202,7 +205,9 @@ export async function verifyFirebaseToken(
     email: typeof payload.email === 'string' ? payload.email : undefined,
     emailVerified: payload.email_verified === true,
     name: typeof payload.name === 'string' ? payload.name : undefined,
-    exp: payload.exp,
+    exp: payload.exp as number,
+    iat: payload.iat as number,
+    authTime: payload.auth_time as number,
     iss: payload.iss as string,
     aud: payload.aud as string,
   };
@@ -232,6 +237,65 @@ export async function decodeAndValidateToken(
 }
 
 /**
+ * Verifies live account status and token revocation against Google Identity Toolkit.
+ * Compares auth_time against validSince to enforce revokeRefreshTokens().
+ * Fail-closed on write operations if external Identity verification fails.
+ */
+export async function checkFirebaseAccountStatus(
+  token: string,
+  authTime: number,
+  apiKey: string
+): Promise<{ valid: boolean; reason?: 'TOKEN_REVOKED' | 'ACCOUNT_DISABLED' }> {
+  try {
+    const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken: token }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.status >= 500 || res.status === 429) {
+      throw new AuthenticationUnavailable('Identity provider verification temporarily unavailable');
+    }
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new AuthenticationUnavailable('Firebase Identity Toolkit authentication failed (HTTP ' + res.status + ')');
+      }
+      try {
+        const errJson = (await res.json()) as { error?: { message?: string } };
+        const msg = errJson.error?.message;
+        if (msg && (msg.startsWith('API_KEY_') || msg === 'PROJECT_NOT_FOUND')) {
+          throw new AuthenticationUnavailable('Firebase configuration error: ' + msg);
+        }
+        if (msg === 'INVALID_ID_TOKEN' || msg === 'USER_NOT_FOUND' || msg === 'TOKEN_EXPIRED') {
+          return { valid: false, reason: 'TOKEN_REVOKED' };
+        }
+      } catch (parseErr) {
+        if (parseErr instanceof AuthenticationUnavailable) throw parseErr;
+      }
+      return { valid: false, reason: 'TOKEN_REVOKED' };
+    }
+    const data = (await res.json()) as { users?: Array<{ disabled?: boolean; validSince?: string }> };
+    const user = data.users?.[0];
+    if (!user) {
+      return { valid: false, reason: 'TOKEN_REVOKED' };
+    }
+    if (user.disabled === true) {
+      return { valid: false, reason: 'ACCOUNT_DISABLED' };
+    }
+    if (user.validSince) {
+      const validSinceSec = parseInt(user.validSince, 10);
+      if (Number.isSafeInteger(validSinceSec) && authTime < validSinceSec) {
+        return { valid: false, reason: 'TOKEN_REVOKED' };
+      }
+    }
+    return { valid: true };
+  } catch (err) {
+    if (err instanceof AuthenticationUnavailable) throw err;
+    throw new AuthenticationUnavailable('Account status verification unavailable');
+  }
+}
+
+/**
  * Resolves trusted internal CABMS user from request headers.
  */
 export async function authenticateRequest(
@@ -251,6 +315,17 @@ export async function authenticateRequest(
   }
   if (!decoded.emailVerified) return null;
 
+  // 0. Live provider account revocation & disabled check if API key configured (fail closed)
+  if (env?.FIREBASE_API_KEY) {
+    const status = await checkFirebaseAccountStatus(token, decoded.authTime, env.FIREBASE_API_KEY);
+    if (!status.valid) {
+      return null;
+    }
+  } else if (env?.ENVIRONMENT !== 'test') {
+    // In staging/production environments, fail closed if FIREBASE_API_KEY is not configured
+    throw new AuthenticationUnavailable('FIREBASE_API_KEY is required for live account status verification');
+  }
+
   // 1. Find user from identity mappings
   const mappingStmt = db.prepare(
     'SELECT user_id FROM user_identity_mappings WHERE provider_id = ? AND provider_subject_id = ?'
@@ -269,6 +344,15 @@ export async function authenticateRequest(
     if (!existing) {
       return null; // No uninvited self-service signup
     }
+
+    // Privileged accounts (super_admin, owner_admin) must NEVER be auto-linked by email match alone
+    const privilegedCheck = await db.prepare(
+      "SELECT 1 FROM workspace_memberships WHERE user_id = ? AND role IN ('super_admin', 'owner_admin')"
+    ).bind(existing.id).first();
+    if (privilegedCheck) {
+      return null;
+    }
+
     userId = existing.id;
 
     // Link mapping
@@ -284,12 +368,12 @@ export async function authenticateRequest(
     return null;
   }
 
-  // 2. Fetch user profile
+  // 2. Fetch user profile and verify active account status
   const userRow = await db.prepare(
-    'SELECT id, email, display_name FROM users WHERE id = ?'
-  ).bind(userId).first<{ id: string; email: string; display_name: string | null }>();
+    'SELECT id, email, display_name, disabled FROM users WHERE id = ?'
+  ).bind(userId).first<{ id: string; email: string; display_name: string | null; disabled?: number }>();
 
-  if (!userRow) {
+  if (!userRow || userRow.disabled === 1) {
     return null;
   }
 

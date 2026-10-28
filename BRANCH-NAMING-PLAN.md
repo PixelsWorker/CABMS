@@ -11,7 +11,7 @@
 - Historical drafting base: `bbbdff6`, `docs/branch-naming-plan`; those are not the current worktree
 - Current remote PR/issue state: not refreshed; network retrieval failed during this audit
 
-The three planning documents were already untracked in `worktree/dev` when inspected. Earlier worktree-creation notes describe historical drafting only. Future implementation branches should start from the latest approved integration base when authorized. This audit creates no branch or commit. See [current fact-check](../../graphify-out/PLANNING-FACT-CHECK.md).
+The three planning documents were already untracked in `worktree/dev` when inspected. Earlier worktree-creation notes describe historical drafting only. Future implementation branches should start from the latest approved integration base when authorized. This audit creates no branch or commit. See current fact-check (`graphify-out/PLANNING-FACT-CHECK.md` in external workspace).
 
 ## Accepted hosting and delivery constraint
 
@@ -69,10 +69,10 @@ Keep `feat/g01-identity-workspaces` scoped to the approved identity/workspace/se
 
 ## G01 reconciled planning boundary — 28 October 2026
 
-**Accepted planning direction; implementation NOT authorized.** Proposed branch `feat/g01-identity-workspaces` is retained; it has not been created/switched to. ARCHITECTURE §19.5 is the detailed scope and acceptance reference.
+**Historical planning boundary (superseded by the 28 October authorization above).** Branch `feat/g01-identity-workspaces` is authorized and in use (PR #17). ARCHITECTURE §19.5 is the detailed scope and acceptance reference.
 
 - **Deliverable:** Real authentication → authorized workspace → persistent settings → atomic settings audit → frontend feedback/verification, including necessary frontend, modular Worker, database, runtime validation, server-side authorization and audit tests in the same feature group.
-- **Two Save controls:** Save Workspace Settings and Super Admin-only Save Legal Details operate on separate resources with independent versions/ETags and mandatory If-Match. Use `{api_prefix}` until the authoritative contract selects it. Handle 412 PRECONDITION_FAILED and 428 PRECONDITION_REQUIRED via ARCHITECTURE §10.4; report each save independently.
+- **Two Save controls:** Save Workspace Settings and Super Admin-only Save Legal Details operate on separate resources with independent versions/ETags and mandatory If-Match. Use the accepted `/api/v1/workspaces/{workspace_id}/...` baseline. Handle 412 PRECONDITION_FAILED and 428 PRECONDITION_REQUIRED via ARCHITECTURE §10.4; report each save independently.
 - **Audit:** Meaningful approved non-secret before/after values plus actor/workspace/UTC/version/outcome/request evidence. Privacy/redaction and retention require approval. Credentials/tokens are excluded. Exact D1 nonce/guard SQL remains PENDING EXECUTABLE PROOF; audit failure must atomically prevent an unaudited update. Post-commit row counts cannot roll back a batch.
 - **System logging:** G01 includes structured Worker request/error/performance logs and atomic settings audit. G02–G07 extend logging and durable audit with their feature changes and real provider outcomes. G08 may assess separately approved R2 system-log archival, with export/retrieval/access/redaction/failure/recovery tests; it is not a G01 dependency. Keep logs distinct from business audit and signed compliance evidence; no competing audit store or G01 Settings History screen.
 - **Three existing businesses only:** Synthetic seed values; no new-business provisioning. Remove Add Business Profile button/modal and visible Draft Business Profiles from the proposed active UI. Preserve historical data/code/evidence; no deletion is authorized here.

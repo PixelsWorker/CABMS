@@ -16,14 +16,14 @@ The parent workspace has `evidence/` for reference originals and `worktree/` res
 
 ## Commands
 
-Run commands from this directory (or active worktree). Both npm (verified Windows workflow with Node 20+) and Bun (`bun.lock`) are supported via `package.json`:
+Run commands from this directory (or active worktree). Both npm (Node `^22.22.2 || ^24.15.0`, as declared in `package.json` `engines`; `node:sqlite` is required for backend tests) and Bun (`bun.lock`) are supported via `package.json`:
 
 - `npm run dev` / `bun run dev`: start the Vite development server on port 3000.
 - `npm run build` / `bun run build`: build the production app.
 - `npm run lint` / `bun run lint`: run the TypeScript compiler without emitting files (`tsc --noEmit`).
-- `npm test` / `bun test`: run the configured application and test suite via the package script.
+- `npm test` / `bun run test`: run the configured application and test suite via the package script.
 - Individual layers: `npm run test:layer1` through `npm run test:layer8` (or `bun run ...`).
-- Alternate loader fallback (if tsx runner encounters Windows environment limits): `node --import ../../graphify-out/audit-loader.mjs --test src/utils/cabmsLogic.test.ts tests/*.test.ts`.
+- Alternate loader fallback (local-environment override for constrained runners without native tsx support; not present in clean repository checkouts): `node --import ../../graphify-out/audit-loader.mjs --test src/utils/cabmsLogic.test.ts tests/*.test.ts`.
 
 Use `package.json` scripts as the source of truth if these commands change. Do not claim tests passed unless they were run and passed.
 

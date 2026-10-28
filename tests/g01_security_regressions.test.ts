@@ -26,7 +26,7 @@ test('G01: unavailable Google key retrieval returns safe 503 rather than accepti
   const db = createLocalD1Database(); await runLocalMigrations(db);
   const token = await fixtureToken('firebase_uid_super_admin');
   mock.method(globalThis, 'fetch', async () => { throw new Error('Upstream unavailable'); });
-  const response = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } }), { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' });
+  const response = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } }), { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' });
   assert.equal(response.status, 503);
   assert.equal((await response.json() as { code: string }).code, 'SERVICE_UNAVAILABLE');
 });
@@ -35,7 +35,7 @@ test('G01: removed membership denies the next protected request', async () => {
   const db = createLocalD1Database(); await runLocalMigrations(db);
   const token = await fixtureToken('firebase_uid_owner_admin');
   await db.prepare('DELETE FROM workspace_memberships WHERE user_id = ?').bind('usr_owner_admin').run();
-  const response = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/settings', { headers: { Authorization: `Bearer ${token}` } }), { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' });
+  const response = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/settings', { headers: { Authorization: `Bearer ${token}` } }), { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' });
   assert.equal(response.status, 403);
 });
 
@@ -44,7 +44,7 @@ test('G01: environment flags cannot enable synthetic credentials or injected sig
   await runLocalMigrations(db);
   const response = await worker.fetch(new Request('http://localhost/api/v1/auth/me', {
     headers: { Authorization: 'Bearer test-token:firebase_uid_super_admin' },
-  }), { DB: db, FIREBASE_PROJECT_ID: 'cabms-test', ...{ ALLOW_SYNTHETIC_TEST_TOKENS: true, JWKS_CACHE_OVERRIDE: {} } });
+  }), { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test', ...{ ALLOW_SYNTHETIC_TEST_TOKENS: true, JWKS_CACHE_OVERRIDE: {} } });
   assert.equal(response.status, 401);
 });
 
@@ -54,7 +54,7 @@ test('G01: ETag lists match a later validator and unsafe integer versions are re
   const response = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/settings', {
     method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': '"999", "1"' },
     body: JSON.stringify({ tagline: 'Conditional update' }),
-  }), { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' });
+  }), { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' });
   assert.equal(response.status, 200);
   assert.equal(parseIfMatchHeader('"9007199254740993"').isMalformed, true);
   assert.equal(parseIfMatchHeader('"1",').isMalformed, true);
@@ -62,9 +62,9 @@ test('G01: ETag lists match a later validator and unsafe integer versions are re
 
 test('G01: concurrent first-login linking resolves a single authoritative mapping', async () => {
   const db = createLocalD1Database(); await runLocalMigrations(db);
-  const token = await fixtureToken('new_uid', 'admin@cabms.example.invalid');
+  const token = await fixtureToken('new_uid', 'staff@solarcell.example.invalid');
   const request = () => new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: `Bearer ${token}` } });
-  const env = { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' };
+  const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
   const results = await Promise.all([worker.fetch(request(), env), worker.fetch(request(), env)]);
   assert.deepEqual(results.map(r => r.status), [200, 200]);
   const row = await db.prepare('SELECT COUNT(*) AS n FROM user_identity_mappings WHERE provider_subject_id = ?').bind('new_uid').first<{ n: number }>();
@@ -90,7 +90,7 @@ test('G01: oversized operational and legal fields fail validation without audit 
   for (const [resource, patch] of [['settings', { contact_phone: 'x'.repeat(41) }], ['legal-details', { abn: 'x'.repeat(101) }]] as const) {
     const response = await worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${resource}`, {
       method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'If-Match': '"1"' }, body: JSON.stringify(patch),
-    }), { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' });
+    }), { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' });
     assert.equal(response.status, 422);
   }
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM settings_audit_events').first<{ n: number }>())?.n, 0);

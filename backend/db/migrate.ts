@@ -3,7 +3,7 @@
  * Executes local SQL migrations against a D1Database instance.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { D1Database } from './d1.ts';
@@ -13,9 +13,9 @@ const __dirname = dirname(__filename);
 
 export async function runLocalMigrations(db: D1Database): Promise<void> {
   const migrationsDir = resolve(__dirname, '../../migrations');
-  const migration01 = readFileSync(resolve(migrationsDir, '0001_g01_initial_schema.sql'), 'utf-8');
-  const migration02 = readFileSync(resolve(migrationsDir, '0002_g01_seed_synthetic_data.sql'), 'utf-8');
-
-  await db.exec(migration01);
-  await db.exec(migration02);
+  const files = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+  for (const file of files) {
+    const sql = readFileSync(resolve(migrationsDir, file), 'utf-8');
+    await db.exec(sql);
+  }
 }

@@ -30,7 +30,7 @@ test('G01 mounted settings: independent API saves, retained drafts, conflict rec
     await installFirebaseFixture();
     const db = createLocalD1Database(); await runLocalMigrations(db);
     const token = await fixtureToken('firebase_uid_super_admin');
-    const env = { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' };
+    const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
     let failNext = false;
     let release: (() => void) | undefined;
     let delayNext = false;

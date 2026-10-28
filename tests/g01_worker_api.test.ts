@@ -53,7 +53,7 @@ describe('G01 Worker API Endpoints', () => {
     db = createLocalD1Database(':memory:');
     await runLocalMigrations(db);
     await installFirebaseFixture();
-    env = { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' };
+    env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
     superAdminAuth = `Bearer ${await fixtureToken('firebase_uid_super_admin')}`;
     ownerAdminAuth = `Bearer ${await fixtureToken('firebase_uid_owner_admin')}`;
     technicianAuth = `Bearer ${await fixtureToken('firebase_uid_technician')}`;
@@ -289,7 +289,7 @@ describe('G01 Worker API Endpoints', () => {
   });
 
   it('Authentication: fails closed when synthetic test tokens are disabled', async () => {
-    const strictEnv: Env = { DB: db, FIREBASE_PROJECT_ID: 'cabms-test', ...{ ALLOW_SYNTHETIC_TEST_TOKENS: true, JWKS_CACHE_OVERRIDE: {} } };
+    const strictEnv: Env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test', ...{ ALLOW_SYNTHETIC_TEST_TOKENS: true, JWKS_CACHE_OVERRIDE: {} } };
     const req = new Request('http://localhost/api/v1/auth/me', {
       headers: { Authorization: 'Bearer test-token:firebase_uid_super_admin' },
     });
@@ -329,7 +329,7 @@ describe('G01 Worker API Endpoints', () => {
     const token = await createSignedToken(validPayload, keyPair.privateKey, 'test-key-1');
     const cryptoEnv: Env = {
       DB: db,
-      FIREBASE_PROJECT_ID: projectId,
+      ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: projectId,
     };
 
     // Valid token succeeds
@@ -418,7 +418,7 @@ describe('G01 Worker API Endpoints', () => {
     const token = await createSignedToken(unverifiedPayload, keyPair.privateKey, 'test-key-2');
     const cryptoEnv: Env = {
       DB: db,
-      FIREBASE_PROJECT_ID: projectId,
+      ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: projectId,
     };
 
     const req = new Request('http://localhost/api/v1/auth/me', {
@@ -527,16 +527,31 @@ describe('G01 Worker API Endpoints', () => {
     const token = await createSignedToken(chinePayload, keyPair.privateKey, 'test-chine-sa');
     const chineEnv: Env = {
       DB: db,
-      FIREBASE_PROJECT_ID: projectId,
+      ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: projectId,
     };
 
-    // 1. GET /api/v1/auth/me resolves Chine Digital Admin profile and all 3 workspaces
+    // 1. Unmapped token is denied (prevent uninvited self-enrollment / privilege escalation)
     const meReq = new Request('http://localhost/api/v1/auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     });
     const meRes = await worker.fetch(meReq, chineEnv);
-    assert.equal(meRes.status, 200);
-    const meBody = await meRes.json();
+    assert.equal(meRes.status, 401);
+
+    // 2. Controlled operator bootstrap: enroll provider UID for Chine Digital Admin
+    await db.prepare(
+      "INSERT OR REPLACE INTO users (id, email, display_name, created_at, updated_at) VALUES ('usr_chine_super_admin', 'admin@chinedigital.com.au', 'Chine Digital Admin', datetime('now'), datetime('now'))"
+    ).run();
+    await db.prepare(
+      "INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES ('map_chine_sa', 'usr_chine_super_admin', 'firebase', 'firebase_chine_digital_admin_uid', datetime('now'))"
+    ).run();
+    await db.prepare(
+      "INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at) VALUES ('mem_cd_sc', 'solarcell', 'usr_chine_super_admin', 'super_admin', datetime('now'), datetime('now')), ('mem_cd_sh', 'smart_home', 'usr_chine_super_admin', 'super_admin', datetime('now'), datetime('now')), ('mem_cd_cctv', 'cctv', 'usr_chine_super_admin', 'super_admin', datetime('now'), datetime('now'))"
+    ).run();
+
+    // 3. Now verified operator token succeeds with Super Admin across all 3 workspaces
+    const authedRes = await worker.fetch(meReq, chineEnv);
+    assert.equal(authedRes.status, 200);
+    const meBody = await authedRes.json();
     assert.equal(meBody.user.email, 'admin@chinedigital.com.au');
     assert.equal(meBody.memberships.length, 3);
     for (const m of meBody.memberships) {

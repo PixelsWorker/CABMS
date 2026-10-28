@@ -8,7 +8,9 @@ export * from '../contracts/settings.ts';
 export interface Env {
   DB: D1Database;
   FIREBASE_PROJECT_ID?: string;
+  FIREBASE_API_KEY?: string;
   ENVIRONMENT?: string;
+  ASSETS?: { fetch: (request: Request) => Promise<Response> };
 }
 
 export interface AuthContext {

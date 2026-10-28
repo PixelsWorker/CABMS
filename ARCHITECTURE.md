@@ -20,7 +20,7 @@ This document preserves dated G00 evidence and records the owner-authorized G01 
 - **REPORTED historical browser evidence:** Gate Q receipts at `30b4c72` and a later PR16 receipt are present under workspace `evidence/`; they were read, not independently replayed. Reconcile scenario/head coverage and owner acceptance instead of describing evidence as wholly absent or fully current.
 - **Accepted planning direction — 28 October handoff:** G01 is real authentication → authorized workspace → persistent settings → atomic settings audit → frontend feedback and verification. Customer, enquiry, job and operational dashboard persistence stays in G02. Three existing workspaces only; no new-business provisioning. R2 and live provider connections are deferred. This initial planning snapshot preceded the later G01 execution authorization; current accepted decisions are limited to section 14 (§19.5).
 
-Full current evidence: [Graphify/source audit](../../graphify-out/AUDIT-REPORT.md), [flow/data inventory](../../graphify-out/FLOW-AND-DATA-SOURCES.md), [planning fact-check](../../graphify-out/PLANNING-FACT-CHECK.md). Original planning drafts are preserved with the audit output.
+Full current evidence: Graphify/source audit (`graphify-out/AUDIT-REPORT.md`), flow/data inventory (`graphify-out/FLOW-AND-DATA-SOURCES.md`), and planning fact-check (`graphify-out/PLANNING-FACT-CHECK.md`) in the external workspace. Original planning drafts are preserved with the audit output.
 
 ## 1. Executive overview
 
@@ -616,7 +616,7 @@ The timing labels in §5 apply here. This is a scope assessment, not a provision
 
 **Technician connectivity decision:** Deferring offline synchronization is deliberate in this scope. The proposed initial production field workflow is online-only: display connection/save state clearly, never report a form or signature saved without server confirmation, and do not silently queue sensitive/signing operations for later replay. The business owner must accept the operational impact of poor on-site signal before G04/G05 workflow sign-off. If offline completion is required, return a separate scoped design for local sensitive storage, device loss, identity expiry, conflict resolution and signature integrity; do not hide it inside ordinary retries. Current G00 in-memory demo state does not establish safe offline persistence.
 
-## 14. Six A0 decision areas — all PROPOSED
+## 14. Six A0 decision areas — G01 acceptances and remaining proposals
 
 The table below identifies the limited **ACCEPTED G01** decisions; it does not approve every topic in six complete ADRs. The **ACCEPTED** 27 October hosting/delivery constraint narrows A0-ADR-01 to a Cloudflare application with one coordinated build and modular Worker. The later G01 acceptances are recorded in the table; retention, data location, further security-policy decisions and remaining acceptance evidence stay gated.
 
@@ -653,7 +653,7 @@ Detailed contracts should be dependency ordered: G01 identity/workspaces, necess
 
 ## 16. G01 authorized implementation and provisional G02-G08 roadmap
 
-G01 local implementation on the existing branch is authorized. G02?G08 remain proposed groupings; the table grants no new branch, infrastructure, deployment or execution permission.
+G01 local implementation on the existing branch is authorized. G02–G08 remain proposed groupings; the table grants no new branch, infrastructure, deployment or execution permission.
 
 ### 16.1 G01 technical work within one vertical group
 
@@ -733,7 +733,7 @@ Issue status alone proves neither an unfixed defect nor product acceptance. Rech
 
 ### 19.2 Canonical API Convention (ACCEPTED BASELINE FOR G01)
 
-Current HTTP stub emits unavailable-error labels under `/api/v1`; it performs no HTTP requests. `ApiResponse<T>` is declared but unused; customer adapter results use `PaginatedResponse<T>` with page pagination. These are not a deployed API.
+*(Historical G00 audit note: former HTTP stub emitted unavailable-error labels under `/api/v1` and performed no HTTP requests. `ApiResponse<T>` was declared but unused.)* For G01, `src/services/g01Client.ts` establishes the live client-to-Worker API calling `/api/v1/auth/me`, `/settings`, and `/legal-details`.
 Architecture proposes workspace-scoped routes with cursor pagination and RFC 9457 errors.
 `API-CONTRACT.md` was reported unavailable at `30b4c72` and was not found in this local audit. This does not prove no authentic predecessor exists elsewhere; retain the §10.1 recovery/replacement process.
 

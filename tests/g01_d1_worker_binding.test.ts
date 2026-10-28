@@ -37,7 +37,16 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
   const persistence = join(isolation, 'state');
   const config = join(isolation, 'wrangler.json');
   const require = createRequire(import.meta.url);
-  const cli = process.env.CABMS_WRANGLER_CLI || require.resolve('wrangler/bin/wrangler.js');
+  const resolveWrangler = () => {
+    if (process.env.CABMS_WRANGLER_CLI) return process.env.CABMS_WRANGLER_CLI;
+    try {
+      const pkgPath = require.resolve('wrangler/package.json');
+      return join(dirname(pkgPath), 'bin/wrangler.js');
+    } catch {
+      return require.resolve('wrangler/bin/wrangler.js');
+    }
+  };
+  const cli = resolveWrangler();
   const run = (args: string[]) => execFileSync(process.execPath, [cli, ...args, '--config', config], { cwd: rootDir, encoding: 'utf8', timeout: 60000 });
   const execute = (sql: string) => run(['d1', 'execute', 'cabms-d1', '--local', '--persist-to', persistence, '--command', sql]);
 
@@ -292,5 +301,75 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
     const updated = (await successRes.json()) as { version: number; legal_issuer_name: string };
     assert.equal(updated.version, legalBefore.version + 1);
     assert.equal(updated.legal_issuer_name, uniqueLegalName);
+  });
+
+  it('8. RFC 9110 multi-value If-Match: matches current version in list, rejects unmatched list with 412', async () => {
+    const getRes = await fetch(`${BASE_URL}/api/v1/workspaces/smart_home/settings`, {
+      headers: { Authorization: superAdminAuth },
+    });
+    const cur = (await getRes.json()) as { version: number; trading_name: string };
+    const curVer = cur.version;
+
+    // Multi-value list containing current version succeeds
+    const multiMatchHeader = `"99", "${curVer}", "100"`;
+    const patchRes = await fetch(`${BASE_URL}/api/v1/workspaces/smart_home/settings`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: superAdminAuth,
+        'If-Match': multiMatchHeader,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ trading_name: `Smart Home Multi ${Date.now()}` }),
+    });
+    assert.equal(patchRes.status, 200);
+    const updated = (await patchRes.json()) as { version: number };
+    assert.equal(updated.version, curVer + 1);
+
+    // Multi-value list not containing updated version fails with 412
+    const staleListHeader = `"99", "${curVer}"`;
+    const failRes = await fetch(`${BASE_URL}/api/v1/workspaces/smart_home/settings`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: superAdminAuth,
+        'If-Match': staleListHeader,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ trading_name: 'Should Fail' }),
+    });
+    assert.equal(failRes.status, 412);
+  });
+
+  it('9. Deactivated user enforcement: user with disabled = 1 in D1 is immediately denied', async () => {
+    const techAuth = `Bearer ${await fixtureToken('firebase_uid_technician')}`;
+
+    // Active technician succeeds on GET settings
+    const activeRes = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, {
+      headers: { Authorization: techAuth },
+    });
+    assert.equal(activeRes.status, 200);
+
+    // Deactivate user in D1
+    execute("UPDATE users SET disabled = 1, status_updated_at = datetime('now') WHERE id = 'usr_technician'");
+
+    try {
+      const disabledRes = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, {
+        headers: { Authorization: techAuth },
+      });
+      assert.equal(disabledRes.status, 401);
+    } finally {
+      // Revert user status
+      execute("UPDATE users SET disabled = 0 WHERE id = 'usr_technician'");
+    }
+  });
+
+  it('10. Privileged role email auto-linking prevention: cannot auto-link to super_admin by email match', async () => {
+    // Generate token for an unmapped provider UID whose email matches usr_super_admin
+    const attackerAuth = `Bearer ${await fixtureToken('unmapped_attacker_uid', 'admin@cabms.example.invalid')}`;
+
+    const unmappedRes = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, {
+      headers: { Authorization: attackerAuth },
+    });
+    // Must be rejected: unmapped privileged account cannot auto-link by email match alone
+    assert.equal(unmappedRes.status, 401);
   });
 });

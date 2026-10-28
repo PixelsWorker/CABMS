@@ -39,7 +39,7 @@ import {
 const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 // Hex color token
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
-const VALID_PRESETS = ['dark_company', 'high_visibility_light', 'standard_contrast'];
+const VALID_PRESETS = ['dark_neutral', 'dark_company', 'light_neutral', 'light_company', 'high_visibility_dark'];
 
 export async function handleGetWorkspaceSettings(
   request: Request,
@@ -144,7 +144,8 @@ export async function handlePatchWorkspaceSettings(
     );
   }
 
-  const expectedVersion = ifMatch.strongVersions[0];
+  const existingResource = await getWorkspaceSettings(db, workspaceId);
+  const expectedVersion = existingResource && ifMatch.strongVersions.includes(existingResource.version) ? existingResource.version : ifMatch.strongVersions[0];
 
   // 4. Parse & validate request payload
   let rawBody: unknown;
@@ -224,6 +225,8 @@ export async function handlePatchWorkspaceSettings(
       validationErrors.push({ pointer: '/contact_email', code: 'INVALID_TYPE', message: 'Contact email must be string or null' });
     } else if (typeof body.contact_email === 'string' && body.contact_email.trim() && !EMAIL_REGEX.test(body.contact_email.trim())) {
       validationErrors.push({ pointer: '/contact_email', code: 'INVALID_EMAIL', message: 'Contact email format is invalid' });
+    } else if (typeof body.contact_email === 'string' && body.contact_email.length > 254) {
+      validationErrors.push({ pointer: '/contact_email', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 254 characters' });
     } else {
       patch.contact_email = body.contact_email ? body.contact_email.trim() : null;
     }
@@ -232,6 +235,8 @@ export async function handlePatchWorkspaceSettings(
   if ('contact_phone' in body) {
     if (body.contact_phone !== null && typeof body.contact_phone !== 'string') {
       validationErrors.push({ pointer: '/contact_phone', code: 'INVALID_TYPE', message: 'Contact phone must be string or null' });
+    } else if (typeof body.contact_phone === 'string' && body.contact_phone.length > 40) {
+      validationErrors.push({ pointer: '/contact_phone', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 40 characters' });
     } else {
       patch.contact_phone = body.contact_phone;
     }
@@ -262,9 +267,7 @@ export async function handlePatchWorkspaceSettings(
     return validationErrorResponse('Submitted settings failed validation constraints', validationErrors, requestId);
   }
 
-  // Fault injection is strictly isolated to explicit test harness (ALLOW_FAULT_INJECTION === true)
-  const isFaultInjectionAllowed = env?.ALLOW_FAULT_INJECTION === true || env?.ALLOW_FAULT_INJECTION === 'true';
-  const forcedAuditFailure = Boolean(isFaultInjectionAllowed && request.headers.get('X-Force-Audit-Failure') === '1');
+  // Fault injection belongs to the test database, never request headers.
 
   // 5. Execute atomic mutation
   try {
@@ -274,7 +277,6 @@ export async function handlePatchWorkspaceSettings(
       patch,
       actorUserId: auth.userId,
       requestId,
-      forcedAuditFailure,
     });
 
     if (result.status === 'NOT_FOUND') {
@@ -432,7 +434,8 @@ export async function handlePatchLegalDetails(
     );
   }
 
-  const expectedVersion = ifMatch.strongVersions[0];
+  const existingResource = await getLegalDetails(db, workspaceId);
+  const expectedVersion = existingResource && ifMatch.strongVersions.includes(existingResource.version) ? existingResource.version : ifMatch.strongVersions[0];
 
   // 4. Parse & validate request payload
   let rawBody: unknown;
@@ -483,6 +486,8 @@ export async function handlePatchLegalDetails(
   if ('abn' in body) {
     if (body.abn !== null && typeof body.abn !== 'string') {
       validationErrors.push({ pointer: '/abn', code: 'INVALID_TYPE', message: 'ABN must be a string or null' });
+    } else if (typeof body.abn === 'string' && body.abn.length > 100) {
+      validationErrors.push({ pointer: '/abn', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 100 characters' });
     } else {
       patch.abn = body.abn;
     }
@@ -491,6 +496,8 @@ export async function handlePatchLegalDetails(
   if ('electrical_licence' in body) {
     if (body.electrical_licence !== null && typeof body.electrical_licence !== 'string') {
       validationErrors.push({ pointer: '/electrical_licence', code: 'INVALID_TYPE', message: 'Electrical licence must be string or null' });
+    } else if (typeof body.electrical_licence === 'string' && body.electrical_licence.length > 100) {
+      validationErrors.push({ pointer: '/electrical_licence', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 100 characters' });
     } else {
       patch.electrical_licence = body.electrical_licence;
     }
@@ -499,6 +506,8 @@ export async function handlePatchLegalDetails(
   if ('acma_cabler_registration' in body) {
     if (body.acma_cabler_registration !== null && typeof body.acma_cabler_registration !== 'string') {
       validationErrors.push({ pointer: '/acma_cabler_registration', code: 'INVALID_TYPE', message: 'ACMA registration must be string or null' });
+    } else if (typeof body.acma_cabler_registration === 'string' && body.acma_cabler_registration.length > 100) {
+      validationErrors.push({ pointer: '/acma_cabler_registration', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 100 characters' });
     } else {
       patch.acma_cabler_registration = body.acma_cabler_registration;
     }
@@ -507,6 +516,8 @@ export async function handlePatchLegalDetails(
   if ('qbcc_licence' in body) {
     if (body.qbcc_licence !== null && typeof body.qbcc_licence !== 'string') {
       validationErrors.push({ pointer: '/qbcc_licence', code: 'INVALID_TYPE', message: 'QBCC licence must be string or null' });
+    } else if (typeof body.qbcc_licence === 'string' && body.qbcc_licence.length > 100) {
+      validationErrors.push({ pointer: '/qbcc_licence', code: 'LENGTH_EXCEEDED', message: 'Field exceeds 100 characters' });
     } else {
       patch.qbcc_licence = body.qbcc_licence;
     }
@@ -517,9 +528,7 @@ export async function handlePatchLegalDetails(
     return validationErrorResponse('Submitted legal details failed validation constraints', validationErrors, requestId);
   }
 
-  // Fault injection is strictly isolated to explicit test harness (ALLOW_FAULT_INJECTION === true)
-  const isFaultInjectionAllowed = env?.ALLOW_FAULT_INJECTION === true || env?.ALLOW_FAULT_INJECTION === 'true';
-  const forcedAuditFailure = Boolean(isFaultInjectionAllowed && request.headers.get('X-Force-Audit-Failure') === '1');
+  // Fault injection belongs to the test database, never request headers.
 
   // 5. Execute atomic mutation
   try {
@@ -529,7 +538,6 @@ export async function handlePatchLegalDetails(
       patch,
       actorUserId: auth.userId,
       requestId,
-      forcedAuditFailure,
     });
 
     if (result.status === 'NOT_FOUND') {

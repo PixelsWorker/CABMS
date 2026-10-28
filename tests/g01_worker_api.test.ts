@@ -10,9 +10,10 @@
  * - Redacted audit persistence and zero secret leakage
  */
 
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../backend/index.ts';
+import { installFirebaseFixture, installTestKey, fixtureToken } from './support/firebaseTokens.ts';
 import { createLocalD1Database, D1Database } from '../backend/db/d1.ts';
 import { runLocalMigrations } from '../backend/db/migrate.ts';
 import { getAuditEvents } from '../backend/modules/settings/settingsRepo.ts';
@@ -32,7 +33,7 @@ async function createSignedToken(
 ): Promise<string> {
   const header = { alg: 'RS256', kid, typ: 'JWT' };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
-  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const encodedPayload = base64UrlEncode(JSON.stringify({ firebase: { sign_in_provider: 'google.com' }, ...payload }));
   const data = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
   const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, data);
   const encodedSignature = base64UrlEncode(new Uint8Array(signature));
@@ -43,14 +44,19 @@ describe('G01 Worker API Endpoints', () => {
   let db!: D1Database;
   let env!: Env;
 
-  const superAdminAuth = 'Bearer test-token:firebase_uid_super_admin';
-  const ownerAdminAuth = 'Bearer test-token:firebase_uid_owner_admin';
-  const technicianAuth = 'Bearer test-token:firebase_uid_technician';
+  let superAdminAuth: string;
+  let ownerAdminAuth: string;
+  let technicianAuth: string;
+  afterEach(() => mock.restoreAll());
 
   beforeEach(async () => {
     db = createLocalD1Database(':memory:');
     await runLocalMigrations(db);
-    env = { DB: db, ALLOW_SYNTHETIC_TEST_TOKENS: true };
+    await installFirebaseFixture();
+    env = { DB: db, FIREBASE_PROJECT_ID: 'cabms-test' };
+    superAdminAuth = `Bearer ${await fixtureToken('firebase_uid_super_admin')}`;
+    ownerAdminAuth = `Bearer ${await fixtureToken('firebase_uid_owner_admin')}`;
+    technicianAuth = `Bearer ${await fixtureToken('firebase_uid_technician')}`;
   });
 
   it('GET /api/v1/auth/me: rejects unauthenticated requests with 401 Problem Details', async () => {
@@ -283,9 +289,9 @@ describe('G01 Worker API Endpoints', () => {
   });
 
   it('Authentication: fails closed when synthetic test tokens are disabled', async () => {
-    const strictEnv: Env = { DB: db, ALLOW_SYNTHETIC_TEST_TOKENS: false };
+    const strictEnv: Env = { DB: db, FIREBASE_PROJECT_ID: 'cabms-test', ...{ ALLOW_SYNTHETIC_TEST_TOKENS: true, JWKS_CACHE_OVERRIDE: {} } };
     const req = new Request('http://localhost/api/v1/auth/me', {
-      headers: { Authorization: superAdminAuth },
+      headers: { Authorization: 'Bearer test-token:firebase_uid_super_admin' },
     });
     const res = await worker.fetch(req, strictEnv);
     assert.equal(res.status, 401);
@@ -304,6 +310,7 @@ describe('G01 Worker API Endpoints', () => {
     );
     const jwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey & { kid?: string };
     jwk.kid = 'test-key-1';
+    installTestKey('test-key-1', jwk);
 
     const projectId = 'cabms-real-project';
     const now = Math.floor(Date.now() / 1000);
@@ -323,7 +330,6 @@ describe('G01 Worker API Endpoints', () => {
     const cryptoEnv: Env = {
       DB: db,
       FIREBASE_PROJECT_ID: projectId,
-      JWKS_CACHE_OVERRIDE: { 'test-key-1': jwk },
     };
 
     // Valid token succeeds
@@ -371,7 +377,7 @@ describe('G01 Worker API Endpoints', () => {
     assert.equal(resWrongIss.status, 401);
 
     // Missing FIREBASE_PROJECT_ID in env fails closed
-    const noProjEnv: Env = { DB: db, JWKS_CACHE_OVERRIDE: { 'test-key-1': jwk } };
+    const noProjEnv: Env = { DB: db };
     const reqNoProj = new Request('http://localhost/api/v1/auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -392,6 +398,7 @@ describe('G01 Worker API Endpoints', () => {
     );
     const jwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey & { kid?: string };
     jwk.kid = 'test-key-2';
+    installTestKey('test-key-2', jwk);
 
     const projectId = 'cabms-real-project';
     const now = Math.floor(Date.now() / 1000);
@@ -412,7 +419,6 @@ describe('G01 Worker API Endpoints', () => {
     const cryptoEnv: Env = {
       DB: db,
       FIREBASE_PROJECT_ID: projectId,
-      JWKS_CACHE_OVERRIDE: { 'test-key-2': jwk },
     };
 
     const req = new Request('http://localhost/api/v1/auth/me', {
@@ -502,6 +508,7 @@ describe('G01 Worker API Endpoints', () => {
     );
     const jwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey & { kid?: string };
     jwk.kid = 'test-chine-sa';
+    installTestKey('test-chine-sa', jwk);
 
     const projectId = 'cabms-panel';
     const now = Math.floor(Date.now() / 1000);
@@ -521,7 +528,6 @@ describe('G01 Worker API Endpoints', () => {
     const chineEnv: Env = {
       DB: db,
       FIREBASE_PROJECT_ID: projectId,
-      JWKS_CACHE_OVERRIDE: { 'test-chine-sa': jwk },
     };
 
     // 1. GET /api/v1/auth/me resolves Chine Digital Admin profile and all 3 workspaces

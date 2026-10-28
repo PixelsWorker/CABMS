@@ -63,6 +63,7 @@ async function parseResponse<T>(res: Response): Promise<ApiResponse<T>> {
 
   if (res.ok) {
     try {
+      if (!res.headers.get('Content-Type')?.includes('application/json')) throw new Error('Unexpected content type');
       const data = (await res.json()) as T;
       return { ok: true, status: res.status, data, etag };
     } catch {
@@ -93,7 +94,7 @@ async function parseResponse<T>(res: Response): Promise<ApiResponse<T>> {
         type: 'https://api.cabms.example.invalid/errors/unknown',
         title: 'HTTP Error',
         status: res.status,
-        detail: await res.text(),
+        detail: 'The server returned an unexpected response. Use the request ID for support.',
         code: `HTTP_${res.status}`,
         retryable: false,
         request_id: res.headers.get('X-Request-Id') || 'unknown',
@@ -128,6 +129,7 @@ export async function apiGetCurrentUser(
 ): Promise<ApiResponse<{ user: { id: string; email: string; display_name: string | null }; memberships: Array<{ workspace_id: string; role: string; name: string }> }>> {
   const req = new Request(buildApiUrl('/api/v1/auth/me'), {
     method: 'GET',
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json, application/problem+json',
@@ -143,6 +145,7 @@ export async function apiGetWorkspaceSettings(
 ): Promise<ApiResponse<WorkspaceSettingsRow>> {
   const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/settings`), {
     method: 'GET',
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json, application/problem+json',
@@ -160,6 +163,7 @@ export async function apiPatchWorkspaceSettings(
 ): Promise<ApiResponse<WorkspaceSettingsRow>> {
   const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/settings`), {
     method: 'PATCH',
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: `Bearer ${token}`,
       'If-Match': etag,
@@ -178,6 +182,7 @@ export async function apiGetLegalDetails(
 ): Promise<ApiResponse<LegalIssuerRow>> {
   const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/legal-details`), {
     method: 'GET',
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json, application/problem+json',
@@ -195,6 +200,7 @@ export async function apiPatchLegalDetails(
 ): Promise<ApiResponse<LegalIssuerRow>> {
   const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/legal-details`), {
     method: 'PATCH',
+    signal: AbortSignal.timeout(10000),
     headers: {
       Authorization: `Bearer ${token}`,
       'If-Match': etag,

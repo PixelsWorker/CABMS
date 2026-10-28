@@ -12,8 +12,13 @@
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, ChildProcess } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
+import { spawn, execFileSync, ChildProcess } from 'node:child_process';
+import { resolve, dirname, join } from 'node:path';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import { installFirebaseFixture, fixtureToken } from './support/firebaseTokens.ts';
+import { mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,37 +31,32 @@ const BASE_URL = `http://127.0.0.1:${PORT}`;
 describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
   let wranglerProc: ChildProcess | null = null;
 
-  const superAdminAuth = 'Bearer test-token:firebase_uid_super_admin';
-  const ownerAdminAuth = 'Bearer test-token:firebase_uid_owner_admin';
+  let superAdminAuth: string;
+  let ownerAdminAuth: string;
+  const isolation = mkdtempSync(join(tmpdir(), 'cabms-g01-d1-'));
+  const persistence = join(isolation, 'state');
+  const config = join(isolation, 'wrangler.json');
+  const require = createRequire(import.meta.url);
+  const cli = process.env.CABMS_WRANGLER_CLI || require.resolve('wrangler/bin/wrangler.js');
+  const run = (args: string[]) => execFileSync(process.execPath, [cli, ...args, '--config', config], { cwd: rootDir, encoding: 'utf8', timeout: 60000 });
+  const execute = (sql: string) => run(['d1', 'execute', 'cabms-d1', '--local', '--persist-to', persistence, '--command', sql]);
 
   before(async () => {
-    // Spawn local wrangler dev server on dedicated port 8789
-    const npxCmd = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-    wranglerProc = spawn(
-      npxCmd,
-      [
-        'wrangler',
-        'dev',
-        '--port',
-        String(PORT),
-        '--ip',
-        '127.0.0.1',
-        '--persist-to',
-        '.wrangler/state',
-        '--var',
-        'ALLOW_SYNTHETIC_TEST_TOKENS:true',
-        '--var',
-        'ALLOW_FAULT_INJECTION:true',
-        '--show-interactive-dev-session',
-        'false',
-      ],
-      {
-        cwd: rootDir,
-        shell: true,
-        stdio: 'ignore',
-        detached: process.platform !== 'win32',
-      }
-    );
+    await installFirebaseFixture();
+    superAdminAuth = `Bearer ${await fixtureToken('firebase_uid_super_admin')}`;
+    ownerAdminAuth = `Bearer ${await fixtureToken('firebase_uid_owner_admin')}`;
+    const jwks = await (await fetch('https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com')).json();
+    mock.restoreAll();
+    writeFileSync(config, JSON.stringify({
+      name: 'cabms-g01-test', main: resolve(rootDir, 'tests/support/worker.ts'),
+      compatibility_date: '2026-10-28', compatibility_flags: ['nodejs_compat'],
+      d1_databases: [{ binding: 'DB', database_name: 'cabms-d1', database_id: 'local-test-only', migrations_dir: resolve(rootDir, 'migrations') }],
+      vars: { ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test', TEST_PUBLIC_JWKS: JSON.stringify(jwks) },
+    }));
+    run(['d1', 'migrations', 'apply', 'cabms-d1', '--local', '--persist-to', persistence]);
+    wranglerProc = spawn(process.execPath, [cli, 'dev', '--config', config, '--port', String(PORT), '--ip', '127.0.0.1', '--persist-to', persistence, '--show-interactive-dev-session', 'false'], {
+      cwd: rootDir, stdio: 'ignore', detached: process.platform !== 'win32',
+    });
 
     // Wait for server to become ready
     let isReady = false;
@@ -217,20 +217,21 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
     const beforeData = (await beforeRes.json()) as { version: number; trading_name: string };
     const currentEtag = `"${beforeData.version}"`;
 
-    // 2. Issue PATCH with X-Force-Audit-Failure: 1
-    // This instructs the repository to violate a NOT NULL constraint on audit insertion in D1.batch()
+    execute("CREATE TRIGGER g01_fail_audit BEFORE INSERT ON settings_audit_events BEGIN SELECT RAISE(ABORT, 'test audit failure'); END;");
+    // 2. Issue PATCH against a database whose audit insertion must fail.
+    // A test-only database trigger aborts audit insertion inside D1.batch().
     const failRes = await fetch(`${BASE_URL}/api/v1/workspaces/cctv/settings`, {
       method: 'PATCH',
       headers: {
         Authorization: superAdminAuth,
         'If-Match': currentEtag,
         'Content-Type': 'application/json',
-        'X-Force-Audit-Failure': '1',
       },
       body: JSON.stringify({ trading_name: 'This Name Must Roll Back' }),
     });
 
     // Worker must catch error and return 500 INTERNAL_ERROR
+    execute('DROP TRIGGER g01_fail_audit');
     assert.equal(failRes.status, 500);
     const problem = (await failRes.json()) as { code: string };
     assert.equal(problem.code, 'INTERNAL_ERROR');
@@ -261,7 +262,7 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
     const legalEtag = `"${legalBefore.version}"`;
 
     // Non-super-admin is blocked
-    const forbiddenRes = await fetch(`${BASE_URL}/api/v1/workspaces/cctv/legal-details`, {
+    const forbiddenRes = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/legal-details`, {
       method: 'PATCH',
       headers: {
         Authorization: ownerAdminAuth,
@@ -271,6 +272,7 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
       body: JSON.stringify({ legal_issuer_name: 'Unauthorized Change' }),
     });
     assert.equal(forbiddenRes.status, 403);
+    assert.match((await forbiddenRes.json() as { detail: string }).detail, /Super Admin/i);
 
     // Super Admin succeeds
     const uniqueLegalName = `Gold Coast CCTV Pty Ltd ${Date.now()}`;

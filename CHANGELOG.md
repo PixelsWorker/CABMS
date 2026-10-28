@@ -2,7 +2,15 @@
 
 This file records evidence-backed CABMS development history. It follows a Keep a Changelog style without inventing release versions. Entries marked **REPORTED** come from a PR description or supplied evidence rather than an independently rerun check.
 
-**Documentation updated:** 28 October 2026. Current local `dev` and main checkout are at `2b04f87bbb6dc4f81b65c6f2844d76488161e62d`, whose merge subject records PR #16. Entries dated 27 October below preserve historical observations and reported evidence; they are not current remote status. GitHub refresh was unavailable in this audit.
+**Historical G00 documentation baseline:** 28 October 2026. The local integration baseline was `2b04f87bbb6dc4f81b65c6f2844d76488161e62d`, whose merge subject records PR #16. Entries dated 27 October below preserve historical observations and reported evidence; they are not current remote status. GitHub refresh was unavailable in that historical audit. Current G01 implementation continues on `feat/g01-identity-workspaces` / PR #17 as recorded below.
+
+## 28 October 2026 - G01 implementation review checkpoint
+
+- Connected the preserved React UI to Firebase Google session observation, Worker `/api/v1/auth/me`, trusted workspace memberships and independent Workspace Settings/Legal Details GET/PATCH operations with separate ETags, retained drafts and safe conflict/error feedback.
+- Added Worker/settings repository, existing D1 schema/seed migrations and durable atomic settings-audit integration in PR #17; this correction does not introduce a new migration. Removed deployable synthetic-token/JWKS overrides and HTTP fault injection; tightened JWT validation, JWKS retrieval, concurrent identity linking, ETag lists, request correlation and log privacy.
+- Added fresh isolated workerd/D1 concurrency/rollback proofs and mounted frontend/security tests. The latest pre-documentation local `npm test` run completed 213 tests: 211 passed, 0 failed, 2 skipped (browser/pixel). These are fixture/local-runtime tests; real Google browser login and provider revocation acceptance remain unverified. Final rerun receipts accompany the checkpoint publication.
+- Limited CodeRabbit review of sign-in/feedback components completed with zero findings. The full review requested these authorization/history corrections; prior security, migration, bootstrap, tooling and protected-file findings remain pending where separate approval is required.
+- G01 local implementation is authorized; final acceptance is not granted. Revocation/account disabling, real-account seed/bootstrap, additive migration and Wrangler pin proposals remain approval-dependent. FC-06 deployment hold, G00/issue #11 acceptance and F02 remain open. No staging, production deployment or merge is authorized by this entry.
 
 ## 28 October 2026 — G01 Architecture Approval & Branch Authorization
 
@@ -14,15 +22,15 @@ This file records evidence-backed CABMS development history. It follows a Keep a
 - **BRANCH AUTHORIZATION:** Branch `feat/g01-identity-workspaces` authorized for G01 implementation off base `2b04f87bbb6dc4f81b65c6f2844d76488161e62d`.
 - **GATING:** FC-06 deployment hold remains active pending planning asset remediation; restore proof gate remains required before real customer data.
 
-## 28 October 2026 - R&C documentation reconciliation
+## 28 October 2026 - Historical R&C documentation reconciliation
 
 - Planning: G01 structured Worker logs and atomic settings audit; G02-G07 extend logging with each feature; optional separately approved G08 R2 log archival. No competing audit system or new Settings History screen.
 - Added staff bootstrap/lifecycle, session security, real/demo separation, BrandConfig contract mapping and asynchronous save obligations. Corrected roadmap persistence, status and timing qualifications; aligned branch planning.
-- Documentation only. No application implementation, tests, real integrations, provisioning or deployment. G00 acceptance, F02, FC-06, A0 and contract/implementation approvals remain pending.
+- Historical documentation-only activity: that entry performed no application implementation, tests, real integrations, provisioning or deployment. G00 acceptance, F02, FC-06, A0 and contract/implementation approvals remain pending.
 
-## 28 October 2026 — G01 planning reconciliation
+## 28 October 2026 - Historical G01 planning reconciliation
 
-**Accepted planning direction:** Rockson's exact-file handoff of 28 October, followed by authorization to preserve the current drafts. **Implementation remains unapproved.** Current local dev source is `2b04f87`; these three documents remain untracked/uncommitted. This entry supersedes earlier G01/G02 scope and separate-foundation proposals while preserving their dated history.
+**Accepted planning direction:** Rockson's exact-file handoff of 28 October, followed by authorization to preserve the current drafts. **At that planning checkpoint, implementation was unapproved.** Its local base was `2b04f87` and the three drafts were then untracked/uncommitted. Later G01 authorization and implementation supersede that historical status. This entry supersedes earlier G01/G02 scope and separate-foundation proposals while preserving their dated history.
 
 - G01 is one complete vertical feature: real authentication first → authorized workspace → persistent settings → atomic settings audit → frontend feedback/verification. Customer/enquiry/job and operational dashboard persistence stays in G02; full template-policy persistence stays in its future group.
 - Specify two independent controls/resources: **Save Workspace Settings** and **Save Legal Details** (Super Admin only), separately versioned with server ETags and mandatory If-Match. Reuse canonical 412/428 errors and the existing error registry; the API prefix remains `{api_prefix}` until contract approval.

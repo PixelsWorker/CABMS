@@ -24,6 +24,8 @@ export interface StructuredLogEntry {
 }
 
 const REDACTED_MARKER = '[REDACTED]';
+const EVENTS = new Set(['AUTH_FAILED', 'ACCESS_DENIED', 'SETTINGS_READ', 'INSUFFICIENT_PERMISSIONS', 'PRECONDITION_REQUIRED', 'VALIDATION_FAILED', 'PRECONDITION_FAILED', 'SETTINGS_NO_OP', 'SETTINGS_UPDATED', 'SETTINGS_UPDATE_ERROR', 'LEGAL_READ', 'LEGAL_WRITE_DENIED', 'LEGAL_NO_OP', 'LEGAL_UPDATED', 'LEGAL_UPDATE_ERROR', 'WORKER_UNHANDLED_EXCEPTION']);
+const NUMBER_FIELDS = new Set(['version', 'new_version', 'expected_version', 'current_version']);
 
 const SENSITIVE_KEY_PATTERNS = [
   /token/i,
@@ -90,22 +92,25 @@ export class StructuredLogger {
       error?: Error;
     }
   ): StructuredLogEntry {
+    // Free-form messages, exception text and arbitrary structured fields are never serialized.
+    const safeEvent = EVENTS.has(event) ? event : 'UNKNOWN_EVENT';
+    const fields = Object.fromEntries(Object.entries(extra?.fields || {}).filter(([key, value]) =>
+      NUMBER_FIELDS.has(key) && typeof value === 'number' && Number.isSafeInteger(value)));
     const entry: StructuredLogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      event,
-      request_id: this.requestId,
-      message,
-      ...(this.workspaceId ? { workspace_id: this.workspaceId } : {}),
-      ...(this.userId ? { user_id: this.userId } : {}),
+      event: safeEvent,
+      request_id: /^req_[0-9a-f-]{36}$/.test(this.requestId) ? this.requestId : 'uncorrelated',
+      message: safeEvent,
+      ...(['solarcell', 'smart_home', 'cctv'].includes(this.workspaceId || '') ? { workspace_id: this.workspaceId } : {}),
       ...(extra?.durationMs !== undefined ? { duration_ms: extra.durationMs } : {}),
       ...(extra?.statusCode !== undefined ? { status_code: extra.statusCode } : {}),
-      ...(extra?.fields ? { fields: sanitizeLogFields(extra.fields) as Record<string, unknown> } : {}),
+      ...(Object.keys(fields).length ? { fields } : {}),
       ...(extra?.error
         ? {
             error: {
-              name: extra.error.name,
-              message: extra.error.message,
+              name: 'Error',
+              message: 'Operation failed; inspect privacy-safe request correlation.',
             },
           }
         : {}),

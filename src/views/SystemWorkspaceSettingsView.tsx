@@ -6,6 +6,8 @@
  */
 
 import React, { useState } from 'react';
+import { useG01Session } from '../context/G01Session.tsx';
+import { LegalDetailsForm } from './LegalDetailsForm.tsx';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { WorkspaceSettingsView } from './WorkspaceSettingsView.tsx';
 import { SuperAdminSetupView } from './SuperAdminSetupView.tsx';
@@ -14,6 +16,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faBuilding, faGear, faLock } from '@fortawesome/free-solid-svg-icons';
 
 export const SystemWorkspaceSettingsView: React.FC = () => {
+  const session = useG01Session();
   const { persona } = useCabms();
   const [activeSubTab, setActiveSubTab] = useState<'workspace' | 'system'>('workspace');
 
@@ -77,7 +80,7 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
         <div hidden={activeSubTab !== 'workspace'}>
           <WorkspaceSettingsView />
         </div>
-        {activeSubTab === 'system' && (
+        {session ? <div hidden={activeSubTab !== 'system'}><LegalDetailsForm /></div> : activeSubTab === 'system' && (
           isSuperAdmin ? (
             <SuperAdminSetupView />
           ) : (

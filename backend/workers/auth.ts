@@ -3,7 +3,7 @@
  *
  * Implements:
  * - Cryptographic signature and claims verification for Firebase ID tokens (RS256 via Web Crypto API)
- * - Strict opt-in isolation for synthetic test tokens (rejected unless ALLOW_SYNTHETIC_TEST_TOKENS === true)
+ * - No synthetic credential or injected-key configuration in deployable authentication
  * - Mandatory email_verified check before any approved email-based identity linking
  * - Server-owned membership and role resolution via Cloudflare D1
  */
@@ -24,6 +24,8 @@ export interface DecodedToken {
 const GOOGLE_JWKS_URL = 'https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com';
 
 let cachedJwks: { keys: Record<string, JsonWebKey>; expiresAt: number } | null = null;
+let pendingJwks: Promise<Record<string, JsonWebKey>> | null = null;
+export class AuthenticationUnavailable extends Error {}
 
 function base64UrlToUint8Array(base64Url: string): Uint8Array {
   const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -37,16 +39,22 @@ function base64UrlToUint8Array(base64Url: string): Uint8Array {
   return bytes;
 }
 
-export async function getGoogleJwks(jwksOverride?: Record<string, JsonWebKey>): Promise<Record<string, JsonWebKey>> {
-  if (jwksOverride) {
-    return jwksOverride;
-  }
+export async function getGoogleJwks(): Promise<Record<string, JsonWebKey>> {
   const now = Date.now();
   if (cachedJwks && cachedJwks.expiresAt > now) {
     return cachedJwks.keys;
   }
+  if (pendingJwks) return pendingJwks;
+  pendingJwks = fetchGoogleJwks();
+  try { return await pendingJwks; }
+  catch { throw new AuthenticationUnavailable('Identity verification is temporarily unavailable'); }
+  finally { pendingJwks = null; }
+}
 
-  const res = await fetch(GOOGLE_JWKS_URL);
+async function fetchGoogleJwks(): Promise<Record<string, JsonWebKey>> {
+  const now = Date.now();
+
+  const res = await fetch(GOOGLE_JWKS_URL, { signal: AbortSignal.timeout(5000) });
   if (!res.ok) {
     throw new Error(`Failed to fetch Google JWKS: ${res.status}`);
   }
@@ -56,11 +64,12 @@ export async function getGoogleJwks(jwksOverride?: Record<string, JsonWebKey>): 
   if (cacheControl) {
     const match = /max-age=(\d+)/i.exec(cacheControl);
     if (match) {
-      maxAge = parseInt(match[1], 10);
+      maxAge = Math.min(86400, parseInt(match[1], 10));
     }
   }
 
   const body = (await res.json()) as { keys: Array<JsonWebKey & { kid: string }> };
+  if (!Array.isArray(body?.keys) || !body.keys.length) throw new Error('Invalid key response');
   const map: Record<string, JsonWebKey> = {};
   for (const k of body.keys) {
     if (k.kid) {
@@ -77,8 +86,7 @@ export async function getGoogleJwks(jwksOverride?: Record<string, JsonWebKey>): 
  */
 export async function verifyFirebaseToken(
   token: string,
-  projectId: string,
-  jwksOverride?: Record<string, JsonWebKey>
+  projectId: string
 ): Promise<DecodedToken | null> {
   if (!projectId || !token || typeof token !== 'string') {
     return null;
@@ -100,7 +108,7 @@ export async function verifyFirebaseToken(
     return null;
   }
 
-  if (header.alg !== 'RS256' || !header.kid || typeof header.kid !== 'string') {
+  if (!header || typeof header !== 'object' || Array.isArray(header) || header.alg !== 'RS256' || !header.kid || typeof header.kid !== 'string') {
     return null; // Must be RS256 with key ID
   }
 
@@ -120,19 +128,23 @@ export async function verifyFirebaseToken(
   const nowSec = Math.floor(Date.now() / 1000);
 
   // Expiration check: exp must be integer in the future
-  if (typeof payload.exp !== 'number' || payload.exp <= nowSec) {
+  if (typeof payload.exp !== 'number' || !Number.isSafeInteger(payload.exp) || payload.exp <= 0 || payload.exp <= nowSec) {
     return null;
   }
 
   // Issued at check: iat must be in the past (allow 300s clock skew)
-  if (typeof payload.iat !== 'number' || payload.iat > nowSec + 300) {
+  if (typeof payload.iat !== 'number' || !Number.isSafeInteger(payload.iat) || payload.iat <= 0 || payload.iat > nowSec + 300) {
     return null;
   }
 
   // Auth time check
-  if (typeof payload.auth_time === 'number' && payload.auth_time > nowSec + 300) {
+  if (typeof payload.auth_time !== 'number' || !Number.isSafeInteger(payload.auth_time) || payload.auth_time <= 0 || payload.auth_time > nowSec + 300) {
     return null;
   }
+  if (payload.auth_time > payload.iat || payload.iat >= payload.exp) return null;
+
+  const firebase = payload.firebase as { sign_in_provider?: unknown } | undefined;
+  if (!firebase || firebase.sign_in_provider !== 'google.com') return null;
 
   // Audience check: must match Firebase Project ID
   if (payload.aud !== projectId) {
@@ -153,7 +165,7 @@ export async function verifyFirebaseToken(
 
   // 3. Cryptographic signature check
   try {
-    const jwks = await getGoogleJwks(jwksOverride);
+    const jwks = await getGoogleJwks();
     const jwk = jwks[header.kid];
     if (!jwk) {
       return null;
@@ -180,7 +192,8 @@ export async function verifyFirebaseToken(
     if (!valid) {
       return null;
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthenticationUnavailable) throw error;
     return null;
   }
 
@@ -197,8 +210,7 @@ export async function verifyFirebaseToken(
 
 /**
  * Validates request Bearer token.
- * Synthetic test-tokens are STRICTLY gated to an explicit local test harness (ALLOW_SYNTHETIC_TEST_TOKENS === true).
- * In all other cases, fails closed.
+ * Synthetic test tokens are always rejected. Tests mock network transport outside this module.
  */
 export async function decodeAndValidateToken(
   token: string,
@@ -208,31 +220,15 @@ export async function decodeAndValidateToken(
     return null;
   }
 
-  // ISOLATED TEST HARNESS: Synthetic tokens are strictly rejected unless explicit test harness flag is enabled
-  if (token.startsWith('test-token:')) {
-    const isSyntheticAllowed = env?.ALLOW_SYNTHETIC_TEST_TOKENS === true || env?.ALLOW_SYNTHETIC_TEST_TOKENS === 'true';
-    if (isSyntheticAllowed) {
-      const uid = token.replace('test-token:', '').trim();
-      if (!uid) return null;
-      return {
-        uid,
-        email: `${uid}@example.invalid`,
-        emailVerified: true,
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iss: 'https://securetoken.google.com/cabms-test',
-        aud: 'cabms-test',
-      };
-    }
-    // Fail closed in production, staging, and any environment without the explicit test flag
-    return null;
-  }
+  // Test credentials never enter the deployable verification path.
+  if (token.startsWith('test-token:')) return null;
 
   // Real tokens: fail closed if Firebase project ID is missing
   if (!env?.FIREBASE_PROJECT_ID) {
     return null;
   }
 
-  return verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID, env.JWKS_CACHE_OVERRIDE);
+  return verifyFirebaseToken(token, env.FIREBASE_PROJECT_ID);
 }
 
 /**
@@ -253,6 +249,7 @@ export async function authenticateRequest(
   if (!decoded) {
     return null;
   }
+  if (!decoded.emailVerified) return null;
 
   // 1. Find user from identity mappings
   const mappingStmt = db.prepare(
@@ -278,8 +275,11 @@ export async function authenticateRequest(
     const mapId = `map_${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     await db.prepare(
-      'INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider_id, provider_subject_id) DO NOTHING'
     ).bind(mapId, userId, 'firebase', decoded.uid, now).run();
+    const linked = await db.prepare('SELECT user_id FROM user_identity_mappings WHERE provider_id = ? AND provider_subject_id = ?').bind('firebase', decoded.uid).first<{ user_id: string }>();
+    if (!linked || linked.user_id !== userId) return null;
+    userId = linked.user_id;
   } else {
     return null;
   }

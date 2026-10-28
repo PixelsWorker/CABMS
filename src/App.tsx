@@ -10,6 +10,7 @@
  */
 
 import React from 'react';
+import { G01SessionProvider, useG01Session } from './context/G01Session.tsx';
 import { config } from '@fortawesome/fontawesome-svg-core';
 import { CabmsProvider, useCabms } from './context/CabmsContext.tsx';
 import { DemoBanner } from './components/DemoBanner.tsx';
@@ -32,15 +33,16 @@ import { AccessDeniedView } from './components/AccessDeniedView.tsx';
 config.autoAddCss = false;
 
 export const AppContent: React.FC = () => {
+  const session = useG01Session();
   const { activeTab, isSimulatedSignedIn, persona, activeBrandId } = useCabms();
   const destination = CORE_DESTINATIONS.find(item => item.id === activeTab);
   const permitted = canAccessDestination(persona, activeTab);
 
-  if (!isSimulatedSignedIn) {
+  if (session ? session.loading || !session.profile : !isSimulatedSignedIn) {
     return (
       <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
-        <DemoBanner />
-        <DemoControlsBar />
+        {!session && <DemoBanner />}
+        {!session && <DemoControlsBar />}
         <main id="cabms-main-content" tabIndex={-1} className="cabms-main flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <SignInScreen />
         </main>
@@ -61,10 +63,12 @@ export const AppContent: React.FC = () => {
   return (
     <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
       {/* 1. Mandatory Persistent Demo Banner */}
-      <DemoBanner />
+      {!session && <DemoBanner />}
+      {session && <div className="cabms-card p-3 text-sm" role="status">G01 settings use the authenticated backend. Jobs, customers, schedules and other operational screens remain synthetic G00 demonstrations.</div>}
+      {session?.error && <p role="alert" className="cabms-card p-3">{session.error}</p>}
 
       {/* 2. Interactive Demo Controls & Virtual Clock Bar */}
-      <DemoControlsBar />
+      {!session && <DemoControlsBar />}
 
       {/* 3. Header & Navigation */}
       <Navigation>
@@ -80,7 +84,7 @@ export const AppContent: React.FC = () => {
           {permitted && activeTab === 'communications' && <CommunicationsView />}
           {permitted && activeTab === 'website_inbox' && <WebsiteInboxView />}
           {permitted && activeTab === 'templates' && <TemplatesSettingsView />}
-          {permitted && activeTab === 'super_admin_setup' && <SystemWorkspaceSettingsView />}
+          {session ? canAccessDestination(persona, 'super_admin_setup') && <div hidden={activeTab !== 'super_admin_setup'}><SystemWorkspaceSettingsView /></div> : permitted && activeTab === 'super_admin_setup' && <SystemWorkspaceSettingsView />}
         </main>
 
         {/* 5. Footer with Persistent Isolation Disclosure */}
@@ -99,10 +103,11 @@ export const AppContent: React.FC = () => {
   );
 };
 
-export default function App() {
-  return (
+export default function App({ demoMode = false }: { demoMode?: boolean }) {
+  const content = (
     <CabmsProvider>
       <AppContent />
     </CabmsProvider>
   );
+  return demoMode ? content : <G01SessionProvider>{content}</G01SessionProvider>;
 }

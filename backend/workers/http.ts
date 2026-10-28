@@ -52,7 +52,7 @@ export function parseIfMatchHeader(header: string | null): IfMatchResult {
     };
   }
 
-  const parts = trimmed.split(',').map(s => s.trim()).filter(Boolean);
+  const parts = trimmed.split(',').map(s => s.trim());
   const strongVersions: number[] = [];
   let isWeak = false;
   let isMalformed = false;
@@ -69,7 +69,7 @@ export function parseIfMatchHeader(header: string | null): IfMatchResult {
       isMalformed = true;
     } else {
       const num = parseInt(match[1], 10);
-      if (isNaN(num) || num < 0) {
+      if (!Number.isSafeInteger(num) || num < 0) {
         isMalformed = true;
       } else {
         strongVersions.push(num);

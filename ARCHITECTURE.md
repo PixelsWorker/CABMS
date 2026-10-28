@@ -2,15 +2,15 @@
 
 **Document status:** Review draft, fact-checked 28 October 2026 against local `dev` at `2b04f87bbb6dc4f81b65c6f2844d76488161e62d`. Updated 28 October 2026 with Rockson's formal approval of G01 architecture decisions and branch creation. Earlier PR/issue statements below are dated historical records, not a live status refresh.
 
-**Current implementation:** G00 React/Vite demonstration
+**Current implementation:** G01 local Firebase/session, Worker/D1 and audited-settings integration over the preserved G00 React/Vite UI; security closure and real-browser acceptance remain incomplete.
 
 **Hosting and delivery direction:** **ACCEPTED owner constraint, 27 October 2026** — Cloudflare, one repository, one coordinated build and one application deployment
 
 **Future backend:** **ACCEPTED G01 architecture decisions, 28 October 2026** — One modular Cloudflare Worker, Cloudflare D1 relational database with Request-Correlation Nonce Pattern for atomic settings audit, Firebase Authentication (Spark tier + Google Sign-In) for pilot identity with server-side memberships, 1:1 legal issuer model per workspace (Super Admin only), and canonical API baseline (`/api/v1/workspaces/{workspace_id}/...` with RFC 9457 Problem Details and strong ETags/`If-Match`). Implementation branch `feat/g01-identity-workspaces` authorized.
 
-This document records inspected G00 code, Rockson's explicit hosting/delivery instruction and the proposed design within that constraint. Recording the platform constraint does not accept a complete A0 ADR, create an API specification, authorize implementation or replace the existing A0 review gates.
+This document preserves dated G00 evidence and records the owner-authorized G01 implementation on `feat/g01-identity-workspaces` / PR #17. Only the G01 decisions explicitly listed in section 14 are accepted; broader ADR topics remain proposed. Implementation authorization is distinct from final G01 acceptance, security-policy/migration approvals, publication, deployment and merge. FC-06 remains an absolute deployment hold.
 
-## Current audit snapshot — 28 October 2026
+## Historical G00 audit snapshot — 28 October 2026
 
 - **VERIFIED locally:** `CABMS` (`main`) and `worktree/dev` (`dev`) are both at `2b04f87`; local history records the merge of PR #16. Current GitHub PR/issue status could not be refreshed. Merge, browser receipts and owner acceptance are separate facts.
 - **VERIFIED implementation:** Ten bundled JSON fixtures feed `MockDataAdapter.getInitialBaseline()` through `seedData.ts`; views use `useCabms()`. Context retains business mutations. `getDataAdapter()` is unused by application/tests; `HttpDataAdapter` is an inert stub. This is a partial boundary, not a swappable live data layer.
@@ -18,7 +18,7 @@ This document records inspected G00 code, Rockson's explicit hosting/delivery in
 - **Validation:** Project type-check and Vite build passed. Normal `npm test` failed at tsx Windows user-profile lookup before tests ran. An explicitly recorded alternate loader executed the unchanged suite: 169 tests, 167 passed, 0 failed, 2 skipped. Browser/pixel checks were not rerun.
 - **FC-06:** Fresh local build output contains all five planning files in `dist/assets/aistudio`. Artifact inclusion is now verified; deployed exposure remains unknown. Existing deployment hold is unchanged.
 - **REPORTED historical browser evidence:** Gate Q receipts at `30b4c72` and a later PR16 receipt are present under workspace `evidence/`; they were read, not independently replayed. Reconcile scenario/head coverage and owner acceptance instead of describing evidence as wholly absent or fully current.
-- **Accepted planning direction — 28 October handoff:** G01 is real authentication → authorized workspace → persistent settings → atomic settings audit → frontend feedback and verification. Customer, enquiry, job and operational dashboard persistence stays in G02. Three existing workspaces only; no new-business provisioning. R2 and live provider connections are deferred. Implementation and detailed A0 decisions remain unapproved (§19.5).
+- **Accepted planning direction — 28 October handoff:** G01 is real authentication → authorized workspace → persistent settings → atomic settings audit → frontend feedback and verification. Customer, enquiry, job and operational dashboard persistence stays in G02. Three existing workspaces only; no new-business provisioning. R2 and live provider connections are deferred. This initial planning snapshot preceded the later G01 execution authorization; current accepted decisions are limited to section 14 (§19.5).
 
 Full current evidence: [Graphify/source audit](../../graphify-out/AUDIT-REPORT.md), [flow/data inventory](../../graphify-out/FLOW-AND-DATA-SOURCES.md), [planning fact-check](../../graphify-out/PLANNING-FACT-CHECK.md). Original planning drafts are preserved with the audit output.
 
@@ -30,11 +30,11 @@ The intended product journey is:
 
 **Enquiry → Job → Quote → Acceptance → Schedule → Compliance → Completion → Invoice**
 
-Some work can follow an approved direct-to-invoice path. A future system must keep business identity, accounting ownership, data access and legal issuer identity distinct. The current application is a browser demo using synthetic data. It has no production backend, persistent database, real sign-in, or live MYOB, calendar or email integration.
+Some work can follow an approved direct-to-invoice path. A future system must keep business identity, accounting ownership, data access and legal issuer identity distinct. At the recorded G00 baseline the application was a synthetic browser demo. Current local G01 adds Firebase session handling and Worker/D1-backed settings; real-provider/browser acceptance is not established. MYOB, calendar, email and operational workflows remain simulated or deferred; no production deployment is claimed.
 
 **ACCEPTED owner direction:** Preserve the React/Vite frontend and use one CABMS Git repository, one coordinated build and one Cloudflare application deployment with a modular Worker backend. The browser communicates with that Worker through authenticated same-origin application routes; a separate API server or API domain is not required. Design within Cloudflare wherever feasible.
 
-**PROPOSED / A0 review required:** D1/database design, authentication, private document storage and retention, Australian data location, runtime/library compatibility, recovery and operating costs remain unresolved. Cloudflare selection does not approve every Cloudflare product or subscription. Any requirement that cannot be met within the selected direction must be reported for an owner decision.
+**A0 scope qualification:** The G01 choices listed in section 14 are accepted for local implementation. Session revocation/account disabling, secure bootstrap, proposed additive migrations, private storage/retention, Australian data location, recovery and operating-cost evidence retain their outstanding decision/acceptance gates. Cloudflare selection does not approve every Cloudflare product or subscription. Any requirement that cannot be met within the selected direction must be reported for an owner decision.
 
 ## 2. Evidence, scope and status
 
@@ -51,14 +51,14 @@ Some work can follow an approved direct-to-invoice path. A future system must ke
 | Rockson's 27 October 2026 documentation instruction | **ACCEPTED platform constraint:** one repository, coordinated build, Cloudflare deployment and modular Worker; same-origin secure routes and one canonical contract. Database, authentication, retention and data location still require A0 review. |
 | Local Git preflight, 27 October 2026 | **VERIFIED:** the planning branch remains based at `bbbdff6`. GitHub PR #14 was separately rechecked at `30b4c72`; no claim is made that the planning baseline contains those newer G00 changes. |
 
-The current worktree is based at `2b04f87`. Entries dated 27 October and explicitly pinned to `bbbdff6`, `c00a179` or `30b4c72` retain historical provenance; they must not override the current audit snapshot. Current remote status and owner acceptance still require their own evidence.
+The recorded G00 audit baseline is `2b04f87`; current G01 continues on the feature branch descended from that integration base. Entries dated 27 October and explicitly pinned to `bbbdff6`, `c00a179` or `30b4c72` retain historical provenance; they must not override the current audit snapshot. Current remote status and owner acceptance still require their own evidence.
 
 ### 2.2 Current status labels
 
 - **VERIFIED** means directly inspected in a named local revision or current PR/issue record.
 - **REPORTED** means stated in supplied material or a PR description but not independently demonstrated at the latest source revision.
 - **PROPOSED** means a future design suggestion awaiting review.
-- **ACCEPTED** is reserved for a decision with explicit approval evidence. The 27 October Cloudflare constraint and 28 October G01 planning handoff establish planning direction only; no complete backend A0 ADR or implementation is accepted here.
+- **ACCEPTED** is reserved for a decision with explicit approval evidence. The 27 October Cloudflare constraint and 28 October G01 planning handoff establish planning direction only; G01 implementation is owner-authorized on the existing feature branch; no final G01 acceptance, completed broader A0 ADR or deployment clearance is implied.
 - **UNKNOWN** means evidence is missing.
 - **BLOCKED** means a dependent decision or implementation cannot safely proceed until a named fact or approval is supplied.
 
@@ -461,7 +461,7 @@ Historical inspection, reconfirmed in `worktree/dev/src/services/` at `2b04f87`,
 - **Pagination:** Cursor-based pagination (`limit`, `starting_after`/`cursor`, `next_cursor`) for growing operational records vs offset/page-based pagination.
 - **Envelopes:** Direct resource payloads vs `{ data: T }` envelopes.
 
-**Formal Frontend/Backend Handoff Rule:** Frontend and backend architects must not independently choose incompatible APIs. The in-memory mock adapter (`src/services/mockAdapter.ts`) is preserved now strictly for local G00 demo and fixture evaluation. The HTTP adapter (`src/services/httpAdapter.ts`) must remain an inert stub; wiring live HTTP endpoints is strictly blocked until A0 approves the reconciled canonical contract.
+**Formal Frontend/Backend Handoff Rule:** Frontend and backend architects must not independently choose incompatible APIs. The in-memory mock adapter (`src/services/mockAdapter.ts`) is preserved now strictly for local G00 demo and fixture evaluation. Historical G00 boundary: `src/services/httpAdapter.ts` remains dormant. Authorized G01 uses `src/services/g01Client.ts` and the accepted `/api/v1` baseline; this does not authorize G02+ integration or deployment.
 
 The following are **PROPOSED design conventions and Part 2 obligations**, not a second API specification or approved operation catalogue. They inform A0-ADR-06 and must be reconciled before implementation. HTTP semantics follow [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html); Problem Details follows [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html).
 
@@ -618,7 +618,7 @@ The timing labels in §5 apply here. This is a scope assessment, not a provision
 
 ## 14. Six A0 decision areas — all PROPOSED
 
-The six complete ADRs remain **PROPOSED**. The **ACCEPTED** 27 October hosting/delivery constraint narrows A0-ADR-01 to a Cloudflare application with one coordinated build and modular Worker. It does not settle database design, identity, retention, data location or the remaining acceptance evidence.
+The table below identifies the limited **ACCEPTED G01** decisions; it does not approve every topic in six complete ADRs. The **ACCEPTED** 27 October hosting/delivery constraint narrows A0-ADR-01 to a Cloudflare application with one coordinated build and modular Worker. The later G01 acceptances are recorded in the table; retention, data location, further security-policy decisions and remaining acceptance evidence stay gated.
 
 **REPORTED by Main Overseer review:** The v0.2 ADR/roadmap crosswalk was checked at source commit `59d3b6433d56997d9bcf3bb4f87cd7171acb5e2c`. That review confirms the six A0 items are topic mappings and remain proposed; the older roadmap uses P4 for compliance work and G5 for a planning handoff. The source remains unavailable in this local environment, so it was not independently re-read here. Do not treat the mappings as accepted decisions, reproduce a second ADR register, or silently reuse the older group labels. The provider must reconcile against the authoritative register during Part 1.
 
@@ -651,15 +651,15 @@ Detailed contracts should be dependency ordered: G01 identity/workspaces, necess
 
 **Approval sequence:** Part 1 → Main Overseer review → Rockson architecture-direction approval → Part 2 → A0 architecture approval → G01 eligibility. Backend execution additionally requires explicit G00 acceptance and approval of the relevant contract, group and execution scope.
 
-## 16. Provisional G01–G08 roadmap — NOT AUTHORIZED
+## 16. G01 authorized implementation and provisional G02-G08 roadmap
 
-These are **PROPOSED architecture groupings**, not accepted sprint assignments, estimates, branch creation authority or implementation permission.
+G01 local implementation on the existing branch is authorized. G02?G08 remain proposed groupings; the table grants no new branch, infrastructure, deployment or execution permission.
 
 ### 16.1 G01 technical work within one vertical group
 
 **Accepted planning direction, 28 October handoff:** Include only the minimum frontend, Worker, contract, database, authorization and audit infrastructure needed by G01 in the same end-to-end feature group. Do not create a foundation-only, backend-only or UI-only sprint/branch. The earlier separate-foundation-track proposal is historical and superseded for the current plan; its history is retained in the changelog and preserved originals.
 
-The proposed branch remains `feat/g01-identity-workspaces`. It has not been created by this task. Package-manager policy, runtime compatibility, schema/atomicity proof, identity/membership decisions and deployment clearance remain gates. A scaffold is not completion: the accepted outcome is authentication → authorized workspace → two persisted settings resources with atomic audit → independent frontend feedback and verification (§19.5). No queues, R2, PDF renderer, extra server, load balancer, cache service or microservices are G01 defaults.
+G01 work continues on the existing `feat/g01-identity-workspaces` branch and PR #17. Earlier restrictions on creating that branch belong to dated planning history. Package-manager policy, runtime compatibility, schema/atomicity proof, identity/membership decisions and deployment clearance remain gates. A scaffold is not completion: the accepted outcome is authentication → authorized workspace → two persisted settings resources with atomic audit → independent frontend feedback and verification (§19.5). No queues, R2, PDF renderer, extra server, load balancer, cache service or microservices are G01 defaults.
 
 ### 16.2 Business groups — Detailed Roadmap Specification
 
@@ -729,7 +729,7 @@ Issue status alone proves neither an unfixed defect nor product acceptance. Rech
 | Blocker | A0 must confirm Google Workspace domain restriction and MYOB SSO requirements |
 | Quota qualification — checked 28 October | [Firebase limits](https://firebase.google.com/docs/auth/limits) assigns 3,000 daily Tier 1 active users to Firebase Authentication **with Identity Platform** on Spark; Tier 2 has different limits, and SMS requires Blaze. Confirm actual providers/MFA/billing before selecting this proposal; staff count alone is not a total-cost proof. |
 | Identity mapping — unresolved | Decide internal `user_id` versus provider-scoped `(issuer, subject)` mapping; Firebase UID as an internal primary key is a coupling choice, not an established model. Memberships remain server-owned. |
-| Reversibility — requires design | Provider migration includes login, token refresh/session/revocation, recovery and identity mappings as well as JWT verification. No identity integration exists in current code. |
+| Reversibility — requires design | Provider migration includes login, token refresh/session/revocation, recovery and identity mappings as well as JWT verification. Local Firebase/session integration exists; revocation, disabled-account enforcement and real-provider/browser acceptance remain open. |
 
 ### 19.2 Canonical API Convention (ACCEPTED BASELINE FOR G01)
 
@@ -748,7 +748,7 @@ Architecture proposes workspace-scoped routes with cursor pagination and RFC 945
 
 The 28 October handoff resolves the earlier G01/G02 conflict: G01 is real authentication → authorized workspace → persistent settings → atomic settings audit → frontend feedback and verification. Job list/create, customers, enquiries and operational dashboard persistence remain G02. The former 12–19 day estimate and external G01-A–J draft do not define this revised scope; effort and target are **TBD**, pending dependency/proof review. Use the acceptance requirements in §19.5.
 
-G00 formal acceptance remains open under issue #11; F02 remains pending and FC-06 deployment clearance remains blocked. A0, contract and explicit implementation approvals are required. A client presentation, merged G00 code and historical browser receipts do not constitute formal owner acceptance.
+G00 formal acceptance remains open under issue #11; F02 remains pending and FC-06 deployment clearance remains blocked. Continued local G01 implementation is authorized; outstanding policy/migration corrections, final acceptance and deployment keep their separate approvals. A client presentation, merged G00 code and historical browser receipts do not constitute formal owner acceptance.
 
 ### 19.4 Demo Marker Summary (VERIFIED at `30b4c72`)
 
@@ -870,7 +870,7 @@ Synthetic placeholders must carry explicit demo provenance and must never be sil
 
 Retain one coordinated Cloudflare application deployment and modular Worker. Add only the persistence/authentication infrastructure approved for this feature. **R2 is deferred from G01**: structured Worker logs and transactional settings audit do not require R2 archival. Any later log archive requires separate approval and the integration/recovery proof in section 5.1. No load balancer, secondary web server, cache service, microservices, queues or live provider integrations are added by this group. Define minimal integration status fakes only. D1 remains conditional on residency, isolation, atomicity and recovery suitability; preserve §11's data-residency and passed restore-proof gate **before any live business data, including if first introduced in G01**, with synthetic fixtures used until cleared.
 
-Dependencies: G00 formal acceptance (issue #11 pending), F02 disposition/fix, A0 identity/MFA/membership/legal-relationship/database decisions, recovered or owner-approved contract baseline, approved privacy/retention, executable atomicity proof and relevant runtime/package-manager governance. FC-06 deployment clearance remains blocked. Effort and target date are **TBD / unestimated**, not commitments. Rockson/R&C review the three-document consistency before architecture submission; implementation still requires explicit approval. No G01 branch, database, presentation acceptance or commit is created by this reconciliation.
+Dependencies: G00 formal acceptance (issue #11 pending), F02 disposition/fix, A0 identity/MFA/membership/legal-relationship/database decisions, recovered or owner-approved contract baseline, approved privacy/retention, executable atomicity proof and relevant runtime/package-manager governance. FC-06 deployment clearance remains blocked. Effort and target date are **TBD / unestimated**, not commitments. Rockson/R&C review the three-document consistency before architecture submission; continued local G01 corrections are authorized. Security-policy, migration and protected-file proposals require their applicable approvals; Git publication is owner-authorized for the reviewed checkpoint, while deployment, final acceptance and merge remain separately gated. Historical documentation reconciliation did not itself provision or accept the application.
 
 ## References
 

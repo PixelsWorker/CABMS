@@ -15,11 +15,12 @@ import {
   handleGetLegalDetails,
   handlePatchLegalDetails,
 } from './workers/routes/settings.ts';
-import { authenticateRequest } from './workers/auth.ts';
+import { authenticateRequest, AuthenticationUnavailable } from './workers/auth.ts';
 import {
   resourceNotFoundResponse,
   authenticationRequiredResponse,
   internalErrorResponse,
+  createProblemResponse,
 } from './workers/problem.ts';
 import { StructuredLogger } from './workers/logger.ts';
 
@@ -30,7 +31,8 @@ export default {
     const method = request.method;
 
     // Generate or retain correlation request ID
-    const requestId = request.headers.get('X-Request-Id') || `req_${crypto.randomUUID()}`;
+    // Correlation is server-owned; caller strings cannot inject values into logs/audit.
+    const requestId = `req_${crypto.randomUUID()}`;
     const logger = new StructuredLogger(requestId);
 
     // Handle CORS preflight in development
@@ -145,6 +147,7 @@ export default {
 
       return new Response('Not Found', { status: 404 });
     } catch (err) {
+      if (err instanceof AuthenticationUnavailable) return addCors(createProblemResponse(503, 'SERVICE_UNAVAILABLE', 'service-unavailable', 'Service Unavailable', 'Identity verification is temporarily unavailable. Retry later.', requestId));
       logger.error('WORKER_UNHANDLED_EXCEPTION', 'Unhandled exception in Worker fetch', {
         error: err instanceof Error ? err : new Error(String(err)),
       });
@@ -157,6 +160,7 @@ function addCors(resp: Response): Response {
   const headers = new Headers(resp.headers);
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Expose-Headers', 'ETag, X-Request-Id');
+  headers.set('Cache-Control', 'no-store');
   return new Response(resp.body, {
     status: resp.status,
     statusText: resp.statusText,

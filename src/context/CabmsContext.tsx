@@ -4,6 +4,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useG01Session } from './G01Session.tsx';
 import {
   AppearanceMode,
   BrandingMode,
@@ -266,9 +267,12 @@ let seqCounters = {
 };
 
 export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const session = useG01Session();
   // Navigation & Personas
-  const [persona, setPersona] = useState<Persona>('owner_admin');
-  const [activeBrandId, setActiveBrandIdState] = useState<BrandId>('solarcell');
+  const [demoPersona, setPersona] = useState<Persona>('owner_admin');
+  const persona: Persona = session ? session.profile?.memberships.find(m => m.workspace_id === session.workspaceId)?.role as Persona || 'technician' : demoPersona;
+  const [demoBrandId, setActiveBrandIdState] = useState<BrandId>('solarcell');
+  const activeBrandId = session ? session.workspaceId || 'solarcell' : demoBrandId;
 
   const handleSetActiveBrandId = (b: BrandId) => {
     setActiveBrandIdState(b);
@@ -552,6 +556,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const authoritativeDraftBusinessesRef = React.useRef<DraftBusinessProfile[]>([]);
   const authoritativePersonaRef = React.useRef<Persona>('owner_admin');
   const authoritativeSessionRef = React.useRef(true);
+  if (session) { authoritativePersonaRef.current = persona; authoritativeSessionRef.current = !!session.profile; }
   const [authoritativeJsaFormsRef] = React.useState(() => ({
     current: {
       'JOB-2026-101': { ...INITIAL_JSA_FORM },
@@ -663,14 +668,20 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     type: 'info' | 'success' | 'warning' | 'error';
   } | null>(null);
 
+  const notificationTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (notificationTimer.current) clearTimeout(notificationTimer.current); }, []);
   const showDemoNotification = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
     setDemoNotification({ message, type });
-    setTimeout(() => {
+    notificationTimer.current = setTimeout(() => {
       setDemoNotification(null);
     }, 6000);
   };
 
-  const clearDemoNotification = () => setDemoNotification(null);
+  const clearDemoNotification = () => {
+    if (notificationTimer.current) clearTimeout(notificationTimer.current);
+    setDemoNotification(null);
+  };
 
   // Reset entire demo to seed state (G00-030)
   const resetDemo = () => {
@@ -3298,11 +3309,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <CabmsContext.Provider
       value={{
         persona,
-        setPersona: handleSetPersona,
-        activeBrandId,
-        setActiveBrandId: handleSetActiveBrandId,
-        activeBrand: brands[activeBrandId] || INITIAL_BRANDS.solarcell,
-        brands,
+        setPersona: session ? () => {} : handleSetPersona,
+        activeBrandId: session ? session.workspaceId || 'solarcell' : activeBrandId,
+        setActiveBrandId: session ? session.selectWorkspace : handleSetActiveBrandId,
+        activeBrand: brands[session?.workspaceId || activeBrandId] || INITIAL_BRANDS.solarcell,
+        brands: session ? Object.fromEntries(Object.entries(brands).filter(([id]) => session.profile?.memberships.some(m => m.workspace_id === id))) : brands,
         appearance,
         setAppearance,
         brandingMode,
@@ -3310,13 +3321,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         visualPreset,
         setVisualPreset,
         technicians: INITIAL_TECHNICIANS,
-        updateBrandConfig,
-        addNewBrandProfile,
+        updateBrandConfig: session ? () => ({ success: false, message: 'Use the authenticated settings API.' }) : updateBrandConfig,
+        addNewBrandProfile: session ? () => {} : addNewBrandProfile,
         draftBusinesses,
-        createDraftBusiness,
+        createDraftBusiness: session ? () => ({ success: false, error: 'New businesses are outside G01.' }) : createDraftBusiness,
         isSimulatedSignedIn,
-        simulateSignIn,
-        simulateSignOut,
+        simulateSignIn: session ? () => {} : simulateSignIn,
+        simulateSignOut: session ? () => { void session.logout(); } : simulateSignOut,
         demoClock,
         advanceClock,
         setDemoClock: setDemoClockExplicit,

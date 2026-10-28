@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cabms",
+  "main": "backend/index.ts",
+  "compatibility_date": "2024-10-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cabms-d1",
+      "database_id": "cabms-d1-local"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "development",
+    "FIREBASE_PROJECT_ID": "cabms-panel"
+  }
+}

@@ -55,13 +55,13 @@ export const QuotesAcceptanceView: React.FC = () => {
 
   // Find selected job or default
   const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
-  const quote = currentJob.quote; // Truthful: no fallback to jobs[0].quote! (G00-006)
+  const quote = currentJob?.quote; // Truthful: no fallback to jobs[0].quote! (G00-006)
 
   // Reset simulator state when job or quote changes (G00-017)
   useEffect(() => {
     setCustomerAcceptedCheck(false);
     setAcceptanceFeedback(null);
-  }, [currentJob.id]);
+  }, [currentJob?.id]);
 
   // Persona boundary: Technician is read-only or restricted
   if (persona === 'technician') {
@@ -112,7 +112,17 @@ export const QuotesAcceptanceView: React.FC = () => {
     setIsPrepareModalOpen(false);
   };
 
-  const jobBrand = brands[currentJob.brandId] || brands.solarcell;
+  const jobBrand = currentJob ? brands[currentJob.brandId] : undefined;
+
+  if (!currentJob || !jobBrand) {
+    return (
+      <AccessDeniedView
+        resourceName="Quotations & Terms"
+        requiredRoleDescription="Authorized Workspace Member"
+        customExplanation="This work order is not associated with an authorized workspace for your account."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">

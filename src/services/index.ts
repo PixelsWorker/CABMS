@@ -19,3 +19,17 @@ export const setAdapterForTesting = (adapter: CabmsDataAdapter): void => {
 export * from './types.ts';
 export { MockDataAdapter } from './mockAdapter.ts';
 export { HttpDataAdapter } from './httpAdapter.ts';
+export * from './firebase.ts';
+export {
+  setApiFetchHandler,
+  resetApiFetchHandler,
+  setApiBase,
+  resetApiBase,
+  buildApiUrl,
+  apiGetCurrentUser,
+  apiGetWorkspaceSettings,
+  apiPatchWorkspaceSettings,
+  apiGetLegalDetails,
+  apiPatchLegalDetails,
+} from './g01Client.ts';
+export * from './useSettingsResource.ts';

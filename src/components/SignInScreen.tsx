@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { useG01Session } from '../context/G01Session.tsx';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { Persona } from '../types/cabms.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -18,7 +19,18 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 export const SignInScreen: React.FC = () => {
+  const session = useG01Session();
   const { simulateSignIn } = useCabms();
+
+  if (session) return <div className="max-w-4xl mx-auto px-4 py-12 space-y-8">
+    <div className="text-center space-y-3">
+      <h1 className="text-3xl font-extrabold text-(--cabms-text-primary)">CABMS Session Access</h1>
+      <p className="text-sm text-(--cabms-text-secondary)">Sign in with your authorized Google account. Workspace access is verified by CABMS.</p>
+      {session.loading && <p role="status">Verifying session and workspace access...</p>}
+      {session.error && <p role="alert">{session.error}</p>}
+      <button type="button" disabled={session.loading} onClick={() => void session.login()} className="px-4 py-2 bg-amber-500 text-slate-950 font-semibold rounded">Sign in with Google</button>
+    </div>
+  </div>;
 
   const personas: {
     role: Persona;

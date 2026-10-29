@@ -29,7 +29,6 @@ export const SignInScreen: React.FC = () => {
       {session.loading && <p role="status">Verifying session and workspace access...</p>}
       {session.error && <p role="alert">{session.error}</p>}
       <button type="button" disabled={session.loading} onClick={() => void session.login()} className="px-4 py-2 bg-amber-500 text-slate-950 font-semibold rounded">Sign in with Google</button>
-      <button type="button" onClick={() => void session.logout()} className="px-4 py-2 cabms-surface-subtle rounded">Sign out</button>
     </div>
   </div>;
 

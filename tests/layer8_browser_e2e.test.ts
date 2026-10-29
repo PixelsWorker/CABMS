@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-test('LAYER 8: Browser End-to-End — Production build bundle integrity and entry point inspection', () => {
+test('LAYER 8: Build inspection - Production build bundle integrity and entry point inspection', () => {
   // Check dist output
   assert.ok(fs.existsSync('./dist/index.html'), 'Production build dist/index.html exists');
   const indexHtml = fs.readFileSync('./dist/index.html', 'utf-8');
@@ -18,7 +18,7 @@ test('LAYER 8: Browser End-to-End — Production build bundle integrity and entr
   assert.ok(cssBundle, `Found production CSS bundle: ${cssBundle}`);
 });
 
-test('LAYER 8: Browser End-to-End — Network isolation audit (No live external API calls)', () => {
+test('LAYER 8: Browser checks — Network isolation audit (No live external API calls)', () => {
   // Recursively inspect all src/ files for live external endpoint calls
   const findFiles = (dir: string): string[] => {
     let files: string[] = [];
@@ -77,12 +77,12 @@ test('LAYER 8: FC-06 — Production assetsignore and planning assets exclusion a
   }
 });
 
-test('LAYER 8: Browser End-to-End — Real Browser user journey (Google Sign-In, Session, Workspaces, Settings)', async (t) => {
+test('LAYER 8: Browser checks — Browser smoke test (Google sign-in button visibility)', async (t) => {
   const isE2EEnabled = process.env.CABMS_RUN_BROWSER_E2E === 'true' || process.env.CABMS_RUN_BROWSER_E2E === '1';
 
   if (!isE2EEnabled) {
     t.skip(
-      'UNAVAILABLE / NOT RUN: Real browser E2E execution requires provisioned browser binaries (Playwright/Chromium) and CABMS_RUN_BROWSER_E2E=true. Structural DOM inspection, bundle integrity, and network isolation audits executed and verified.'
+      'UNAVAILABLE / NOT RUN: Browser smoke execution requires provisioned browser binaries (Playwright/Chromium) and CABMS_RUN_BROWSER_E2E=true. Structural DOM inspection, bundle integrity, and network isolation audits executed and verified.'
     );
     return;
   }
@@ -95,7 +95,7 @@ test('LAYER 8: Browser End-to-End — Real Browser user journey (Google Sign-In,
     chromium = pw.chromium;
   } catch {
     t.skip(
-      'UNAVAILABLE / NOT RUN: playwright package is not installed. To execute real browser E2E, install playwright and run `npx playwright install chromium`.'
+      'UNAVAILABLE / NOT RUN: playwright package is not installed. To execute the browser smoke test, install playwright and run `npx playwright install chromium`.'
     );
     return;
   }
@@ -110,7 +110,7 @@ test('LAYER 8: Browser End-to-End — Real Browser user journey (Google Sign-In,
     // 1. Navigate to CABMS application
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
 
-    // 2. Real Google Sign-In interaction flow
+    // Check only the sign-in button; authentication is not exercised.
     const signInButton = page.locator('button:has-text("Sign in with Google")');
     await signInButton.waitFor({ state: 'visible', timeout: 15_000 });
     assert.ok(await signInButton.isVisible(), 'Sign in with Google button must be visible');

@@ -41,7 +41,7 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
     const allowed = new Set(session?.profile?.memberships.map(m => `${session.profile!.user.id}:${m.workspace_id}`) || []);
     for (const cached of Object.keys(entries.current)) if (!allowed.has(cached)) delete entries.current[cached];
   }, [session?.profile]);
-  const handleFailure = (target: string, response: ApiResponse<Row>) => {
+  const handleFailure = (target: string, response: ApiResponse<Row>, operation: 'load' | 'save') => {
     const status = response.status;
     const message = status === 412 ? 'Settings changed on the server. Review the latest version before saving your retained edits.'
       : status === 428 ? 'A current version is required. Review the latest values before retrying.'
@@ -49,6 +49,7 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
       : status === 403 ? 'You no longer have permission to access these settings.'
       : status === 404 ? 'These settings are not available for this workspace.'
       : status === 422 ? 'Correct the highlighted validation errors before saving.'
+      : operation === 'load' ? 'Unable to load settings. Check your connection and retry.'
       : 'The save outcome could not be confirmed. Review the latest server values before retrying.';
     const details = status === 422 ? (response.problem?.errors || []).map(e => `${e.pointer}: ${e.message}`).join(' ') : '';
     const reqRef = response.problem?.request_id ? `(Ref: ${response.problem.request_id})` : '';
@@ -69,7 +70,7 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
       if (response.ok && response.data && response.etag && response.data.workspace_id === workspace && Number.isSafeInteger(response.data.version) && response.etag === `"${response.data.version}"`) {
         update(target, { row: response.data, etag: response.etag, reviewRequired: false,
           message: review ? 'Latest server version loaded. Compare it with your retained edits, then save deliberately.' : '' });
-      } else handleFailure(target, response);
+      } else handleFailure(target, response, 'load');
     } catch {
       if (!alive.current || loadGenerations.current[target] !== gen) return;
       update(target, { error: true, message: 'Unable to load settings. Check your connection and retry.', reviewRequired: true });
@@ -104,7 +105,7 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
         const remainingDraft = Object.fromEntries(Object.entries(entries.current[target]?.draft || {}).filter(([field, value]) => entry.draft[field as keyof Patch] !== value));
         update(target, { row: response.data, etag: response.etag, draft: unchangedDraft ? {} : remainingDraft,
           message: unchangedDraft ? 'Settings saved to the database.' : 'Submitted changes saved. Newer edits remain unsaved.', reviewRequired: false });
-      } else handleFailure(target, response);
+      } else handleFailure(target, response, 'save');
     } catch {
       if (!alive.current || saveGenerations.current[target] !== gen) return;
       update(target, { error: true, reviewRequired: true, message: 'Save outcome uncertain. Your edits are retained. Review the latest server values before retrying.' });

@@ -130,6 +130,11 @@ test('G01 sign-in view exposes Google login and safe loading/error feedback, not
   assert.match(html, /Sign in with Google/);
   assert.match(html, /Access verification failed/);
   assert.doesNotMatch(html, /Sign In as/);
+  assert.doesNotMatch(html, /Sign out/);
+  const loadingHtml = renderToString(React.createElement(SessionContext.Provider, { value: { ...session, loading: true, error: '' } }, React.createElement(CabmsProvider, null, React.createElement(SignInScreen))));
+  assert.match(loadingHtml, /Verifying session and workspace access/);
+  assert.match(loadingHtml, /<button[^>]*disabled/);
+  assert.doesNotMatch(loadingHtml, /Sign out/);
 });
 
 test('G01 conflict feedback allowlists edited fields and masks legal identifiers', () => {

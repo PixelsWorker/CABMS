@@ -85,6 +85,8 @@ interface CabmsContextType {
   setActiveBrandId: (b: BrandId) => void;
   activeBrand: BrandConfig;
   brands: Record<string, BrandConfig>;
+  getRoleForWorkspace: (workspaceId: string) => Persona | null;
+  isJobAuthorized: (jobId: string) => boolean;
   appearance: AppearanceMode;
   setAppearance: (mode: AppearanceMode) => void;
   brandingMode: BrandingMode;
@@ -606,6 +608,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return !!(target && authorizedWorkspaceSet.has(target.brandId));
   };
 
+  const getRoleForWorkspace = (workspaceId: string): Persona | null => {
+    if (!session) return authoritativePersonaRef.current || persona;
+    if (!session.profile?.memberships) return null;
+    const m = session.profile.memberships.find(mem => mem.workspace_id === workspaceId);
+    return (m?.role as Persona) || null;
+  };
+
   const getTca2AuditRecord = (jobId: string): Tca2AuditRecord | undefined => {
     if (!isJobAuthorized(jobId)) return undefined;
     return tca2AuditRecords[jobId];
@@ -639,16 +648,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }));
   const authoritativeCertificateDeliveriesRef = React.useRef<CertificateDeliveryRecord[]>([]);
 
-  const getRoleForWorkspace = (workspaceId: string): Persona => {
-    if (!session) return authoritativePersonaRef.current || persona;
-    if (!session.profile?.memberships) return 'technician';
-    const m = session.profile.memberships.find(mem => mem.workspace_id === workspaceId);
-    return (m?.role as Persona) || 'technician';
-  };
-
   const canManageReviewsForWorkspace = (workspaceId: string): boolean => {
     if (!authoritativeSessionRef.current) return false;
     const role = getRoleForWorkspace(workspaceId);
+    if (!role) return false;
     return (['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(role);
   };
 
@@ -1302,6 +1305,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
+    const effectiveRole = getRoleForWorkspace(targetJob.brandId) || persona;
+
     commitJobsState(current => current.map(j =>
       j.id === jobId
         ? {
@@ -1309,7 +1314,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             status: newStatus,
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: serializeBusinessInstant(demoClock), action: `Operational status updated to ${newStatus}`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Operational status updated to ${newStatus}`, actor: effectiveRole },
             ],
           }
         : j
@@ -1340,6 +1345,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const auditRecord = authoritativeAuditRecordsRef.current[jobId] || tca2AuditRecords[jobId];
     const validation = validateJobCompletion(job, forms, auditRecord);
 
+    const effectiveRole = getRoleForWorkspace(job.brandId) || persona;
+
     if (validation.canComplete) {
       commitJobsState(current => current.map(j =>
         j.id === jobId
@@ -1350,7 +1357,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               completionNotes: 'All applicable synthetic demo completion requirements satisfied.',
               activityHistory: [
                 ...j.activityHistory,
-                { timestamp: serializeBusinessInstant(demoClock), action: 'Job marked COMPLETED (requirements validated)', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Job marked COMPLETED (requirements validated)', actor: effectiveRole },
               ],
             }
           : j
@@ -1372,8 +1379,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     // FC-10: Read authoritative synchronous state to guard against same-render race conditions
-    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!targetJob) return;
+    const effectiveRole = getRoleForWorkspace(targetJob.brandId) || persona;
 
     // FC-10: Reject rescheduling on terminal jobs (COMPLETED or CANCELLED)
     if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
@@ -1421,7 +1429,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             reminders: [...updatedReminders, newReminder],
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: serializeBusinessInstant(demoClock), action: `Appointment rescheduled to ${newDate} ${newTime}`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Appointment rescheduled to ${newDate} ${newTime}`, actor: effectiveRole },
             ],
           };
         }
@@ -1440,8 +1448,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     // FC-10: Guard appointment cancellation against terminal jobs using authoritative synchronous state
-    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!targetJob) return;
+    const effectiveRole = getRoleForWorkspace(targetJob.brandId) || persona;
 
     if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
       showDemoNotification(
@@ -1471,7 +1480,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             reminders: updatedReminders,
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: serializeBusinessInstant(demoClock), action: `Visit cancelled (${reason}). Appointment status marked CANCELLED. Job remains active for rescheduling.`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Visit cancelled (${reason}). Appointment status marked CANCELLED. Job remains active for rescheduling.`, actor: effectiveRole },
             ],
           };
         }
@@ -1486,11 +1495,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
       return;
     }
-    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!targetJob) {
       showDemoNotification(`Cannot cancel job: Job ${jobId} was not found.`, 'error');
       return;
     }
+    const effectiveRole = getRoleForWorkspace(targetJob.brandId) || persona;
+
     if (targetJob.status === 'COMPLETED' || targetJob.status === 'CANCELLED') {
       showDemoNotification(`Cannot cancel a ${targetJob.status.toLowerCase()} job.`, 'error');
       return;
@@ -1510,7 +1521,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             reminders: updatedReminders,
             activityHistory: [
               ...j.activityHistory,
-              { timestamp: serializeBusinessInstant(demoClock), action: `Job CANCELLED: ${reason}`, actor: persona },
+              { timestamp: serializeBusinessInstant(demoClock), action: `Job CANCELLED: ${reason}`, actor: effectiveRole },
             ],
           };
         }
@@ -1525,11 +1536,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
       return;
     }
-    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!targetJob) {
       showDemoNotification(`Cannot reopen job: Job ${jobId} was not found.`, 'error');
       return;
     }
+    const effectiveRole = getRoleForWorkspace(targetJob.brandId) || persona;
+
     if (targetJob.status !== 'CANCELLED') {
       showDemoNotification(`Cannot reopen a job in ${targetJob.status} state.`, 'error');
       return;
@@ -1552,7 +1565,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 action: hasCompleteAppointment
                   ? 'Job reopened from cancelled state and returned to active schedule'
                   : 'Job reopened from cancelled state as unscheduled new work order',
-                actor: persona,
+                actor: effectiveRole,
               },
             ],
           };
@@ -2148,10 +2161,18 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
 
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    const targetBrandId = job?.brandId || activeBrandId;
+    const effectiveRole = getRoleForWorkspace(targetBrandId);
+    if (!effectiveRole) {
+      showDemoNotification('Action denied: No membership or profile in the owning workspace.', 'error');
+      return;
+    }
+
     const cert = authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId];
     const result = processCustomerAckTca2({
       jobId,
-      actorPersona: persona,
+      actorPersona: effectiveRole,
       tca2Cert: cert,
       existingAudit,
       demoClock: serializeBusinessInstant(demoClock),
@@ -2178,6 +2199,23 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
       return;
     }
+    const currentJobs = authoritativeJobsRef.current;
+    const currentAudits = authoritativeAuditRecordsRef.current;
+    const sourceJob = currentJobs.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!sourceJob) return;
+
+    const targetBrandId = sourceJob.brandId || activeBrandId;
+    const effectiveRole = getRoleForWorkspace(targetBrandId);
+    if (!effectiveRole) {
+      showDemoNotification('Action denied: No membership or profile in the owning workspace.', 'error');
+      return;
+    }
+    const access = verifyPersonaAccess(effectiveRole, 'office_compliance_review');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+
     // Synchronous mutex guard: reject duplicate calls before state commits or within same tick
     if (inFlightTca2ReviewsRef.current.has(jobId)) {
       showDemoNotification(`TCA2 Office Review is already processing for Job ${jobId}. Duplicate follow-up generation prevented.`, 'warning');
@@ -2198,15 +2236,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     inFlightTca2ReviewsRef.current.add(jobId);
 
     try {
-      const currentJobs = authoritativeJobsRef.current;
-      const currentAudits = authoritativeAuditRecordsRef.current;
-      const sourceJob = currentJobs.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
       const cert = authoritativeTca2CertsRef.current[jobId] || tca2Certs[jobId];
       const existingAudit = currentAudits[jobId] || tca2AuditRecords[jobId];
 
       const result = processOfficeReviewTca2({
         jobId,
-        actorPersona: persona,
+        actorPersona: effectiveRole,
         sourceJob,
         tca2Cert: cert,
         existingAudit,
@@ -2444,16 +2479,22 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
       throw new Error('Work order does not belong to an authorized workspace');
     }
-    const access = verifyPersonaAccess(persona, 'financial_writes');
-    if (!access.allowed) {
-      showDemoNotification(`DENIED: ${access.reason}`, 'error');
-      throw new Error(access.reason);
-    }
     const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job) {
       const message = 'Cannot prepare quote: work order not found.';
       showDemoNotification(message, 'error');
       throw new Error(message);
+    }
+    const targetBrandId = job.brandId || activeBrandId;
+    const effectiveRole = getRoleForWorkspace(targetBrandId);
+    if (!effectiveRole) {
+      showDemoNotification('Action denied: No membership or profile in the owning workspace.', 'error');
+      throw new Error('No membership or profile in the owning workspace');
+    }
+    const access = verifyPersonaAccess(effectiveRole, 'financial_writes');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      throw new Error(access.reason);
     }
 
     // Clear subtotal (ex-GST) + GST (10%) = Total (inc-GST) convention
@@ -2461,7 +2502,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const gst = Math.round(subtotal * 0.1 * 100) / 100;
     const total = Math.round((subtotal + gst) * 100) / 100;
 
-    const brand = brands[job.brandId || activeBrandId];
+    const brand = brands[targetBrandId];
     const termsTpl = templates.find(t => t.type === 'TERMS') || templates[0];
     let issuedAt: string;
     let expiresAt: string;
@@ -2508,7 +2549,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id: quoteId,
       jobId,
       customerId: job.customerId || customers[0].id,
-      brandId: job.brandId || activeBrandId,
+      brandId: targetBrandId,
       externalMyobRef: `MYOB-Q-${88200 + seqCounters.quote}`,
       title,
       subtotal,
@@ -2527,7 +2568,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         {
           timestamp: issuedAt,
           action: `Quote generated & synced to MYOB Business (#MYOB-Q-${88200 + seqCounters.quote})`,
-          actor: persona,
+          actor: effectiveRole,
         },
         {
           timestamp: issuedAt,
@@ -2621,14 +2662,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
       return { success: false, message: 'Work order does not belong to an authorized workspace' };
     }
-    const access = verifyPersonaAccess(authoritativePersonaRef.current, 'financial_writes');
+    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!job) {
+      showDemoNotification('Cannot revoke quote: work order not found.', 'error');
+      return { success: false, message: 'Work order not found.' };
+    }
+    const targetBrandId = job.brandId || activeBrandId;
+    const effectiveRole = getRoleForWorkspace(targetBrandId);
+    if (!effectiveRole) {
+      showDemoNotification('Action denied: No membership or profile in the owning workspace.', 'error');
+      return { success: false, message: 'No membership or profile in the owning workspace' };
+    }
+    const access = verifyPersonaAccess(effectiveRole, 'financial_writes');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return { success: false, message: access.reason || 'Unauthorized' };
     }
-    const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
-    if (!job || !job.quote) {
-      showDemoNotification('Cannot revoke quote: work order or quote not found.', 'error');
+    if (!job.quote) {
+      showDemoNotification('Cannot revoke quote: quote not found.', 'error');
       return { success: false, message: 'Quote not found.' };
     }
     if (job.quote.acceptanceStatus !== 'SENT' && job.quote.acceptanceStatus !== 'DRAFT') {
@@ -2657,12 +2708,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               followUps: updatedFollowUps,
               acceptanceHistory: [
                 ...j.quote.acceptanceHistory,
-                { timestamp, action: `Quotation revoked: ${reason}`, actor: persona },
+                { timestamp, action: `Quotation revoked: ${reason}`, actor: effectiveRole },
               ],
             },
             activityHistory: [
               ...j.activityHistory,
-              { timestamp, action: `Quote ${j.quote.externalMyobRef} revoked (${reason})`, actor: persona },
+              { timestamp, action: `Quote ${j.quote.externalMyobRef} revoked (${reason})`, actor: effectiveRole },
             ],
           };
         }
@@ -2730,7 +2781,18 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
       return;
     }
-    const access = verifyPersonaAccess(persona, 'financial_writes');
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
+    if (!targetJob) {
+      showDemoNotification('Cannot prepare invoice: work order not found.', 'error');
+      return;
+    }
+    const targetBrandId = targetJob.brandId || activeBrandId;
+    const effectiveRole = getRoleForWorkspace(targetBrandId);
+    if (!effectiveRole) {
+      showDemoNotification('Action denied: No membership or profile in the owning workspace.', 'error');
+      return;
+    }
+    const access = verifyPersonaAccess(effectiveRole, 'financial_writes');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
@@ -2781,7 +2843,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   action: isOffline
                     ? `Invoice ${invoiceId} held in local draft (MYOB offline, reconciliation required)`
                     : `MYOB Invoice ${myobRef} prepared for $${amount}`,
-                  actor: persona,
+                  actor: effectiveRole,
                 },
               ],
             }
@@ -2802,8 +2864,19 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     // FC-18: Read authoritative synchronous state to guard against same-render race conditions
-    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
+    const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!targetJob || !targetJob.invoice) return;
+    const targetBrandId = targetJob.brandId || activeBrandId;
+    const effectiveRole = getRoleForWorkspace(targetBrandId);
+    if (!effectiveRole) {
+      showDemoNotification('Action denied: No membership or profile in the owning workspace.', 'error');
+      return;
+    }
+    const access = verifyPersonaAccess(effectiveRole, 'financial_writes');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
 
     if (outcome === 'SUCCESS') {
       // FC-18: Stable MYOB external reference algorithm
@@ -2851,7 +2924,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               },
               activityHistory: [
                 ...j.activityHistory,
-                { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice synced to MYOB following manual reconciliation', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice synced to MYOB following manual reconciliation', actor: effectiveRole },
               ],
             };
           }
@@ -2875,7 +2948,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               },
               activityHistory: [
                 ...j.activityHistory,
-                { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice reconciliation failed — marked for office review', actor: persona },
+                { timestamp: serializeBusinessInstant(demoClock), action: 'Invoice reconciliation failed — marked for office review', actor: effectiveRole },
               ],
             };
           }
@@ -2975,7 +3048,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ? forcedOutcome === 'FAIL' ? 'FAILED' : forcedOutcome
       : queuedOutcome || (activeScenario === 'myob_uncertain' ? 'UNCERTAIN' : 'SENT');
     const timestamp = serializeBusinessInstant(demoClock);
-    const resolvedJob = resolveReviewJob(targetJob, outcome, timestamp, brand.name, authoritativePersonaRef.current);
+    const resolvedJob = resolveReviewJob(targetJob, outcome, timestamp, brand.name, getRoleForWorkspace(targetJob.brandId) || authoritativePersonaRef.current);
     if (outcome === 'UNCERTAIN') {
       showDemoNotification('Review request dispatch uncertain (504 gateway timeout). Manual reconciliation required.', 'warning');
     } else if (outcome === 'FAILED') {
@@ -3231,7 +3304,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     const roleInWorkspace = getRoleForWorkspace(job.brandId);
-    if (!(['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(roleInWorkspace)) {
+    if (!roleInWorkspace || !(['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(roleInWorkspace)) {
       showDemoNotification('ACCESS DENIED: Technicians are not authorized to dispatch compliance certificates.', 'error');
       return { success: false, message: 'Unauthorized persona' };
     }
@@ -3344,7 +3417,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return;
     }
     const roleInWorkspace = getRoleForWorkspace(job.brandId);
-    if (!(['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(roleInWorkspace)) {
+    if (!roleInWorkspace || !(['super_admin', 'owner_admin', 'office_staff'] as Persona[]).includes(roleInWorkspace)) {
       showDemoNotification('ACCESS DENIED: Technicians are not authorized to retry certificate delivery.', 'error');
       return;
     }
@@ -3636,6 +3709,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setActiveBrandId: session ? session.selectWorkspace : handleSetActiveBrandId,
         activeBrand,
         brands: authorizedBrands,
+        getRoleForWorkspace,
+        isJobAuthorized,
         appearance,
         setAppearance,
         brandingMode,

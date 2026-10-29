@@ -1033,31 +1033,31 @@ test('G01 CabmsContext: isJobAuthorized rejects mutating financial actions on fo
 
     await act(async () => { root.render(React.createElement(Harness)); });
 
-    // JOB-2026-001 is a Solarcell job.
+    // JOB-2026-101 is a seeded Solarcell job (foreign to this CCTV-only session).
     // 1. prepareQuoteForJob throws error
     assert.throws(
-      () => context.prepareQuoteForJob('JOB-2026-001', 'Test Quote', []),
+      () => context.prepareQuoteForJob('JOB-2026-101', 'Test Quote', []),
       /Work order does not belong to an authorized workspace/
     );
 
     // 2. simulateQuoteAcceptance returns failure
-    const simRes = context.simulateQuoteAcceptance('JOB-2026-001', 'valid');
+    const simRes = context.simulateQuoteAcceptance('JOB-2026-101', 'valid');
     assert.equal(simRes.success, false);
     assert.match(simRes.message, /authorized workspace/);
 
     // 3. revokeQuote returns failure
-    const revokeRes = context.revokeQuote('JOB-2026-001');
+    const revokeRes = context.revokeQuote('JOB-2026-101');
     assert.equal(revokeRes.success, false);
     assert.match(revokeRes.message, /authorized workspace/);
 
-    // 4. prepareInvoiceForJob rejects without mutating
-    const initialJobs = context.jobs;
-    context.prepareInvoiceForJob('JOB-2026-001', 500);
-    assert.equal(context.jobs, initialJobs);
+    // 4. prepareInvoiceForJob rejects without mutating authoritative state
+    const initialJobs = context.getAuthoritativeState().jobs;
+    context.prepareInvoiceForJob('JOB-2026-101', 500);
+    assert.deepEqual(context.getAuthoritativeState().jobs, initialJobs);
 
-    // 5. reconcileInvoiceSync rejects without mutating
-    context.reconcileInvoiceSync('JOB-2026-001', 'SUCCESS');
-    assert.equal(context.jobs, initialJobs);
+    // 5. reconcileInvoiceSync rejects without mutating authoritative state
+    context.reconcileInvoiceSync('JOB-2026-101', 'SUCCESS');
+    assert.deepEqual(context.getAuthoritativeState().jobs, initialJobs);
 
     await act(async () => root.unmount());
   } finally {
@@ -1129,6 +1129,207 @@ test('G01 CabmsContext: customer directory is scoped to active workspace permiss
     assert.equal(context.persona, 'technician');
     // Technician persona in active workspace has NO customer directory access
     assert.equal(context.customers.length, 0, 'Customer directory is empty for technician persona');
+
+    await act(async () => root.unmount());
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+
+test('G01 CabmsContext: financial writes enforce job-owning workspace roles rather than active persona', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) {
+    Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  }
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let context!: ReturnType<typeof useCabms>;
+    function Capture() { context = useCabms(); return null; }
+
+    // User is Owner Admin in Solarcell, but Technician in CCTV
+    const session: Session = {
+      profile: {
+        user: { id: 'usr_owner_solar_tech_cctv', email: 'split@example.invalid', display_name: 'Split Role' },
+        memberships: [
+          { workspace_id: 'solarcell', name: 'Solarcell', role: 'owner_admin' },
+          { workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' },
+        ],
+      },
+      workspaceId: 'solarcell',
+      selectWorkspace: () => {},
+      token: async () => 'test_token',
+      login: async () => {},
+      logout: async () => {},
+      invalidate: () => {},
+      loading: false,
+      error: '',
+    };
+
+    function Harness() {
+      return React.createElement(SessionContext.Provider, { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(Capture))
+      );
+    }
+
+    await act(async () => { root.render(React.createElement(Harness)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    // 1. Verify roles in respective workspaces
+    assert.equal(context.persona, 'owner_admin');
+    assert.equal(context.getRoleForWorkspace('solarcell'), 'owner_admin');
+    assert.equal(context.getRoleForWorkspace('cctv'), 'technician');
+    assert.equal(context.getRoleForWorkspace('smart_home'), null);
+
+    // 2. Negative test: Attempt financial writes on CCTV job JOB-2026-104
+    // Even though active persona is owner_admin, CCTV role is technician (financial_writes denied)
+    const initialJobs = context.getAuthoritativeState().jobs;
+    const initialCctvJob = initialJobs.find(j => j.id === 'JOB-2026-104');
+    assert.ok(initialCctvJob, 'JOB-2026-104 exists in authoritative jobs');
+
+    // a) prepareQuoteForJob on CCTV job throws denial error
+    assert.throws(
+      () => context.prepareQuoteForJob('JOB-2026-104', 'CCTV Security Quote', [
+        { id: 'item-1', description: 'Camera', quantity: 2, unitPrice: 200, total: 400 },
+      ]),
+      /Technician role cannot access technical settings, master templates, financial writes/
+    );
+
+    // b) revokeQuote on CCTV job returns denial result
+    const cctvRevokeRes = context.revokeQuote('JOB-2026-104');
+    assert.equal(cctvRevokeRes.success, false);
+    assert.match(cctvRevokeRes.message, /Technician role cannot access/);
+
+    // c) prepareInvoiceForJob on CCTV job rejects without mutating state
+    context.prepareInvoiceForJob('JOB-2026-104', 1200);
+    const jobsAfterInvoiceAttempt = context.getAuthoritativeState().jobs;
+    const cctvJobAfterInvoice = jobsAfterInvoiceAttempt.find(j => j.id === 'JOB-2026-104')!;
+    assert.deepEqual(cctvJobAfterInvoice.invoice, initialCctvJob.invoice, 'Invoice was not overwritten on unauthorized CCTV job');
+
+    // d) reconcileInvoiceSync on CCTV job rejects without mutating state
+    context.reconcileInvoiceSync('JOB-2026-104', 'SUCCESS');
+    const jobsAfterReconcileAttempt = context.getAuthoritativeState().jobs;
+    const cctvJobAfterReconcile = jobsAfterReconcileAttempt.find(j => j.id === 'JOB-2026-104')!;
+    assert.deepEqual(cctvJobAfterReconcile.invoice, initialCctvJob.invoice, 'Invoice sync state remained unchanged');
+    assert.deepEqual(context.getAuthoritativeState().jobs, initialJobs, 'Authoritative jobs remained completely unmutated');
+
+    // e) customerAckTca2 on CCTV job with Solarcell active:
+    // User is owner_admin in Solarcell, but technician in CCTV. Field technician cannot self-acknowledge defect notice.
+    const initialTca2Audit = context.getAuthoritativeState().tca2AuditRecords['JOB-2026-104'];
+    assert.equal(initialTca2Audit?.customerAcknowledged, false);
+    context.customerAckTca2('JOB-2026-104');
+    const auditAfterAckAttempt = context.getAuthoritativeState().tca2AuditRecords['JOB-2026-104'];
+    assert.equal(auditAfterAckAttempt?.customerAcknowledged, false, 'Technician role in CCTV blocks customerAckTca2 even with owner_admin active in Solarcell');
+
+    // f) Operational updateJobStatus on CCTV job records the user's role in CCTV (technician), not active Solarcell role (owner_admin)
+    context.updateJobStatus('JOB-2026-104', 'IN_PROGRESS');
+    const cctvJobAfterStatus = context.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-104')!;
+    assert.equal(cctvJobAfterStatus.status, 'IN_PROGRESS');
+    const latestEvent = cctvJobAfterStatus.activityHistory[cctvJobAfterStatus.activityHistory.length - 1];
+    assert.equal(latestEvent.actor, 'technician', 'Activity history records role in job owning workspace (technician), not active workspace (owner_admin)');
+
+    // g) Nonmember check: Attempt financial write on Smart Home job JOB-2026-102 (user is non-member)
+    assert.throws(
+      () => context.prepareQuoteForJob('JOB-2026-102', 'Smart Home Quote', [
+        { id: 'item-sh', description: 'Automation Hub', quantity: 1, unitPrice: 500, total: 500 },
+      ]),
+      /Work order does not belong to an authorized workspace/
+    );
+
+    // 3. Positive test: Attempt financial writes on Solarcell job JOB-2026-101
+    // Solarcell role is owner_admin (financial_writes allowed)
+    let newQuote!: any;
+    await act(async () => {
+      newQuote = context.prepareQuoteForJob('JOB-2026-101', 'Solar Maintenance Quote', [
+        { id: 'item-solar', description: 'Inverter check', quantity: 1, unitPrice: 300, total: 300 },
+      ]);
+    });
+    assert.ok(newQuote, 'Quote prepared successfully on authorized Solarcell job');
+    assert.equal(newQuote.acceptanceStatus, 'SENT');
+    assert.equal(newQuote.brandId, 'solarcell');
+    assert.equal(newQuote.acceptanceHistory[0].actor, 'owner_admin');
+
+    // e) revokeQuote on Solarcell job succeeds with owner_admin role
+    let revokeRes!: any;
+    await act(async () => {
+      revokeRes = context.revokeQuote('JOB-2026-101', 'Pricing update');
+    });
+    assert.equal(revokeRes.success, true);
+    assert.match(revokeRes.message, /successfully revoked/);
+
+    // 4. Positive test: Customer online portal acceptance semantics preserved
+    // Customer acceptance represents the end customer action (actor: siteContact), not an administrative mutation
+    await act(async () => {
+      context.prepareQuoteForJob('JOB-2026-101', 'Solar Quote 2', [
+        { id: 'item-2', description: 'Solar Panels', quantity: 4, unitPrice: 250, total: 1000 },
+      ]);
+    });
+    const acceptRes = context.simulateQuoteAcceptance('JOB-2026-101', 'valid');
+    assert.equal(acceptRes.success, true);
+    const solarJobAfterAccept = context.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!;
+    assert.equal(solarJobAfterAccept.quote?.acceptanceStatus, 'ACCEPTED');
+    assert.equal(solarJobAfterAccept.quote?.acceptedByName, solarJobAfterAccept.siteContact);
+
+    await act(async () => root.unmount());
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+test('G01 CabmsContext: missing session profile denies all workspace-scoped operations', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) {
+    Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  }
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let context!: ReturnType<typeof useCabms>;
+    function Capture() { context = useCabms(); return null; }
+
+    // Session has no profile (loading, unauthenticated or un-enrolled state)
+    const session: Session = {
+      profile: null,
+      workspaceId: 'solarcell',
+      selectWorkspace: () => {},
+      token: async () => 'test_token',
+      login: async () => {},
+      logout: async () => {},
+      invalidate: () => {},
+      loading: false,
+      error: '',
+    };
+
+    function Harness() {
+      return React.createElement(SessionContext.Provider, { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(Capture))
+      );
+    }
+
+    await act(async () => { root.render(React.createElement(Harness)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    assert.equal(context.getRoleForWorkspace('solarcell'), null);
+    assert.equal(context.getRoleForWorkspace('cctv'), null);
+
+    // Attempt prepareQuoteForJob with missing profile throws
+    assert.throws(
+      () => context.prepareQuoteForJob('JOB-2026-101', 'Test Quote', []),
+      /Work order does not belong to an authorized workspace/
+    );
 
     await act(async () => root.unmount());
   } finally {

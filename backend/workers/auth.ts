@@ -244,7 +244,8 @@ export async function decodeAndValidateToken(
 export async function checkFirebaseAccountStatus(
   token: string,
   authTime: number,
-  apiKey: string
+  apiKey: string,
+  expectedUid?: string
 ): Promise<{ valid: boolean; reason?: 'TOKEN_REVOKED' | 'ACCOUNT_DISABLED' }> {
   try {
     const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
@@ -274,17 +275,26 @@ export async function checkFirebaseAccountStatus(
       }
       return { valid: false, reason: 'TOKEN_REVOKED' };
     }
-    const data = (await res.json()) as { users?: Array<{ disabled?: boolean; validSince?: string }> };
+    const data = (await res.json()) as { users?: Array<{ localId?: string; disabled?: boolean; validSince?: string }> };
     const user = data.users?.[0];
-    if (!user) {
+    if (!user || typeof user !== 'object') {
+      return { valid: false, reason: 'TOKEN_REVOKED' };
+    }
+    if (expectedUid && (!user.localId || user.localId !== expectedUid)) {
       return { valid: false, reason: 'TOKEN_REVOKED' };
     }
     if (user.disabled === true) {
       return { valid: false, reason: 'ACCOUNT_DISABLED' };
     }
-    if (user.validSince) {
+    if (user.validSince !== undefined) {
+      if (typeof user.validSince !== 'string' || !/^\d+$/.test(user.validSince)) {
+        throw new AuthenticationUnavailable('Malformed validSince timestamp from identity provider');
+      }
       const validSinceSec = parseInt(user.validSince, 10);
-      if (Number.isSafeInteger(validSinceSec) && authTime < validSinceSec) {
+      if (!Number.isSafeInteger(validSinceSec) || validSinceSec <= 0) {
+        throw new AuthenticationUnavailable('Invalid validSince timestamp from identity provider');
+      }
+      if (authTime < validSinceSec) {
         return { valid: false, reason: 'TOKEN_REVOKED' };
       }
     }
@@ -317,7 +327,7 @@ export async function authenticateRequest(
 
   // 0. Live provider account revocation & disabled check if API key configured (fail closed)
   if (env?.FIREBASE_API_KEY) {
-    const status = await checkFirebaseAccountStatus(token, decoded.authTime, env.FIREBASE_API_KEY);
+    const status = await checkFirebaseAccountStatus(token, decoded.authTime, env.FIREBASE_API_KEY, decoded.uid);
     if (!status.valid) {
       return null;
     }

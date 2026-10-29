@@ -22,6 +22,9 @@ WHERE NOT EXISTS (
   JOIN workspace_memberships wm ON m.user_id = wm.user_id
   WHERE wm.role = 'super_admin' AND m.provider_subject_id NOT LIKE 'firebase_uid_synthetic_%' AND m.provider_subject_id != 'firebase_uid_super_admin'
 )
+AND NOT EXISTS (
+  SELECT 1 FROM users WHERE id = 'usr_primary_super_admin'
+)
 AND 'OPERATOR_FIREBASE_UID_PLACEHOLDER' NOT LIKE 'OPERATOR_FIREBASE_UID_%';
 
 -- 2. Bind external Firebase UID (replace OPERATOR_FIREBASE_UID_PLACEHOLDER with authorized provider UID)
@@ -38,17 +41,46 @@ WHERE NOT EXISTS (
   JOIN workspace_memberships wm ON m.user_id = wm.user_id
   WHERE wm.role = 'super_admin' AND m.provider_subject_id NOT LIKE 'firebase_uid_synthetic_%' AND m.provider_subject_id != 'firebase_uid_super_admin'
 )
+AND NOT EXISTS (
+  SELECT 1 FROM user_identity_mappings
+  WHERE id = 'map_primary_super_admin'
+     OR (provider_id = 'firebase' AND provider_subject_id = 'OPERATOR_FIREBASE_UID_PLACEHOLDER')
+)
 AND 'OPERATOR_FIREBASE_UID_PLACEHOLDER' NOT LIKE 'OPERATOR_FIREBASE_UID_%';
 
 -- 3. Assign super_admin memberships in all three approved operational workspaces
-INSERT OR IGNORE INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
-SELECT 'mem_sa_primary_solarcell', 'solarcell', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')
-WHERE EXISTS (SELECT 1 FROM user_identity_mappings WHERE id = 'map_primary_super_admin');
+-- Guarded batch: strictly one-time! Evaluated against durable one-time bootstrap marker.
+-- If ANY bootstrap membership already exists, or if bootstrap has already completed in the past,
+-- this step does nothing, preventing reruns from resurrecting deliberately revoked memberships.
+INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
+SELECT id, workspace_id, user_id, role, created_at, updated_at FROM (
+  SELECT 'mem_sa_primary_solarcell' AS id, 'solarcell' AS workspace_id, 'usr_primary_super_admin' AS user_id, 'super_admin' AS role, datetime('now') AS created_at, datetime('now') AS updated_at
+  UNION ALL
+  SELECT 'mem_sa_primary_smart_home', 'smart_home', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')
+  UNION ALL
+  SELECT 'mem_sa_primary_cctv', 'cctv', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')
+)
+WHERE EXISTS (
+  SELECT 1 FROM user_identity_mappings WHERE id = 'map_primary_super_admin'
+)
+AND NOT EXISTS (
+  SELECT 1 FROM user_identity_mappings WHERE id = 'map_bootstrap_completed' OR provider_id = 'cabms_bootstrap'
+)
+AND NOT EXISTS (
+  SELECT 1 FROM workspace_memberships
+  WHERE id IN ('mem_sa_primary_solarcell', 'mem_sa_primary_smart_home', 'mem_sa_primary_cctv')
+     OR user_id = 'usr_primary_super_admin'
+);
 
-INSERT OR IGNORE INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
-SELECT 'mem_sa_primary_smart_home', 'smart_home', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')
-WHERE EXISTS (SELECT 1 FROM user_identity_mappings WHERE id = 'map_primary_super_admin');
-
-INSERT OR IGNORE INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
-SELECT 'mem_sa_primary_cctv', 'cctv', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')
-WHERE EXISTS (SELECT 1 FROM user_identity_mappings WHERE id = 'map_primary_super_admin');
+-- 4. Record durable one-time bootstrap completion marker
+INSERT OR IGNORE INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at)
+SELECT
+  'map_bootstrap_completed',
+  'usr_primary_super_admin',
+  'cabms_bootstrap',
+  'completed',
+  datetime('now')
+WHERE EXISTS (
+  SELECT 1 FROM user_identity_mappings WHERE id = 'map_primary_super_admin'
+)
+AND 'OPERATOR_FIREBASE_UID_PLACEHOLDER' NOT LIKE 'OPERATOR_FIREBASE_UID_%';

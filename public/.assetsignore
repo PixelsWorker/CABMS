@@ -1,2 +1,3 @@
 assets/aistudio/
+assets/aistudio/**
 .assetsignore

@@ -264,6 +264,20 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
   });
 
   it('7. Legal details: Owner Admin is rejected (403), Super Admin can update with audit privacy', async () => {
+    // Non-super-admin GET is blocked (403)
+    const forbiddenGet = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/legal-details`, {
+      headers: { Authorization: ownerAdminAuth },
+    });
+    assert.equal(forbiddenGet.status, 403);
+    assert.match((await forbiddenGet.json() as { detail: string }).detail, /Super Admin/i);
+
+    // Nonmember GET is blocked (403)
+    const nonmemberGet = await fetch(`${BASE_URL}/api/v1/workspaces/cctv/legal-details`, {
+      headers: { Authorization: ownerAdminAuth },
+    });
+    assert.equal(nonmemberGet.status, 403);
+    assert.match((await nonmemberGet.json() as { detail: string }).detail, /access to this workspace/i);
+
     const getRes = await fetch(`${BASE_URL}/api/v1/workspaces/cctv/legal-details`, {
       headers: { Authorization: superAdminAuth },
     });

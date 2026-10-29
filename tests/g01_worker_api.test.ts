@@ -46,6 +46,7 @@ describe('G01 Worker API Endpoints', () => {
 
   let superAdminAuth: string;
   let ownerAdminAuth: string;
+  let officeStaffAuth: string;
   let technicianAuth: string;
   afterEach(() => mock.restoreAll());
 
@@ -56,6 +57,7 @@ describe('G01 Worker API Endpoints', () => {
     env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
     superAdminAuth = `Bearer ${await fixtureToken('firebase_uid_super_admin')}`;
     ownerAdminAuth = `Bearer ${await fixtureToken('firebase_uid_owner_admin')}`;
+    officeStaffAuth = `Bearer ${await fixtureToken('firebase_uid_office_staff')}`;
     technicianAuth = `Bearer ${await fixtureToken('firebase_uid_technician')}`;
   });
 
@@ -240,6 +242,49 @@ describe('G01 Worker API Endpoints', () => {
     const auditEvents = await getAuditEvents(db, 'solarcell', 'workspace_settings');
     assert.equal(auditEvents.length, 1);
     assert.equal(auditEvents[0].new_version, 2);
+  });
+
+  it('GET /api/v1/workspaces/:workspaceId/legal-details: strictly restricted to Super Admin (Owner Admin, Office Staff, Technician, Nonmember rejected 403)', async () => {
+    // 1. Owner Admin rejected (403)
+    const ownerRes = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
+      headers: { Authorization: ownerAdminAuth },
+    }), env);
+    assert.equal(ownerRes.status, 403);
+    assert.match(((await ownerRes.json()) as { detail: string }).detail, /Super Admin/i);
+
+    // 2. Office Staff rejected (403)
+    const staffRes = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
+      headers: { Authorization: officeStaffAuth },
+    }), env);
+    assert.equal(staffRes.status, 403);
+    assert.match(((await staffRes.json()) as { detail: string }).detail, /Super Admin/i);
+
+    // 3. Technician rejected (403)
+    const techRes = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
+      headers: { Authorization: technicianAuth },
+    }), env);
+    assert.equal(techRes.status, 403);
+    assert.match(((await techRes.json()) as { detail: string }).detail, /Super Admin/i);
+
+    // 4. Nonmember rejected (403)
+    await db.prepare("INSERT INTO users (id, email, display_name, created_at, updated_at) VALUES ('usr_nonmember', 'nonmember@cabms.example.invalid', 'Non Member', datetime('now'), datetime('now'))").run();
+    await db.prepare("INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES ('map_nonmember', 'usr_nonmember', 'firebase', 'firebase_uid_nonmember', datetime('now'))").run();
+    const nonMemberToken = `Bearer ${await fixtureToken('firebase_uid_nonmember', 'nonmember@cabms.example.invalid')}`;
+    const nonMemberRes = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
+      headers: { Authorization: nonMemberToken },
+    }), env);
+    assert.equal(nonMemberRes.status, 403);
+    assert.match(((await nonMemberRes.json()) as { detail: string }).detail, /access to this workspace/i);
+
+    // 5. Super Admin succeeds (200)
+    const saRes = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
+      headers: { Authorization: superAdminAuth },
+    }), env);
+    assert.equal(saRes.status, 200);
+    assert.equal(saRes.headers.get('ETag'), '"1"');
+    const saBody = (await saRes.json()) as { workspace_id: string; legal_issuer_name: string; version: number };
+    assert.equal(saBody.workspace_id, 'solarcell');
+    assert.equal(saBody.version, 1);
   });
 
   it('PATCH /api/v1/workspaces/:workspaceId/legal-details: strictly restricted to Super Admin (Owner Admin rejected 403)', async () => {
@@ -583,5 +628,57 @@ describe('G01 Worker API Endpoints', () => {
     assert.equal(firebaseConfig.projectId, 'cabms-panel');
     assert.equal(firebaseProjectMetadata.projectId, 'cabms-panel');
     assert.equal(firebaseProjectMetadata.supportEmail, 'admin@chinedigital.com.au');
+  });
+
+  it('Firebase account status: enforces live account revocation, disabled status, ID matching, and fails closed on outage/malformed data', async () => {
+    const liveEnv: Env = {
+      DB: db,
+      ENVIRONMENT: 'test',
+      FIREBASE_PROJECT_ID: 'cabms-test',
+      FIREBASE_API_KEY: 'test-firebase-api-key',
+    };
+
+    let lookupHandler: () => Response | Promise<Response> = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false }] });
+    const originalFetch = globalThis.fetch;
+    mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('identitytoolkit.googleapis.com')) {
+        return lookupHandler();
+      }
+      return originalFetch(input, init);
+    });
+
+    // 1. Disabled account rejected (401)
+    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: true }] });
+    const resDisabled = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
+    assert.equal(resDisabled.status, 401);
+
+    // 2. Revoked session (auth_time < validSince) rejected (401)
+    const futureSec = Math.floor(Date.now() / 1000) + 1000;
+    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false, validSince: String(futureSec) }] });
+    const resRevoked = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
+    assert.equal(resRevoked.status, 401);
+
+    // 3. Mismatched UID (localId !== token UID) rejected (401)
+    lookupHandler = () => Response.json({ users: [{ localId: 'mismatched_external_uid', disabled: false }] });
+    const resMismatch = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
+    assert.equal(resMismatch.status, 401);
+
+    // 4. Provider outage (HTTP 500) fails closed with 503
+    lookupHandler = () => new Response('Internal Server Error', { status: 500 });
+    const resOutage = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
+    assert.equal(resOutage.status, 503);
+    assert.equal(((await resOutage.json()) as { code: string }).code, 'SERVICE_UNAVAILABLE');
+
+    // 5. Malformed validSince timestamp fails closed with 503
+    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false, validSince: 'invalid_non_numeric' }] });
+    const resMalformed = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
+    assert.equal(resMalformed.status, 503);
+    assert.equal(((await resMalformed.json()) as { code: string }).code, 'SERVICE_UNAVAILABLE');
+
+    // 6. Active valid account succeeds (200)
+    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false, validSince: '100' }] });
+    const resValid = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
+    assert.equal(resValid.status, 200);
   });
 });

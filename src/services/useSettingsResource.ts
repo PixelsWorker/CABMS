@@ -26,6 +26,8 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
   const key = session?.profile && session.workspaceId ? `${session.profile.user.id}:${session.workspaceId}` : '';
   const workspace = session?.workspaceId;
   const entries = useRef<Record<string, Entry>>({});
+  const loadGenerations = useRef<Record<string, number>>({});
+  const saveGenerations = useRef<Record<string, number>>({});
   const alive = useRef(true);
   const [, render] = useState(0);
   const state = entries.current[key] || empty();
@@ -52,21 +54,30 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
     const reqRef = response.problem?.request_id ? `(Ref: ${response.problem.request_id})` : '';
     update(target, { error: true, message: `${message} ${details} ${reqRef}`.trim(), reviewRequired: status !== 422,
       ...(status === 403 || status === 404 ? { row: undefined, etag: undefined, draft: {} } : {}) });
-    if (status === 401 || status === 403) sessionRef.current?.invalidate();
+    if (status === 401) sessionRef.current?.invalidate();
   };
   const load = async (review = false) => {
     const currentSession = sessionRef.current;
     if (!key || !workspace || !currentSession) return;
-    update(key, { loading: true, message: '', error: false });
+    const target = key;
+    const gen = (loadGenerations.current[target] || 0) + 1;
+    loadGenerations.current[target] = gen;
+    update(target, { loading: true, message: '', error: false });
     try {
       const response = await (kind === 'settings' ? apiGetWorkspaceSettings : apiGetLegalDetails)(workspace, await currentSession.token());
-      if (!alive.current) return;
+      if (!alive.current || loadGenerations.current[target] !== gen) return;
       if (response.ok && response.data && response.etag && response.data.workspace_id === workspace && Number.isSafeInteger(response.data.version) && response.etag === `"${response.data.version}"`) {
-        update(key, { row: response.data, etag: response.etag, reviewRequired: false,
+        update(target, { row: response.data, etag: response.etag, reviewRequired: false,
           message: review ? 'Latest server version loaded. Compare it with your retained edits, then save deliberately.' : '' });
-      } else handleFailure(key, response);
-    } catch { update(key, { error: true, message: 'Unable to load settings. Check your connection and retry.', reviewRequired: true }); }
-    finally { update(key, { loading: false }); }
+      } else handleFailure(target, response);
+    } catch {
+      if (!alive.current || loadGenerations.current[target] !== gen) return;
+      update(target, { error: true, message: 'Unable to load settings. Check your connection and retry.', reviewRequired: true });
+    } finally {
+      if (alive.current && loadGenerations.current[target] === gen) {
+        update(target, { loading: false });
+      }
+    }
   };
   useEffect(() => { if (key && !entries.current[key]?.row) void load(); }, [key, kind]);
   const setField = (field: string, value: string | null) => {
@@ -77,22 +88,31 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
     const entry = entries.current[key];
     const currentSession = sessionRef.current;
     if (!entry?.row || !entry.etag || entry.saving || entry.loading || entry.reviewRequired || !workspace || !currentSession) return;
+    const target = key;
     const revision = entry.revision;
-    update(key, { saving: true, message: '', error: false });
+    const gen = (saveGenerations.current[target] || 0) + 1;
+    saveGenerations.current[target] = gen;
+    update(target, { saving: true, message: '', error: false });
     try {
       const token = await currentSession.token();
       const response = kind === 'settings'
         ? await apiPatchWorkspaceSettings(workspace, token, entry.etag, entry.draft)
         : await apiPatchLegalDetails(workspace, token, entry.etag, entry.draft);
-      if (!alive.current) return;
+      if (!alive.current || saveGenerations.current[target] !== gen) return;
       if (response.ok && response.data && response.etag && response.data.workspace_id === workspace && Number.isSafeInteger(response.data.version) && response.etag === `"${response.data.version}"`) {
-        const unchangedDraft = entries.current[key]?.revision === revision;
-        const remainingDraft = Object.fromEntries(Object.entries(entries.current[key]?.draft || {}).filter(([field, value]) => entry.draft[field as keyof Patch] !== value));
-        update(key, { row: response.data, etag: response.etag, draft: unchangedDraft ? {} : remainingDraft,
+        const unchangedDraft = entries.current[target]?.revision === revision;
+        const remainingDraft = Object.fromEntries(Object.entries(entries.current[target]?.draft || {}).filter(([field, value]) => entry.draft[field as keyof Patch] !== value));
+        update(target, { row: response.data, etag: response.etag, draft: unchangedDraft ? {} : remainingDraft,
           message: unchangedDraft ? 'Settings saved to the database.' : 'Submitted changes saved. Newer edits remain unsaved.', reviewRequired: false });
-      } else handleFailure(key, response);
-    } catch { update(key, { error: true, reviewRequired: true, message: 'Save outcome uncertain. Your edits are retained. Review the latest server values before retrying.' }); }
-    finally { update(key, { saving: false }); }
+      } else handleFailure(target, response);
+    } catch {
+      if (!alive.current || saveGenerations.current[target] !== gen) return;
+      update(target, { error: true, reviewRequired: true, message: 'Save outcome uncertain. Your edits are retained. Review the latest server values before retrying.' });
+    } finally {
+      if (alive.current && saveGenerations.current[target] === gen) {
+        update(target, { saving: false });
+      }
+    }
   };
   return { ...state, value: state.row ? { ...state.row, ...state.draft } : undefined, setField, save, reload: () => load(true),
     dirty: Object.keys(state.draft).length > 0, active: !!session };

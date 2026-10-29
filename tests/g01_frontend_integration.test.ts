@@ -65,9 +65,13 @@ test('G01 mounted settings: independent API saves, retained drafts, conflict rec
     await submit('ws-phone'); await settle();
     assert.match(container.textContent!, /saved to the database/);
     assert.equal((await getAuditEvents(db, 'solarcell', 'workspace_settings')).length, 1);
+    await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('System & Integrations'))!.click());
+    await settle();
     await act(async () => { input('legal-legal_issuer_name', 'Independent issuer'); });
     await submit('legal-legal_issuer_name'); await settle();
     assert.equal((await getAuditEvents(db, 'solarcell', 'legal_issuer')).length, 1);
+    await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Workspace Settings'))!.click());
+    await settle();
     delayNext = true;
     await act(async () => { input('ws-phone', 'Submitted edit'); });
     await submit('ws-phone'); await settle();
@@ -719,6 +723,170 @@ test('G01 membership removal dynamically revokes access and all 5 sign-offs fail
     await act(async () => root.unmount());
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
   } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+test('G01 mounted clock isolation: advanceClock never mutates unauthorized workspace jobs', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let currentCtx!: ReturnType<typeof useCabms>;
+    function Capture() {
+      currentCtx = useCabms();
+      return null;
+    }
+
+    const session: Session = {
+      profile: {
+        user: { id: 'usr_cctv_only', email: 'cctv@example.invalid', display_name: 'CCTV Tech' },
+        memberships: [{ workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' }],
+      },
+      workspaceId: 'cctv',
+      selectWorkspace: () => {},
+      token: async () => 'dummy_token',
+      login: async () => {},
+      logout: async () => {},
+      invalidate: () => {},
+      loading: false,
+      error: '',
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(
+          SessionContext.Provider,
+          { value: session },
+          React.createElement(CabmsProvider, null, React.createElement(Capture))
+        )
+      );
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+
+    // Inspect initial state: only CCTV jobs visible to currentCtx.jobs
+    assert.deepEqual(Object.keys(currentCtx.brands), ['cctv']);
+    assert.ok(currentCtx.jobs.every(j => j.brandId === 'cctv'));
+
+    // Advance business clock by 72 hours
+    await act(async () => {
+      currentCtx.advanceClock(72);
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+
+    // Ensure non-CCTV jobs in authoritative state remained completely untouched
+    const authState = currentCtx.getAuthoritativeState();
+    const solarcellJobs = authState.jobs.filter(j => j.brandId === 'solarcell');
+    assert.equal(solarcellJobs.length, 0, 'Unauthorized jobs are never exposed in authoritative state');
+
+    await act(async () => root.unmount());
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+test('G01 mounted settings: request generation guard rejects obsolete responses on A -> B -> A workspace switching', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let selectWorkspaceFn!: (ws: 'solarcell' | 'cctv') => void;
+    let resolveFirstLoad!: (resp: any) => void;
+    let loadCount = 0;
+
+    setApiBase('http://localhost');
+    setApiFetchHandler(async request => {
+      const url = request.url;
+      if (url.includes('/settings') && request.method === 'GET') {
+        loadCount++;
+        if (url.includes('solarcell') && loadCount === 1) {
+          // Delay the very first load for solarcell
+          return new Promise(resolve => {
+            resolveFirstLoad = resolve;
+          });
+        }
+        if (url.includes('cctv')) {
+          return new Response(JSON.stringify({ workspace_id: 'cctv', version: 1, trading_name: 'CCTV Fast' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: '"1"' },
+          });
+        }
+        if (url.includes('solarcell') && loadCount > 1) {
+          return new Response(JSON.stringify({ workspace_id: 'solarcell', version: 2, trading_name: 'Solarcell New' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json', ETag: '"2"' },
+          });
+        }
+      }
+      return new Response('Not Found', { status: 404 });
+    });
+
+    function Harness() {
+      const [workspaceId, selectWorkspace] = React.useState<'solarcell' | 'cctv'>('solarcell');
+      selectWorkspaceFn = selectWorkspace;
+      const session: Session = {
+        profile: {
+          user: { id: 'usr_switch', email: 'switch@example.invalid', display_name: 'Switch User' },
+          memberships: [
+            { workspace_id: 'solarcell', name: 'Solarcell', role: 'owner_admin' },
+            { workspace_id: 'cctv', name: 'CCTV', role: 'owner_admin' },
+          ],
+        },
+        workspaceId,
+        selectWorkspace: selectWorkspace as any,
+        token: async () => 'test_token',
+        login: async () => {},
+        logout: async () => {},
+        invalidate: () => {},
+        loading: false,
+        error: '',
+      };
+      return React.createElement(SessionContext.Provider, { value: session }, React.createElement(CabmsProvider, null, React.createElement(SystemWorkspaceSettingsView)));
+    }
+
+    await act(async () => { root.render(React.createElement(Harness)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    // Load 1 for solarcell is pending. Now switch to CCTV (B)
+    await act(async () => { selectWorkspaceFn('cctv'); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    assert.equal(container.querySelector<HTMLInputElement>('#ws-trading-name')?.value, 'CCTV Fast');
+
+    // Switch back to solarcell (A), triggering Load 3
+    await act(async () => { selectWorkspaceFn('solarcell'); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    // Load 3 for solarcell returns 'Solarcell New'
+    assert.equal(container.querySelector<HTMLInputElement>('#ws-trading-name')?.value, 'Solarcell New');
+
+    // Now obsolete Load 1 finishes!
+    resolveFirstLoad(new Response(JSON.stringify({ workspace_id: 'solarcell', version: 1, trading_name: 'Solarcell Stale' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ETag: '"1"' },
+    }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+
+    // Obsolete Load 1 MUST NOT overwrite newer state!
+    assert.equal(container.querySelector<HTMLInputElement>('#ws-trading-name')?.value, 'Solarcell New');
+
+    await act(async () => root.unmount());
+  } finally {
+    resetApiFetchHandler();
+    resetApiBase();
     for (const [key, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else delete (globalThis as any)[key];

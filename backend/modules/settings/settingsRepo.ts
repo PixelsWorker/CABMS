@@ -103,12 +103,20 @@ export async function updateWorkspaceSettings(
     return { status: 'NO_OP', current, version: current.version };
   }
 
-  // 5. Build old/new values for audit
+  // 5. Build old/new values for audit with MANDATORY PRIVACY REDACTION
+  // Under Section 19.5: contact_email, contact_phone, and operational_address are sensitive contact details
+  // and must be redacted in durable audit logs to prevent perpetual retention of personally identifiable contact data.
+  const SENSITIVE_SETTINGS_KEYS = new Set(['contact_email', 'contact_phone', 'operational_address']);
   const oldValues: Record<string, unknown> = {};
   const newValues: Record<string, unknown> = {};
   for (const k of changedKeys) {
-    oldValues[k] = current[k];
-    newValues[k] = merged[k];
+    if (SENSITIVE_SETTINGS_KEYS.has(k)) {
+      oldValues[k] = current[k] ? '[REDACTED]' : null;
+      newValues[k] = merged[k] ? '[REDACTED]' : null;
+    } else {
+      oldValues[k] = current[k];
+      newValues[k] = merged[k];
+    }
   }
 
   const reqNonce = crypto.randomUUID();

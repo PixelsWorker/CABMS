@@ -857,6 +857,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     commitJobsState(currentJobs => {
       return currentJobs.map(j => {
+        if (authorizedWorkspaceSet !== null && !authorizedWorkspaceSet.has(j.brandId)) {
+          return j;
+        }
         let updatedJob = { ...j };
 
         // 1. Process due reminders

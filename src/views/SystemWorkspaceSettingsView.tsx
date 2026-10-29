@@ -80,9 +80,9 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
         <div hidden={activeSubTab !== 'workspace'}>
           <WorkspaceSettingsView />
         </div>
-        {session ? <div hidden={activeSubTab !== 'system'}><LegalDetailsForm /></div> : activeSubTab === 'system' && (
+        {activeSubTab === 'system' && (
           isSuperAdmin ? (
-            <SuperAdminSetupView />
+            session ? <LegalDetailsForm /> : <SuperAdminSetupView />
           ) : (
             <AccessDeniedView
               resourceName="Super Admin Business Profiles & Technical Integration Credentials"

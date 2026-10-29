@@ -54,6 +54,29 @@ test('LAYER 8: Browser End-to-End — Network isolation audit (No live external 
   }
 });
 
+test('LAYER 8: FC-06 — Production assetsignore and planning assets exclusion audit', () => {
+  // 1. Verify dist/.assetsignore exists in build output
+  assert.ok(fs.existsSync('./dist/.assetsignore'), 'dist/.assetsignore exists in production build output');
+  const ignoreContent = fs.readFileSync('./dist/.assetsignore', 'utf-8');
+  assert.ok(ignoreContent.includes('assets/aistudio/'), 'dist/.assetsignore contains assets/aistudio/ pattern');
+
+  // 2. Verify all 5 planning asset files exist in public/assets/aistudio and are covered by .assetsignore
+  const planningDir = './public/assets/aistudio';
+  assert.ok(fs.existsSync(planningDir), 'Planning assets directory public/assets/aistudio exists');
+  const planningFiles = fs.readdirSync(planningDir);
+  assert.equal(planningFiles.length, 5, 'Exactly 5 planning assets exist in public/assets/aistudio');
+  const expectedFiles = [
+    '01-G00-GROUP-PLAN-FOR-REVIEW_02f12f1f.md',
+    '02-AI-STUDIO-BUILD-PROMPT_d17e4a1a.txt',
+    '03-AI-STUDIO-FOCUSED-ITERATION-PROMPTS_20cabc20.txt',
+    'CABMS-G00-FULL-WORKFLOW-GAP-REPORT-2026-10-22_f5c4292c.md',
+    'Paste_October_22__2026_-_9_37PM_7699a962',
+  ];
+  for (const expected of expectedFiles) {
+    assert.ok(planningFiles.includes(expected), `Planning file ${expected} is present`);
+  }
+});
+
 test('LAYER 8: Browser End-to-End — Real Browser execution status', (t) => {
   t.skip(
     'UNAVAILABLE / NOT RUN: Headless browser binaries (Chromium/WebKit) and graphical display server are unprovisioned in this container environment. Structural DOM inspection, bundle integrity, and network isolation audits executed and verified.'

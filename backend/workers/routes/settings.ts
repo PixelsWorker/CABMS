@@ -352,6 +352,13 @@ export async function handleGetLegalDetails(
     return accessDeniedResponse('You do not have access to this workspace', requestId);
   }
 
+  if (membership.role !== 'super_admin') {
+    logger.warn('LEGAL_READ_DENIED', 'Non-super-admin attempted to view legal issuer details', {
+      fields: { role: membership.role, user_id: auth.userId },
+    });
+    return accessDeniedResponse('Viewing legal issuer details and licences is strictly restricted to Super Admin', requestId);
+  }
+
   const legal = await getLegalDetails(db, workspaceId);
   if (!legal) {
     return resourceNotFoundResponse('Legal issuer details not found', requestId);

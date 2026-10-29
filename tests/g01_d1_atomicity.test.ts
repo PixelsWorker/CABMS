@@ -78,9 +78,9 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
     const oldVals = JSON.parse(event.old_values);
     const newVals = JSON.parse(event.new_values);
     assert.equal(oldVals.trading_name, 'Solarcell');
-    assert.equal(oldVals.contact_phone, '(07) 5500 0111');
+    assert.equal(oldVals.contact_phone, '[REDACTED]', 'Sensitive contact_phone must be redacted in old_values');
     assert.equal(newVals.trading_name, 'Solarcell Commercial');
-    assert.equal(newVals.contact_phone, '(07) 5500 9999');
+    assert.equal(newVals.contact_phone, '[REDACTED]', 'Sensitive contact_phone must be redacted in new_values');
   });
 
   it('Invariant 2: Stale changes do not create successful-change audit records', async () => {

@@ -18,6 +18,7 @@ import { runLocalMigrations } from '../backend/db/migrate.ts';
 import { getAuditEvents } from '../backend/modules/settings/settingsRepo.ts';
 import worker from '../backend/index.ts';
 import { fixtureToken, installFirebaseFixture } from './support/firebaseTokens.ts';
+import { INITIAL_JOBS } from '../src/data/seedData.ts';
 
 test('G01 mounted settings: independent API saves, retained drafts, conflict recovery and durable audit', async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
@@ -68,6 +69,12 @@ test('G01 mounted settings: independent API saves, retained drafts, conflict rec
     await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('System & Integrations'))!.click());
     await settle();
     await act(async () => { input('legal-legal_issuer_name', 'Independent issuer'); });
+    // Switch to Workspace Settings sub-tab and verify draft is retained upon returning
+    await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Workspace Settings'))!.click());
+    await settle();
+    await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('System & Integrations'))!.click());
+    await settle();
+    assert.equal(container.querySelector<HTMLInputElement>('#legal-legal_issuer_name')!.value, 'Independent issuer');
     await submit('legal-legal_issuer_name'); await settle();
     assert.equal((await getAuditEvents(db, 'solarcell', 'legal_issuer')).length, 1);
     await act(async () => Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Workspace Settings'))!.click());
@@ -745,29 +752,35 @@ test('G01 mounted clock isolation: advanceClock never mutates unauthorized works
       return null;
     }
 
-    const session: Session = {
-      profile: {
-        user: { id: 'usr_cctv_only', email: 'cctv@example.invalid', display_name: 'CCTV Tech' },
-        memberships: [{ workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' }],
-      },
-      workspaceId: 'cctv',
-      selectWorkspace: () => {},
-      token: async () => 'dummy_token',
-      login: async () => {},
-      logout: async () => {},
-      invalidate: () => {},
-      loading: false,
-      error: '',
-    };
+    let setSessionMemberships!: (memberships: { workspace_id: string; name: string; role: string }[]) => void;
+    function Harness() {
+      const [memberships, setMemberships] = React.useState([
+        { workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' },
+      ]);
+      setSessionMemberships = setMemberships;
+      const session: Session = {
+        profile: {
+          user: { id: 'usr_cctv_only', email: 'cctv@example.invalid', display_name: 'CCTV Tech' },
+          memberships,
+        },
+        workspaceId: 'cctv',
+        selectWorkspace: () => {},
+        token: async () => 'dummy_token',
+        login: async () => {},
+        logout: async () => {},
+        invalidate: () => {},
+        loading: false,
+        error: '',
+      };
+      return React.createElement(
+        SessionContext.Provider,
+        { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(Capture))
+      );
+    }
 
     await act(async () => {
-      root.render(
-        React.createElement(
-          SessionContext.Provider,
-          { value: session },
-          React.createElement(CabmsProvider, null, React.createElement(Capture))
-        )
-      );
+      root.render(React.createElement(Harness));
     });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
 
@@ -775,16 +788,105 @@ test('G01 mounted clock isolation: advanceClock never mutates unauthorized works
     assert.deepEqual(Object.keys(currentCtx.brands), ['cctv']);
     assert.ok(currentCtx.jobs.every(j => j.brandId === 'cctv'));
 
-    // Advance business clock by 72 hours
+    // Advance business clock by 72 hours while authorized only for CCTV
     await act(async () => {
       currentCtx.advanceClock(72);
     });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
 
-    // Ensure non-CCTV jobs in authoritative state remained completely untouched
+    // Ensure non-CCTV jobs in authoritative state remained completely untouched and unexposed
     const authState = currentCtx.getAuthoritativeState();
     const solarcellJobs = authState.jobs.filter(j => j.brandId === 'solarcell');
     assert.equal(solarcellJobs.length, 0, 'Unauthorized jobs are never exposed in authoritative state');
+
+    // Re-render the same provider with Solarcell membership added to directly verify
+    // that Solarcell jobs in the underlying state were NOT mutated by advanceClock(72)
+    await act(async () => {
+      setSessionMemberships([
+        { workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' },
+        { workspace_id: 'solarcell', name: 'Solarcell', role: 'technician' },
+      ]);
+    });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+
+    const postAdvanceSolarcellJobs = currentCtx.jobs.filter(j => j.brandId === 'solarcell');
+    assert.ok(postAdvanceSolarcellJobs.length > 0, 'Solarcell jobs visible after membership added');
+    for (const job of postAdvanceSolarcellJobs) {
+      const initial = INITIAL_JOBS.find(ij => ij.id === job.id)!;
+      assert.deepEqual(job.reminders, initial.reminders, `Solarcell job ${job.id} reminders remained untouched`);
+      assert.equal(job.reviewRequest?.status, initial.reviewRequest?.status, `Solarcell job ${job.id} review status remained untouched`);
+    }
+
+    await act(async () => root.unmount());
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+test('G01 CabmsContext: customer directory is scoped to active workspace permissions, excluding technician-only affiliations', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) {
+    Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  }
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let context!: ReturnType<typeof useCabms>;
+    function Capture() { context = useCabms(); return null; }
+
+    // User is Office Staff in Solarcell, but Technician in CCTV
+    let switchWorkspace!: (ws: 'solarcell' | 'cctv') => void;
+
+    function Harness() {
+      const [workspaceId, setWorkspaceId] = React.useState<'solarcell' | 'cctv'>('solarcell');
+      switchWorkspace = setWorkspaceId;
+      const session: Session = {
+        profile: {
+          user: { id: 'usr_dual_role', email: 'dual@example.invalid', display_name: 'Dual User' },
+          memberships: [
+            { workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' },
+            { workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' },
+          ],
+        },
+        workspaceId,
+        selectWorkspace: setWorkspaceId as any,
+        token: async () => 'test_token',
+        login: async () => {},
+        logout: async () => {},
+        invalidate: () => {},
+        loading: false,
+        error: '',
+      };
+      return React.createElement(SessionContext.Provider, { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(Capture))
+      );
+    }
+
+    await act(async () => { root.render(React.createElement(Harness)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    // In Solarcell workspace: active persona is office_staff
+    assert.equal(context.persona, 'office_staff');
+    assert.ok(context.customers.length > 0, 'Customers visible for office_staff in Solarcell');
+    // Customers affiliated ONLY with CCTV must NOT be exposed
+    const cctvOnlyCustomers = context.customers.filter(c =>
+      c.brandAffiliations.length === 1 && c.brandAffiliations[0] === 'cctv'
+    );
+    assert.equal(cctvOnlyCustomers.length, 0, 'CCTV-only customers excluded when user is technician in CCTV');
+
+    // Switch active workspace to CCTV: active persona becomes technician
+    await act(async () => { switchWorkspace('cctv'); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    assert.equal(context.persona, 'technician');
+    // Technician persona in active workspace has NO customer directory access
+    assert.equal(context.customers.length, 0, 'Customer directory is empty for technician persona');
 
     await act(async () => root.unmount());
   } finally {
@@ -887,6 +989,149 @@ test('G01 mounted settings: request generation guard rejects obsolete responses 
   } finally {
     resetApiFetchHandler();
     resetApiBase();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+test('G01 CabmsContext: isJobAuthorized rejects mutating financial actions on foreign workspace work orders', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) {
+    Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  }
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let context!: ReturnType<typeof useCabms>;
+    function Capture() { context = useCabms(); return null; }
+    // User is ONLY member of CCTV workspace
+    const session: Session = {
+      profile: {
+        user: { id: 'usr_cctv_only', email: 'cctv@example.invalid', display_name: 'CCTV Tech' },
+        memberships: [{ workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'owner_admin' }],
+      },
+      workspaceId: 'cctv',
+      selectWorkspace: () => {},
+      token: async () => 'test_token',
+      login: async () => {},
+      logout: async () => {},
+      invalidate: () => {},
+      loading: false,
+      error: '',
+    };
+
+    function Harness() {
+      return React.createElement(SessionContext.Provider, { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(Capture))
+      );
+    }
+
+    await act(async () => { root.render(React.createElement(Harness)); });
+
+    // JOB-2026-001 is a Solarcell job.
+    // 1. prepareQuoteForJob throws error
+    assert.throws(
+      () => context.prepareQuoteForJob('JOB-2026-001', 'Test Quote', []),
+      /Work order does not belong to an authorized workspace/
+    );
+
+    // 2. simulateQuoteAcceptance returns failure
+    const simRes = context.simulateQuoteAcceptance('JOB-2026-001', 'valid');
+    assert.equal(simRes.success, false);
+    assert.match(simRes.message, /authorized workspace/);
+
+    // 3. revokeQuote returns failure
+    const revokeRes = context.revokeQuote('JOB-2026-001');
+    assert.equal(revokeRes.success, false);
+    assert.match(revokeRes.message, /authorized workspace/);
+
+    // 4. prepareInvoiceForJob rejects without mutating
+    const initialJobs = context.jobs;
+    context.prepareInvoiceForJob('JOB-2026-001', 500);
+    assert.equal(context.jobs, initialJobs);
+
+    // 5. reconcileInvoiceSync rejects without mutating
+    context.reconcileInvoiceSync('JOB-2026-001', 'SUCCESS');
+    assert.equal(context.jobs, initialJobs);
+
+    await act(async () => root.unmount());
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
+test('G01 CabmsContext: customer directory is scoped to active workspace permissions, excluding technician-only affiliations', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) {
+    Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  }
+  const container = dom.window.document.getElementById('root')!;
+  const root = createRoot(container);
+  try {
+    let context!: ReturnType<typeof useCabms>;
+    function Capture() { context = useCabms(); return null; }
+
+    // User is Office Staff in Solarcell, but Technician in CCTV
+    let switchWorkspace!: (ws: 'solarcell' | 'cctv') => void;
+
+    function Harness() {
+      const [workspaceId, setWorkspaceId] = React.useState<'solarcell' | 'cctv'>('solarcell');
+      switchWorkspace = setWorkspaceId;
+      const session: Session = {
+        profile: {
+          user: { id: 'usr_dual_role', email: 'dual@example.invalid', display_name: 'Dual User' },
+          memberships: [
+            { workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' },
+            { workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'technician' },
+          ],
+        },
+        workspaceId,
+        selectWorkspace: setWorkspaceId as any,
+        token: async () => 'test_token',
+        login: async () => {},
+        logout: async () => {},
+        invalidate: () => {},
+        loading: false,
+        error: '',
+      };
+      return React.createElement(SessionContext.Provider, { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(Capture))
+      );
+    }
+
+    await act(async () => { root.render(React.createElement(Harness)); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    // In Solarcell workspace: active persona is office_staff
+    assert.equal(context.persona, 'office_staff');
+    assert.ok(context.customers.length > 0, 'Customers visible for office_staff in Solarcell');
+    // Customers affiliated ONLY with CCTV must NOT be exposed
+    const cctvOnlyCustomers = context.customers.filter(c =>
+      c.brandAffiliations.length === 1 && c.brandAffiliations[0] === 'cctv'
+    );
+    assert.equal(cctvOnlyCustomers.length, 0, 'CCTV-only customers excluded when user is technician in CCTV');
+
+    // Switch active workspace to CCTV: active persona becomes technician
+    await act(async () => { switchWorkspace('cctv'); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+
+    assert.equal(context.persona, 'technician');
+    // Technician persona in active workspace has NO customer directory access
+    assert.equal(context.customers.length, 0, 'Customer directory is empty for technician persona');
+
+    await act(async () => root.unmount());
+  } finally {
     for (const [key, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else delete (globalThis as any)[key];

@@ -84,3 +84,17 @@ WHERE EXISTS (
   SELECT 1 FROM user_identity_mappings WHERE id = 'map_primary_super_admin'
 )
 AND 'OPERATOR_FIREBASE_UID_PLACEHOLDER' NOT LIKE 'OPERATOR_FIREBASE_UID_%';
+
+-- 5. Verification: display bootstrap outcome to operator CLI
+SELECT
+  u.id AS user_id,
+  u.email,
+  m.provider_subject_id AS firebase_uid,
+  wm.workspace_id,
+  wm.role,
+  CASE WHEN bm.id IS NOT NULL THEN 'BOOTSTRAPPED' ELSE 'PENDING' END AS bootstrap_status
+FROM users u
+LEFT JOIN user_identity_mappings m ON u.id = m.user_id AND m.id = 'map_primary_super_admin'
+LEFT JOIN workspace_memberships wm ON u.id = wm.user_id
+LEFT JOIN user_identity_mappings bm ON u.id = bm.user_id AND bm.id = 'map_bootstrap_completed'
+WHERE u.id = 'usr_primary_super_admin';

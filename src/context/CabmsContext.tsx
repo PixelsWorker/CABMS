@@ -2440,6 +2440,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     title: string,
     lineItems: { id: string; description: string; quantity: number; unitPrice: number; total: number }[]
   ): Quote => {
+    if (!isJobAuthorized(jobId)) {
+      showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
+      throw new Error('Work order does not belong to an authorized workspace');
+    }
     const access = verifyPersonaAccess(persona, 'financial_writes');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
@@ -2545,6 +2549,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     jobId: string,
     scenario: 'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted'
   ) => {
+    if (!isJobAuthorized(jobId)) {
+      showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
+      return { success: false, message: 'Work order does not belong to an authorized workspace' };
+    }
     const job = authoritativeJobsRef.current.find(j => j.id === jobId) || jobs.find(j => j.id === jobId);
     if (!job || !job.quote) {
       return { success: false, message: 'Quote not found for this job.' };
@@ -2609,6 +2617,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Invoices (G00-018: Checks MYOB status for real failure/uncertain states)
 
   const revokeQuote = (jobId: string, reason: string = 'Revoked by CABMS administration'): { success: boolean; message: string } => {
+    if (!isJobAuthorized(jobId)) {
+      showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
+      return { success: false, message: 'Work order does not belong to an authorized workspace' };
+    }
     const access = verifyPersonaAccess(authoritativePersonaRef.current, 'financial_writes');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
@@ -2714,6 +2726,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const prepareInvoiceForJob = (jobId: string, amount: number) => {
+    if (!isJobAuthorized(jobId)) {
+      showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
+      return;
+    }
     const access = verifyPersonaAccess(persona, 'financial_writes');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
@@ -2781,6 +2797,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const reconcileInvoiceSync = (jobId: string, outcome: 'SUCCESS' | 'FAIL') => {
+    if (!isJobAuthorized(jobId)) {
+      showDemoNotification('Action denied: Work order does not belong to an authorized workspace.', 'error');
+      return;
+    }
     // FC-18: Read authoritative synchronous state to guard against same-render race conditions
     const targetJob = authoritativeJobsRef.current.find(j => j.id === jobId);
     if (!targetJob || !targetJob.invoice) return;
@@ -3558,9 +3578,23 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     ? jobs.filter(j => authorizedWorkspaceSet.has(j.brandId))
     : jobs;
 
-  const authorizedCustomers = authorizedWorkspaceSet !== null
-    ? customers.filter(c => c.brandAffiliations.some(b => authorizedWorkspaceSet.has(b as BrandId)))
-    : customers;
+  const permittedCustomerWorkspaces = session
+    ? (session.profile?.memberships
+        ? new Set(
+            session.profile.memberships
+              .filter(m => verifyPersonaAccess(m.role as Persona, 'all_customers').allowed)
+              .map(m => m.workspace_id)
+          )
+        : new Set<string>())
+    : authorizedWorkspaceSet;
+
+  const hasActiveCustomerAccess = !session || verifyPersonaAccess(persona, 'all_customers').allowed;
+
+  const authorizedCustomers = !hasActiveCustomerAccess
+    ? []
+    : (permittedCustomerWorkspaces !== null
+        ? customers.filter(c => c.brandAffiliations.some(b => permittedCustomerWorkspaces.has(b as BrandId)))
+        : customers);
 
   const authorizedJobTypes = authorizedWorkspaceSet !== null
     ? jobTypes.filter(jt => authorizedWorkspaceSet.has(jt.brandId))

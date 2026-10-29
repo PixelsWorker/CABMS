@@ -20,10 +20,12 @@ export const firebaseProjectMetadata = {
   supportEmail: 'admin@chinedigital.com.au',
 } as const;
 
+export const CABMS_FIREBASE_PROJECT_ID = firebaseProjectMetadata.projectId;
+
 export const firebaseConfig = {
   apiKey: 'AIzaSyD_y4n7pK9H7XwmFxBcFxAOxCWKfR4Rd9M',
   authDomain: 'cabms-panel.firebaseapp.com',
-  projectId: 'cabms-panel',
+  projectId: CABMS_FIREBASE_PROJECT_ID,
   storageBucket: 'cabms-panel.firebasestorage.app',
   messagingSenderId: '813654233421',
   appId: '1:813654233421:web:2c6077f3100122fd472704',

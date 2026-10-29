@@ -9,6 +9,7 @@ import { runLocalMigrations } from '../backend/db/migrate.ts';
 import { installFirebaseFixture, fixtureToken } from './support/firebaseTokens.ts';
 import { StructuredLogger } from '../backend/workers/logger.ts';
 import { parseIfMatchHeader } from '../backend/workers/http.ts';
+import { firebaseConfig, firebaseProjectMetadata, CABMS_FIREBASE_PROJECT_ID } from '../src/services/firebase.ts';
 
 beforeEach(installFirebaseFixture);
 afterEach(() => mock.restoreAll());
@@ -134,4 +135,24 @@ test('G01: first-admin bootstrap is strictly one-time and guarded against resurr
 
   await db.exec(customizedScript);
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n, 0);
+});
+
+test('G01: frontend and worker Firebase project configuration match without drift', () => {
+  const wranglerConfig = JSON.parse(fs.readFileSync(path.resolve('./wrangler.jsonc'), 'utf-8').replace(/\/\/.*$/gm, ''));
+  assert.equal(firebaseConfig.projectId, wranglerConfig.vars.FIREBASE_PROJECT_ID);
+  assert.equal(firebaseProjectMetadata.projectId, wranglerConfig.vars.FIREBASE_PROJECT_ID);
+  assert.equal(CABMS_FIREBASE_PROJECT_ID, wranglerConfig.vars.FIREBASE_PROJECT_ID);
+  assert.equal(firebaseConfig.apiKey, wranglerConfig.vars.FIREBASE_API_KEY);
+});
+
+test('G01: logger emits LEGAL_READ_DENIED event without unknown fallback', () => {
+  const output: string[] = [];
+  mock.method(console, 'warn', (value: string) => output.push(value));
+  new StructuredLogger('req-1', 'solarcell', 'usr_test').warn('LEGAL_READ_DENIED', 'Access denied to legal details', {
+    fields: { version: 1 },
+  });
+  assert.equal(output.length, 1);
+  const entry = JSON.parse(output[0]);
+  assert.equal(entry.event, 'LEGAL_READ_DENIED');
+  assert.equal(entry.fields.version, 1);
 });

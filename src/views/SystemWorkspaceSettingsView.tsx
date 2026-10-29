@@ -80,9 +80,13 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
         <div hidden={activeSubTab !== 'workspace'}>
           <WorkspaceSettingsView />
         </div>
-        {activeSubTab === 'system' && (
+        {session && isSuperAdmin ? (
+          <div hidden={activeSubTab !== 'system'}>
+            <LegalDetailsForm />
+          </div>
+        ) : activeSubTab === 'system' ? (
           isSuperAdmin ? (
-            session ? <LegalDetailsForm /> : <SuperAdminSetupView />
+            <SuperAdminSetupView />
           ) : (
             <AccessDeniedView
               resourceName="Super Admin Business Profiles & Technical Integration Credentials"
@@ -90,7 +94,7 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
               customExplanation="Admin, Office Staff and Technicians are strictly prohibited from modifying technical integration credentials, shared MYOB bindings, or company file mappings."
             />
           )
-        )}
+        ) : null}
       </div>
     </div>
   );

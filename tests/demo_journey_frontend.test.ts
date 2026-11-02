@@ -59,6 +59,30 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  await act(async()=>root.unmount());
 });
 
+test('failed enquiry save does not discard a pending initial list', async t => {
+ const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost'});
+ const keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
+ setApiBase('http://localhost');
+ let resolveInitial!: (response: Response) => void;
+ mock.method(globalThis,'fetch',async (_input:RequestInfo | URL, init?:RequestInit) => {
+  if (init?.method === 'POST') return Response.json({detail:'Invalid enquiry'}, {status:422});
+  return new Promise<Response>(resolve=>{resolveInitial=resolve;});
+ });
+ const actor=G01_TEST_AUTH.officeStaff;
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=> 'test-token',login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!; const root=createRoot(container);
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(WebsiteInboxView))));await Promise.resolve();});
+ assert.equal(typeof resolveInitial,'function');
+ await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,0));});
+ assert.match(container.textContent!,/Invalid enquiry/);
+ await act(async()=>{resolveInitial(Response.json([{id:'existing',workspace_id:'solarcell',customer_name:'Existing synthetic customer',service:'Inspection',created_at:'2026',job_id:null}]));await new Promise(r=>setTimeout(r,0));});
+ assert.match(container.textContent!,/Existing synthetic customer/);
+ await act(async()=>root.unmount());
+});
+
 test('workspace data reader isolates identities and workspaces and distinguishes API states', async t => {
  const dom = new JSDOM('<div id="root"></div>', {url:'http://localhost'});
  const keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];

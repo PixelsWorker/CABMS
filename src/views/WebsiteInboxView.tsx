@@ -4,7 +4,7 @@
  * duplicate/customer matching, and explicit office conversion to draft work orders.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useG01Session } from '../context/G01Session.tsx';
 import { demoJourneyRequest, type DemoEnquiry } from '../services/demoJourneyClient.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
@@ -462,13 +462,14 @@ function PersistentInbox() {
  const [items,setItems] = useState<DemoEnquiry[]>([]);
  const [name,setName] = useState(''); const [service,setService] = useState('');
  const [error,setError] = useState(''); const [busy,setBusy] = useState(false);
+ const generation = useRef(0);
  const workspace = session.workspaceId;
  useEffect(() => {
-  let active = true; setItems([]); setError('');
-  if (workspace) void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {if(active)setItems(rows);}).catch(() => {if(active)setError('Could not load enquiries.');});
-  return () => {active=false;};
+  const request = ++generation.current; setItems([]); setError('');
+  if (workspace) void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {if(generation.current===request)setItems(rows);}).catch(e => {if(generation.current===request)setError(e instanceof Error ? e.message : 'Could not load enquiries.');});
+  return () => {generation.current++;};
  },[workspace,session.profile?.user.id]);
- const refresh = async () => { if (!workspace) return; const rows = await demoJourneyRequest<DemoEnquiry[]>(workspace,await session.token(),'enquiries'); setItems(rows); };
+ const refresh = async () => { if (!workspace) return; const request=++generation.current; try { const rows = await demoJourneyRequest<DemoEnquiry[]>(workspace,await session.token(),'enquiries'); if (generation.current===request) setItems(rows); } catch(e) { if(generation.current===request) {setItems([]);setError(`Saved, but the enquiry list could not be reloaded. Refresh to see the latest state.${e instanceof Error ? ` ${e.message}` : ''}`);} } };
  const create = async (event: React.FormEvent) => {
   event.preventDefault(); if (!workspace || busy) return; setBusy(true); setError('');
   try { await demoJourneyRequest(workspace,await session.token(),'enquiries','POST',{customer_name:name,service}); setName('');setService(''); await refresh(); }

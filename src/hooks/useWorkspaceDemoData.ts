@@ -5,7 +5,7 @@ import { DemoJourneyError, demoJourneyRequest, type DemoEnquiry, type DemoJob } 
 type State =
  | { status: 'disabled' | 'loading' | 'restricted' }
  | { status: 'ready'; enquiries: DemoEnquiry[]; jobs: DemoJob[] }
- | { status: 'unauthenticated' | 'forbidden' | 'unavailable' | 'error' };
+ | { status: 'unauthenticated' | 'forbidden' | 'unavailable' | 'error'; requestId?: string };
 
 /** Each mounted view reads the API afresh; saved state never comes from G00. */
 export function useWorkspaceDemoData(includeEnquiries: boolean): State {
@@ -30,25 +30,27 @@ export function useWorkspaceDemoData(includeEnquiries: boolean): State {
    } catch (error) {
     if (!active) return;
     const status = error instanceof DemoJourneyError ? error.status : 0;
-    setResult({ key, state: { status: status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden' : status === 503 ? 'unavailable' : 'error' } });
+    setResult({ key, state: { status: status === 401 ? 'unauthenticated' : status === 403 ? 'forbidden' : status === 503 ? 'unavailable' : 'error', requestId: error instanceof DemoJourneyError ? error.requestId : undefined } });
    }
   })();
   return () => { active = false; };
  }, [key, workspace, userId, includeEnquiries]);
  if (!session) return { status: 'disabled' };
  if (role === 'technician') return { status: 'restricted' };
+ if (session.profile && !role) return { status: 'forbidden' };
  if (!key) return { status: 'unauthenticated' };
  return result?.key === key ? result.state : { status: 'loading' };
 }
 
 export function demoDataMessage(state: State): string | null {
+ const ref = 'requestId' in state && state.requestId ? ` (Ref: ${state.requestId})` : '';
  switch (state.status) {
   case 'loading': return 'Loading saved demo data…';
   case 'restricted': return 'Saved demo enquiries and jobs are restricted to office staff and administrators.';
-  case 'unauthenticated': return 'Your session could not be verified. Sign in again.';
-  case 'forbidden': return 'You do not have access to saved demo data in this workspace.';
-  case 'unavailable': return 'Saved demo data is temporarily unavailable. Try again later.';
-  case 'error': return 'Could not load saved demo data. Please retry.';
+  case 'unauthenticated': return 'Your session could not be verified. Sign in again.' + ref;
+  case 'forbidden': return 'You do not have access to saved demo data in this workspace.' + ref;
+  case 'unavailable': return 'Saved demo data is temporarily unavailable. Try again later.' + ref;
+  case 'error': return 'Could not load saved demo data. Please retry.' + ref;
   default: return null;
  }
 }

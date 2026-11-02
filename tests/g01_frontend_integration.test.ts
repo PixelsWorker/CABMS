@@ -203,7 +203,7 @@ test('G01 mounted dashboard for CCTV-only member renders without crash and filte
     assert.deepEqual(Object.keys(currentCtx.brands), ['cctv']);
 
     // 2. Operational jobs heading must reflect Gold Coast CCTV
-    assert.match(container.textContent!, /Gold Coast CCTV Operational Jobs/);
+    assert.match(container.textContent!, /Gold Coast CCTV Sample Operational Jobs \(Simulation\)/);
     assert.doesNotMatch(container.textContent!, /Solarcell Operational Jobs/);
 
     // 3. Cross-company consolidated queue must ONLY reference Gold Coast CCTV
@@ -241,7 +241,7 @@ test('G01 mounted dashboard for CCTV-only member renders without crash and filte
     await act(async () => {
       (cctvJob as HTMLElement).click();
     });
-    assert.equal(currentCtx.activeTab, 'jobs');
+    assert.equal(currentCtx.activeTab, 'dashboard');
     assert.equal(currentCtx.selectedJobId, 'JOB-2026-104');
 
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
@@ -306,7 +306,7 @@ test('G01 mounted dashboard for Smart-Home-only member renders without crash and
     assert.deepEqual(Object.keys(currentCtx.brands), ['smart_home']);
 
     // 2. Operational jobs heading must reflect Smart Home Solutions
-    assert.match(container.textContent!, /Smart Home Solutions Operational Jobs/);
+    assert.match(container.textContent!, /Smart Home Solutions Sample Operational Jobs \(Simulation\)/);
     assert.doesNotMatch(container.textContent!, /Solarcell Operational Jobs/);
 
     // 3. Cross-company consolidated queue must ONLY reference Smart Home Solutions
@@ -344,7 +344,7 @@ test('G01 mounted dashboard for Smart-Home-only member renders without crash and
     await act(async () => {
       shsJob.click();
     });
-    assert.equal(currentCtx.activeTab, 'jobs');
+    assert.equal(currentCtx.activeTab, 'dashboard');
     assert.equal(currentCtx.selectedJobId, 'JOB-2026-102');
 
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });

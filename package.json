@@ -11,6 +11,8 @@
     "lint": "tsc --noEmit",
     "test": "npm run build && tsx --test src/utils/cabmsLogic.test.ts tests/*.test.ts tests/s2/*.test.ts tests/bootstrap/*.test.ts",
     "test:g01-workerd": "tsx --test tests/workerd/g01_d1_worker_binding.test.ts",
+    "test:demo-workerd": "tsx --test tests/workerd/demo_journey_workerd.test.ts",
+    "test:workerd": "tsx --test tests/workerd/g01_d1_worker_binding.test.ts tests/workerd/demo_journey_workerd.test.ts",
     "test:layer1": "tsx --test tests/layer1_toolchain.test.ts",
     "test:layer2": "tsx --test tests/layer2_domain.test.ts",
     "test:layer3": "tsx --test tests/layer3_navigation_access.test.ts",

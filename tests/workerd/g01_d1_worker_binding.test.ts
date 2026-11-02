@@ -178,7 +178,9 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
         break;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if ((code !== 'EPERM' && code !== 'EBUSY') || attempt >= 4) throw error;
+        if (!['EPERM', 'EBUSY', 'ENOTEMPTY'].includes(code ?? '') || attempt >= 4) {
+          throw new Error(`Cleanup failed; temporary state preserved at ${isolationReal} (${code ?? 'unknown error'})`, { cause: error });
+        }
         await new Promise(resolveRetry => setTimeout(resolveRetry, 200 * (attempt + 1)));
       }
     }

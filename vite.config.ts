@@ -2,34 +2,46 @@ import fs from 'node:fs';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Plugin, type ResolvedConfig } from 'vite';
+
+function blockPlanningAssetRequests(server: { middlewares: { use: (handler: (req: { url?: string }, res: { statusCode: number; end: (body: string) => void }, next: () => void) => void) => void } }) {
+  server.middlewares.use((req, res, next) => {
+    const url = req.url?.split('?')[0];
+    if (url && (url === '/assets/aistudio' || url.startsWith('/assets/aistudio/') ||
+        url === '/public/assets/aistudio' || url.startsWith('/public/assets/aistudio/') || url.includes('assets/aistudio'))) {
+      res.statusCode = 404;
+      res.end('Not Found');
+      return;
+    }
+    next();
+  });
+}
 
 function excludePlanningAssetsPlugin(): Plugin {
+  let resolved: ResolvedConfig | undefined;
   return {
     name: 'exclude-planning-assets',
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        const url = req.url?.split('?')[0];
-        if (
-          url &&
-          (url === '/assets/aistudio' ||
-            url.startsWith('/assets/aistudio/') ||
-            url === '/public/assets/aistudio' ||
-            url.startsWith('/public/assets/aistudio/') ||
-            url.includes('assets/aistudio'))
-        ) {
-          res.statusCode = 404;
-          res.end('Not Found');
-          return;
-        }
-        next();
-      });
+    configResolved(config) {
+      resolved = config;
     },
+    configureServer: blockPlanningAssetRequests,
+    configurePreviewServer: blockPlanningAssetRequests,
     closeBundle() {
-      const distAistudio = path.resolve(import.meta.dirname, 'dist/assets/aistudio');
-      if (fs.existsSync(distAistudio)) {
-        fs.rmSync(distAistudio, { recursive: true, force: true });
+      if (!resolved) throw new Error('Vite configuration was not resolved before asset exclusion');
+      const root = path.resolve(resolved.root);
+      const outDir = path.resolve(root, resolved.build.outDir);
+      const outputRoot = path.resolve(outDir, 'assets');
+      const planningAssets = path.resolve(outputRoot, 'aistudio');
+      const relativeTarget = path.relative(outputRoot, planningAssets);
+      const sourceAssets = path.resolve(root, 'public/assets/aistudio');
+      const targetReal = fs.existsSync(planningAssets) ? fs.realpathSync(planningAssets) : planningAssets;
+      const outputReal = fs.existsSync(outputRoot) ? fs.realpathSync(outputRoot) : outputRoot;
+      if (outDir === root || !relativeTarget || relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget) ||
+          planningAssets === sourceAssets || planningAssets.startsWith(sourceAssets + path.sep) ||
+          (fs.existsSync(planningAssets) && !targetReal.startsWith(outputReal + path.sep))) {
+        throw new Error(`Refusing unsafe planning-asset cleanup target: ${planningAssets}`);
       }
+      if (fs.existsSync(planningAssets)) fs.rmSync(planningAssets, { recursive: true, force: true });
     },
   };
 }

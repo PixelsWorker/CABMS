@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowLeft,
@@ -27,6 +28,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
   customExplanation,
 }) => {
   const { persona, setPersona, setActiveTab } = useCabms();
+  const session = useG01Session();
 
   const getPersonaLabel = (p: Persona) => {
     switch (p) {
@@ -80,7 +82,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
           <span>Return to Dashboard</span>
         </button>
 
-        <div className="flex items-center space-x-2">
+        {!session && <div className="flex items-center space-x-2">
           <span className="text-xs text-(--cabms-text-secondary)">Or switch persona:</span>
           <button
             onClick={() => setPersona('owner_admin')}
@@ -94,7 +96,7 @@ export const AccessDeniedView: React.FC<AccessDeniedProps> = ({
           >
             Switch to Super Admin
           </button>
-        </div>
+        </div>}
       </div>
     </div>
   );

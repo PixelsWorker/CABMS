@@ -30,23 +30,47 @@ export function isAuthorizedProfile(value: unknown): value is Profile {
 }
 
 /** Firebase identifies the user; only the Worker supplies CABMS memberships. */
-export function G01SessionProvider({ children }: { children: React.ReactNode }) {
+type SessionDependencies = {
+  currentUser: () => User | null;
+  onIdTokenChanged: (callback: (user: User | null) => void | Promise<void>) => () => void;
+  signOut: () => Promise<void>;
+  signIn: () => Promise<void>;
+  getCurrentUser: typeof apiGetCurrentUser;
+};
+const productionDependencies: SessionDependencies = {
+  currentUser: () => auth.currentUser,
+  onIdTokenChanged: callback => onIdTokenChanged(auth, callback),
+  signOut: () => signOut(auth),
+  signIn: () => signInWithPopup(auth, googleAuthProvider).then(() => undefined),
+  getCurrentUser: apiGetCurrentUser,
+};
+export function G01SessionProvider({ children, dependencies = productionDependencies }: { children: React.ReactNode; dependencies?: SessionDependencies }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [workspaceId, setWorkspaceId] = useState<BrandId | null>(null);
   const generation = useRef(0);
   const principal = useRef<string | null>(null);
+  const signOutPending = useRef<{ id: number; uid: string } | null>(null);
+  const logoutSequence = useRef(0);
   useEffect(() => {
     let active = true;
-    const unsubscribe = onIdTokenChanged(auth, async (user: User | null) => {
+    const unsubscribe = dependencies.onIdTokenChanged(async (user: User | null) => {
+      if (user && signOutPending.current?.uid === user.uid) return;
+      if (user && signOutPending.current && signOutPending.current.uid !== user.uid) signOutPending.current = null;
+      if (!user) {
+        principal.current = null;
+        signOutPending.current = null;
+        setProfile(null);
+        setWorkspaceId(null);
+      }
       const request = ++generation.current;
       const sameUser = !!user && principal.current === user.uid;
       if (!sameUser) { setProfile(null); setWorkspaceId(null); setLoading(true); }
       setError('');
       try {
         if (user) {
-          const response = await apiGetCurrentUser(await user.getIdToken());
+          const response = await dependencies.getCurrentUser(await user.getIdToken());
           if (!active || request !== generation.current) return;
           if (!response.ok) {
             if (response.status === 401 || response.status === 403 || response.status === 404) throw new AccessVerificationDenied();
@@ -61,31 +85,69 @@ export function G01SessionProvider({ children }: { children: React.ReactNode }) 
       } catch (error) {
         const code = (error as { code?: string })?.code;
         const denied = error instanceof AccessVerificationDenied || ['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token'].includes(code || '');
-        if (active && request === generation.current && (!sameUser || denied)) { setProfile(null); setWorkspaceId(null); }
+        if (active && request === generation.current && (!sameUser || denied)) { principal.current = null; setProfile(null); setWorkspaceId(null); }
         if (active && request === generation.current) setError('CABMS access could not be verified. Check your connection and authorized membership, then sign in again.');
       } finally {
         if (active && request === generation.current) setLoading(false);
       }
     });
     return () => { active = false; generation.current++; unsubscribe(); };
-  }, []);
+  }, [dependencies]);
   const login = async () => {
     setError('');
     setLoading(true);
-    try { await signInWithPopup(auth, googleAuthProvider); }
+    try { await dependencies.signIn(); }
     catch { setLoading(false); setError('Google sign-in was not completed. Please try again.'); }
   };
   const logout = async () => {
-    generation.current++;
+    const user = dependencies.currentUser();
+    const request = ++generation.current;
+    const operation = user ? { id: ++logoutSequence.current, uid: user.uid } : null;
+    signOutPending.current = operation;
     principal.current = null;
     setProfile(null);
     setWorkspaceId(null);
-    try { await signOut(auth); }
-    catch { setError('Sign-out could not be completed. Close this session and retry.'); }
+    setLoading(true);
+    setError('');
+    try {
+      await dependencies.signOut();
+      if (request !== generation.current) return;
+      principal.current = null;
+      if (signOutPending.current === operation) signOutPending.current = null;
+      setLoading(false);
+    } catch {
+      if (signOutPending.current === operation) signOutPending.current = null;
+      if (request !== generation.current) return;
+      setError('Sign-out failed. You are still signed in; please retry.');
+      if (user && dependencies.currentUser()?.uid === user.uid) {
+        const retryGeneration = ++generation.current;
+        try {
+          const response = await dependencies.getCurrentUser(await user.getIdToken());
+          if (retryGeneration !== generation.current || dependencies.currentUser()?.uid !== user.uid) return;
+          if (!response.ok || !isAuthorizedProfile(response.data)) throw new AccessVerificationDenied();
+          setProfile(response.data);
+          principal.current = user.uid;
+          setWorkspaceId(response.data.memberships.some(m => m.workspace_id === workspaceId) ? workspaceId : response.data.memberships[0].workspace_id as BrandId);
+          setError('Sign-out failed. You are still signed in; please retry.');
+        } catch {
+          if (retryGeneration === generation.current) { principal.current = null; setProfile(null); setWorkspaceId(null); }
+        } finally {
+          if (retryGeneration === generation.current) setLoading(false);
+        }
+      } else setLoading(false);
+    }
   };
   const token = async () => {
-    if (!auth.currentUser || !profile) throw new Error('Authentication required');
-    return auth.currentUser.getIdToken();
+    const user = dependencies.currentUser();
+    const verifiedPrincipal = principal.current;
+    const requestGeneration = generation.current;
+    const verifiedProfile = profile;
+    if (!user || !verifiedProfile || !verifiedPrincipal || user.uid !== verifiedPrincipal || signOutPending.current) throw new Error('Authentication required');
+    const idToken = await user.getIdToken();
+    if (requestGeneration !== generation.current || dependencies.currentUser()?.uid !== user.uid || principal.current !== verifiedPrincipal || signOutPending.current) {
+      throw new Error('Authentication changed while obtaining a token');
+    }
+    return idToken;
   };
   const selectWorkspace = (id: BrandId) => {
     if (profile?.memberships.some(m => m.workspace_id === id)) setWorkspaceId(id);

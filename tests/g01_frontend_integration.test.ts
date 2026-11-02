@@ -8,6 +8,7 @@ import { SessionContext, type Session } from '../src/context/G01Session.tsx';
 import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
 import { AppContent } from '../src/App.tsx';
 import { SignInScreen } from '../src/components/SignInScreen.tsx';
+import { AccessDeniedView } from '../src/components/AccessDeniedView.tsx';
 import { SettingsFeedback } from '../src/components/SettingsFeedback.tsx';
 import type { SettingsResource } from '../src/services/useSettingsResource.ts';
 import { SystemWorkspaceSettingsView } from '../src/views/SystemWorkspaceSettingsView.tsx';
@@ -21,6 +22,35 @@ import { createAuthenticationService } from '../backend/workers/auth.ts';
 import { createFirebaseFixture } from './support/firebaseTokens.ts';
 import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01SyntheticFixtures.ts';
 import { INITIAL_JOBS } from '../src/data/seedData.ts';
+
+test('AccessDeniedView keeps persona controls only in G00 simulation and dashboard navigation works', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const keys = ['window', 'document', 'navigator', 'HTMLElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const saved = new Map(keys.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of keys) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  let activeTab = '';
+  let selectTab!: (tab: any) => void;
+  const Probe = () => { const context = useCabms(); activeTab = context.activeTab; selectTab = context.setActiveTab; return React.createElement(AccessDeniedView, { resourceName: 'Settings', requiredRoleDescription: 'Admin' }); };
+  const denied = React.createElement(Probe);
+  try {
+    const session: Session = { profile: { user: { id: 'u', email: 'u@example.test', display_name: 'User' }, memberships: [{ workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' }] }, workspaceId: 'solarcell', selectWorkspace: () => {}, token: async () => 'token', login: async () => {}, logout: async () => {}, invalidate: () => {}, loading: false, error: '' };
+    await act(async () => root.render(React.createElement(SessionContext.Provider, { value: session }, React.createElement(CabmsProvider, null, denied))));
+    assert.doesNotMatch(dom.window.document.body.textContent!, /Switch to Admin|Switch to Super Admin/);
+    await act(async () => selectTab('jobs'));
+    assert.equal(activeTab, 'jobs');
+    await act(async () => (dom.window.document.querySelector('button') as HTMLButtonElement).click());
+    assert.equal(activeTab, 'dashboard');
+    await act(async () => root.render(React.createElement(CabmsProvider, null, denied)));
+    assert.match(dom.window.document.body.textContent!, /Switch to Admin/);
+    assert.match(dom.window.document.body.textContent!, /Switch to Super Admin/);
+    await act(async () => (dom.window.document.querySelector('button') as HTMLButtonElement).click());
+    assert.equal(activeTab, 'dashboard');
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const k of keys) { const d = saved.get(k); if (d) Object.defineProperty(globalThis, k, d); else delete (globalThis as any)[k]; }
+  }
+});
 
 test('G01 mounted settings: independent API saves, retained drafts, conflict recovery and durable audit', async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });

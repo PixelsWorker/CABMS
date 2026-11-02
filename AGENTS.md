@@ -24,7 +24,7 @@ Run commands from this directory (or active worktree). Both npm (Node `^22.22.2 
 - `npm run lint` / `bun run lint`: run the TypeScript compiler without emitting files (`tsc --noEmit`).
 - `npm test` / `bun run test`: run the configured application and test suite via the package script.
 - Individual layers: `npm run test:layer1` through `npm run test:layer8` (or `bun run ...`).
-- Alternate loader fallback (local-environment override for constrained runners without native tsx support; not present in clean repository checkouts): `npm run build && node --import ../../graphify-out/audit-loader.mjs --test src/utils/cabmsLogic.test.ts tests/*.test.ts`.
+- Alternate loader fallback (local-environment override for constrained runners without native tsx support; not present in clean repository checkouts): `npm run build && node --import ../../graphify-out/audit-loader.mjs --test src/utils/cabmsLogic.test.ts tests/*.test.ts tests/s2/*.test.ts tests/bootstrap/*.test.ts`.
 
 Use `package.json` scripts as the source of truth if these commands change. Do not claim tests passed unless they were run and passed.
 

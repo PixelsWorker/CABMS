@@ -202,9 +202,18 @@ export class LocalD1Database implements D1Database {
 /**
  * Creates an in-memory or file-backed local D1Database instance.
  */
+const disposableDatabases = new WeakSet<D1Database>();
+
+/** Only exact in-memory adapters created by this factory carry the disposable capability. */
+export function isDisposableInMemoryD1(db: D1Database): boolean {
+  return disposableDatabases.has(db);
+}
+
 export function createLocalD1Database(location: string = ':memory:'): D1Database {
   const sqlite = new DatabaseSync(location);
   // Enable foreign keys
   sqlite.exec('PRAGMA foreign_keys = ON;');
-  return new LocalD1Database(sqlite);
+  const db = new LocalD1Database(sqlite);
+  if (location === ':memory:') disposableDatabases.add(db);
+  return db;
 }

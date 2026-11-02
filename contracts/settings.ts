@@ -95,6 +95,7 @@ export const ALLOWED_LEGAL_KEYS: (keyof EditableLegalDetails)[] = [
 ];
 
 export type MutationOutcome =
+  | { status: 'DENIED' }
   | { status: 'SUCCESS'; newVersion: number; updated: WorkspaceSettingsRow | LegalIssuerRow; auditEventId: string; reqNonce: string }
   | { status: 'NO_OP'; current: WorkspaceSettingsRow | LegalIssuerRow; version: number }
   | { status: 'PRECONDITION_FAILED'; currentVersion?: number }

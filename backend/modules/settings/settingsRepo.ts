@@ -5,6 +5,8 @@
  */
 
 import { D1Database } from '../../db/d1.ts';
+import type { AuthContext } from '../../types.ts';
+import { approvedMembership } from '../../workers/privilegedApproval.ts';
 import {
   ALLOWED_SETTINGS_KEYS,
   ALLOWED_LEGAL_KEYS,
@@ -31,6 +33,38 @@ export type {
   EditableLegalDetails,
   MutationOutcome,
 };
+
+const currentPrivilege = `EXISTS (
+  SELECT 1 FROM workspace_memberships wm
+  JOIN users u ON u.id = wm.user_id AND u.disabled = 0
+  JOIN user_identity_mappings im ON im.user_id = u.id AND im.provider_id = 'firebase'
+  WHERE wm.workspace_id = ? AND wm.user_id = ? AND im.provider_subject_id = ?
+    AND wm.role IN (?, ?) AND ${approvedMembership}
+)`;
+
+async function authorizedRow<T>(db: D1Database, table: 'workspace_settings' | 'legal_issuers', workspaceId: string, userId: string, uid: string, legal: boolean): Promise<T | null> {
+  const roles = legal ? ['super_admin', 'super_admin'] : ['super_admin', 'owner_admin'];
+  return db.prepare(`SELECT * FROM ${table} WHERE workspace_id = ? AND ${currentPrivilege}`)
+    .bind(workspaceId, workspaceId, userId, uid, ...roles).first<T>();
+}
+
+async function currentlyAuthorized(db: D1Database, workspaceId: string, userId: string, uid: string, legal: boolean): Promise<boolean> {
+  const roles = legal ? ['super_admin', 'super_admin'] : ['super_admin', 'owner_admin'];
+  return !!(await db.prepare(`SELECT 1 AS allowed WHERE ${currentPrivilege}`)
+    .bind(workspaceId, userId, uid, ...roles).first<{allowed: number}>());
+}
+
+export async function getAuthorizedWorkspaceSettings(db: D1Database, workspaceId: string, auth: AuthContext): Promise<WorkspaceSettingsRow | null> {
+  return db.prepare(`SELECT s.* FROM workspace_settings s WHERE s.workspace_id = ? AND EXISTS (
+    SELECT 1 FROM workspace_memberships wm JOIN users u ON u.id = wm.user_id AND u.disabled = 0
+    JOIN user_identity_mappings im ON im.user_id = u.id AND im.provider_id = 'firebase'
+    WHERE wm.workspace_id = s.workspace_id AND wm.user_id = ? AND im.provider_subject_id = ? AND ${approvedMembership}
+  )`).bind(workspaceId, auth.userId, auth.providerSubjectId).first<WorkspaceSettingsRow>();
+}
+
+export async function getAuthorizedLegalDetails(db: D1Database, workspaceId: string, auth: AuthContext): Promise<LegalIssuerRow | null> {
+  return authorizedRow<LegalIssuerRow>(db, 'legal_issuers', workspaceId, auth.userId, auth.providerSubjectId, true);
+}
 
 /**
  * Fetch current workspace settings
@@ -68,16 +102,17 @@ export async function updateWorkspaceSettings(
     expectedVersion: number;
     patch: Partial<EditableWorkspaceSettings>;
     actorUserId: string;
+    actorUid: string;
     requestId: string;
     forcedAuditFailure?: boolean; // For testing atomicity rollback
   }
 ): Promise<MutationOutcome> {
-  const { workspaceId, expectedVersion, patch, actorUserId, requestId, forcedAuditFailure } = params;
+  const { workspaceId, expectedVersion, patch, actorUserId, actorUid, requestId, forcedAuditFailure } = params;
 
   // 1. Fetch current row
-  const current = await getWorkspaceSettings(db, workspaceId);
+  const current = await authorizedRow<WorkspaceSettingsRow>(db, 'workspace_settings', workspaceId, actorUserId, actorUid, false);
   if (!current) {
-    return { status: 'NOT_FOUND' };
+    return { status: await currentlyAuthorized(db, workspaceId, actorUserId, actorUid, false) ? 'NOT_FOUND' : 'DENIED' };
   }
 
   // 2. Early precondition check
@@ -137,7 +172,7 @@ export async function updateWorkspaceSettings(
          version = version + 1,
          transition_nonce = ?,
          updated_at = ?
-     WHERE workspace_id = ? AND version = ?`
+     WHERE workspace_id = ? AND version = ? AND ${currentPrivilege}`
   ).bind(
     merged.trading_name,
     merged.tagline,
@@ -150,7 +185,7 @@ export async function updateWorkspaceSettings(
     reqNonce,
     now,
     workspaceId,
-    expectedVersion
+    expectedVersion, workspaceId, actorUserId, actorUid, 'super_admin', 'owner_admin'
   );
 
   // Statement 2: Guarded Audit Insertion matching ONLY this request's nonce
@@ -177,15 +212,25 @@ export async function updateWorkspaceSettings(
     reqNonce
   );
 
+  // A zero-row audit INSERT is not a transaction failure on its own. Force
+  // a constraint failure inside the batch if this update lacks its audit row.
+  const assertAudit = db.prepare(`INSERT INTO users (id)
+    SELECT ? WHERE EXISTS (
+      SELECT 1 FROM workspace_settings WHERE workspace_id = ? AND transition_nonce = ?
+    ) AND NOT EXISTS (
+      SELECT 1 FROM settings_audit_events WHERE id = ? AND workspace_id = ? AND transition_nonce = ?
+    )`).bind(`assert_${crypto.randomUUID()}`, workspaceId, reqNonce, auditId, workspaceId, reqNonce);
+
   // Execute atomic batch
-  const batchRes = await db.batch([stmt1, stmt2]);
+  const batchRes = await db.batch([stmt1, stmt2, assertAudit]);
 
   const updateChanges = batchRes[0]?.meta?.changes ?? 0;
   const auditChanges = batchRes[1]?.meta?.changes ?? 0;
 
   // If zero rows updated (concurrent conflict or stale version between read and write)
   if (updateChanges === 0 || auditChanges === 0) {
-    const fresh = await getWorkspaceSettings(db, workspaceId);
+    const fresh = await authorizedRow<WorkspaceSettingsRow>(db, 'workspace_settings', workspaceId, actorUserId, actorUid, false);
+    if (!fresh) return { status: await currentlyAuthorized(db, workspaceId, actorUserId, actorUid, false) ? 'NOT_FOUND' : 'DENIED' };
     return { status: 'PRECONDITION_FAILED', currentVersion: fresh?.version };
   }
 
@@ -220,16 +265,17 @@ export async function updateLegalDetails(
     expectedVersion: number;
     patch: Partial<EditableLegalDetails>;
     actorUserId: string;
+    actorUid: string;
     requestId: string;
     forcedAuditFailure?: boolean; // For testing atomicity rollback
   }
 ): Promise<MutationOutcome> {
-  const { workspaceId, expectedVersion, patch, actorUserId, requestId, forcedAuditFailure } = params;
+  const { workspaceId, expectedVersion, patch, actorUserId, actorUid, requestId, forcedAuditFailure } = params;
 
   // 1. Fetch current row
-  const current = await getLegalDetails(db, workspaceId);
+  const current = await authorizedRow<LegalIssuerRow>(db, 'legal_issuers', workspaceId, actorUserId, actorUid, true);
   if (!current) {
-    return { status: 'NOT_FOUND' };
+    return { status: await currentlyAuthorized(db, workspaceId, actorUserId, actorUid, true) ? 'NOT_FOUND' : 'DENIED' };
   }
 
   // 2. Precondition check
@@ -284,7 +330,7 @@ export async function updateLegalDetails(
          version = version + 1,
          transition_nonce = ?,
          updated_at = ?
-     WHERE workspace_id = ? AND version = ?`
+     WHERE workspace_id = ? AND version = ? AND ${currentPrivilege}`
   ).bind(
     merged.legal_issuer_name,
     merged.abn,
@@ -294,7 +340,7 @@ export async function updateLegalDetails(
     reqNonce,
     now,
     workspaceId,
-    expectedVersion
+    expectedVersion, workspaceId, actorUserId, actorUid, 'super_admin', 'super_admin'
   );
 
   // Statement 2: Guarded Audit Insertion matching ONLY this request's nonce
@@ -320,13 +366,22 @@ export async function updateLegalDetails(
     reqNonce
   );
 
-  const batchRes = await db.batch([stmt1, stmt2]);
+  // Abort inside the transaction if an update has no matching audit row.
+  const assertAudit = db.prepare(`INSERT INTO users (id)
+    SELECT ? WHERE EXISTS (
+      SELECT 1 FROM legal_issuers WHERE workspace_id = ? AND transition_nonce = ?
+    ) AND NOT EXISTS (
+      SELECT 1 FROM settings_audit_events WHERE id = ? AND workspace_id = ? AND transition_nonce = ?
+    )`).bind(`assert_${crypto.randomUUID()}`, workspaceId, reqNonce, auditId, workspaceId, reqNonce);
+
+  const batchRes = await db.batch([stmt1, stmt2, assertAudit]);
 
   const updateChanges = batchRes[0]?.meta?.changes ?? 0;
   const auditChanges = batchRes[1]?.meta?.changes ?? 0;
 
   if (updateChanges === 0 || auditChanges === 0) {
-    const fresh = await getLegalDetails(db, workspaceId);
+    const fresh = await authorizedRow<LegalIssuerRow>(db, 'legal_issuers', workspaceId, actorUserId, actorUid, true);
+    if (!fresh) return { status: await currentlyAuthorized(db, workspaceId, actorUserId, actorUid, true) ? 'NOT_FOUND' : 'DENIED' };
     return { status: 'PRECONDITION_FAILED', currentVersion: fresh?.version };
   }
 

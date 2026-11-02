@@ -4,7 +4,9 @@
  * duplicate/customer matching, and explicit office conversion to draft work orders.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useG01Session } from '../context/G01Session.tsx';
+import { demoJourneyRequest, type DemoEnquiry } from '../services/demoJourneyClient.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -25,7 +27,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { BrandId, WebsiteEnquiry } from '../types/cabms.ts';
 
-export const WebsiteInboxView: React.FC = () => {
+const SimulatedWebsiteInboxView: React.FC = () => {
   const {
     websiteEnquiries,
     simulateWebsiteSubmission,
@@ -448,3 +450,42 @@ export const WebsiteInboxView: React.FC = () => {
     </div>
   );
 };
+
+/** Authenticated demo data is kept separate from the G00 simulated inbox. */
+export const WebsiteInboxView: React.FC = () => {
+ const session = useG01Session();
+ return session ? <PersistentInbox key={session.workspaceId ?? 'none'} /> : <SimulatedWebsiteInboxView />;
+};
+function PersistentInbox() {
+ const session = useG01Session()!;
+ const {setActiveTab} = useCabms();
+ const [items,setItems] = useState<DemoEnquiry[]>([]);
+ const [name,setName] = useState(''); const [service,setService] = useState('');
+ const [error,setError] = useState(''); const [busy,setBusy] = useState(false);
+ const workspace = session.workspaceId;
+ useEffect(() => {
+  let active = true; setItems([]); setError('');
+  if (workspace) void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {if(active)setItems(rows);}).catch(() => {if(active)setError('Could not load enquiries.');});
+  return () => {active=false;};
+ },[workspace,session.profile?.user.id]);
+ const refresh = async () => { if (!workspace) return; const rows = await demoJourneyRequest<DemoEnquiry[]>(workspace,await session.token(),'enquiries'); setItems(rows); };
+ const create = async (event: React.FormEvent) => {
+  event.preventDefault(); if (!workspace || busy) return; setBusy(true); setError('');
+  try { await demoJourneyRequest(workspace,await session.token(),'enquiries','POST',{customer_name:name,service}); setName('');setService(''); await refresh(); }
+  catch(e) {setError(e instanceof Error ? e.message : 'Could not save enquiry.');} finally {setBusy(false);}
+ };
+ const convert = async (id:string) => {
+  if (!workspace || busy) return; setBusy(true);setError('');
+  try {await demoJourneyRequest(workspace,await session.token(),`enquiries/${encodeURIComponent(id)}/conversion`,'POST'); await refresh();}
+  catch(e) {setError(e instanceof Error ? e.message : 'Could not convert enquiry.');} finally {setBusy(false);}
+ };
+ return <section className="cabms-card p-5 space-y-4"><h1 className="text-lg font-bold">Enquiries — saved demo data</h1>
+  <p>Use synthetic names and descriptions only. These records are saved to the demo database.</p>
+  {error && <p role="alert">{error}</p>}
+  <form onSubmit={create} className="flex flex-col gap-4 sm:flex-row sm:items-end">
+   <label className="flex flex-1 flex-col gap-2 text-sm font-semibold">Customer name<input className="cabms-input w-full rounded border px-3 py-2 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" value={name} maxLength={120} required onChange={e=>setName(e.target.value)} /></label>
+   <label className="flex flex-1 flex-col gap-2 text-sm font-semibold">Requested service<input className="cabms-input w-full rounded border px-3 py-2 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" value={service} maxLength={500} required onChange={e=>setService(e.target.value)} /></label>
+   <button className="rounded bg-amber-400 px-4 py-2 font-semibold text-slate-950 hover:bg-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} type="submit">Save enquiry</button></form>
+  <ul className="space-y-3">{items.map(item=><li className="cabms-card-subtle rounded p-3" key={item.id}>{item.customer_name} — {item.service} — {item.job_id ? `Converted to job ${item.job_id}` : <button className="rounded border border-amber-400 px-3 py-1 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:opacity-50" disabled={busy} onClick={()=>void convert(item.id)}>Convert to job</button>}</li>)}</ul>
+  <button className="rounded border border-amber-400 px-3 py-2 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" onClick={()=>setActiveTab('jobs')}>Open jobs</button></section>;
+}

@@ -64,7 +64,7 @@ export const AppContent: React.FC = () => {
     <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
       {/* 1. Mandatory Persistent Demo Banner */}
       {!session && <DemoBanner />}
-      {session && <div className="cabms-card p-3 text-sm" role="status">G01 settings use the authenticated backend. Jobs, customers, schedules and other operational screens remain synthetic G00 demonstrations.</div>}
+      {session && <div className="cabms-card p-3 text-sm" role="status">G01 uses the authenticated backend for settings and saved demo enquiries and jobs. Dashboard operational figures, schedules, customers and other workflows remain synthetic G00 demonstrations.</div>}
       {session?.error && <p role="alert" className="cabms-card p-3">{session.error}</p>}
 
       {/* 2. Interactive Demo Controls & Virtual Clock Bar */}

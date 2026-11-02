@@ -15,7 +15,7 @@ import {
   handleGetLegalDetails,
   handlePatchLegalDetails,
 } from './workers/routes/settings.ts';
-import { authenticateRequest, AuthenticationUnavailable } from './workers/auth.ts';
+import { productionAuthenticationService, AuthenticationUnavailable, type AuthenticationService } from './workers/auth.ts';
 import {
   resourceNotFoundResponse,
   authenticationRequiredResponse,
@@ -23,8 +23,11 @@ import {
   createProblemResponse,
 } from './workers/problem.ts';
 import { StructuredLogger } from './workers/logger.ts';
+import { approvedMembership } from './workers/privilegedApproval.ts';
+import { handleDemoJourney } from './workers/routes/demoJourney.ts';
 
-export default {
+export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
+  return {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname;
@@ -54,7 +57,7 @@ export default {
     try {
       // 1. GET /api/v1/auth/me (returns current user & memberships)
       if (pathname === '/api/v1/auth/me' && method === 'GET') {
-        const auth = await authenticateRequest(env.DB, request, env);
+        const auth = await authentication.authenticateRequest(env.DB, request, env);
         if (!auth) {
           return addCors(authenticationRequiredResponse('Valid staff authentication token is required', requestId), env);
         }
@@ -64,8 +67,10 @@ export default {
           `SELECT wm.workspace_id, wm.role, w.name, w.slug
            FROM workspace_memberships wm
            JOIN workspaces w ON wm.workspace_id = w.id
-           WHERE wm.user_id = ?`
-        ).bind(auth.userId).all<{ workspace_id: string; role: string; name: string; slug: string }>();
+           JOIN users u ON u.id = wm.user_id AND u.disabled = 0
+           JOIN user_identity_mappings im ON im.user_id = u.id AND im.provider_id = 'firebase'
+           WHERE wm.user_id = ? AND im.provider_subject_id = ? AND ${approvedMembership}`
+        ).bind(auth.userId, auth.providerSubjectId).all<{ workspace_id: string; role: string; name: string; slug: string }>();
 
         return addCors(
           new Response(
@@ -90,7 +95,7 @@ export default {
 
       // 2. GET /api/v1/workspaces (returns accessible workspaces)
       if (pathname === '/api/v1/workspaces' && method === 'GET') {
-        const auth = await authenticateRequest(env.DB, request, env);
+        const auth = await authentication.authenticateRequest(env.DB, request, env);
         if (!auth) {
           return addCors(authenticationRequiredResponse('Valid staff authentication token is required', requestId), env);
         }
@@ -99,8 +104,10 @@ export default {
           `SELECT w.id, w.name, w.slug, wm.role
            FROM workspaces w
            JOIN workspace_memberships wm ON w.id = wm.workspace_id
-           WHERE wm.user_id = ?`
-        ).bind(auth.userId).all<{ id: string; name: string; slug: string; role: string }>();
+           JOIN users u ON u.id = wm.user_id AND u.disabled = 0
+           JOIN user_identity_mappings im ON im.user_id = u.id AND im.provider_id = 'firebase'
+           WHERE wm.user_id = ? AND im.provider_subject_id = ? AND ${approvedMembership}`
+        ).bind(auth.userId, auth.providerSubjectId).all<{ id: string; name: string; slug: string; role: string }>();
 
         return addCors(
           new Response(JSON.stringify(res.results), {
@@ -119,9 +126,9 @@ export default {
         const workspaceId = settingsMatch[1];
         let resp: Response;
         if (method === 'GET') {
-          resp = await handleGetWorkspaceSettings(request, env.DB, workspaceId, requestId, env);
+          resp = await handleGetWorkspaceSettings(request, env.DB, workspaceId, requestId, env, authentication);
         } else if (method === 'PATCH') {
-          resp = await handlePatchWorkspaceSettings(request, env.DB, workspaceId, requestId, env);
+          resp = await handlePatchWorkspaceSettings(request, env.DB, workspaceId, requestId, env, authentication);
         } else {
           return addCors(new Response('Method Not Allowed', { status: 405 }), env);
         }
@@ -134,13 +141,18 @@ export default {
         const workspaceId = legalMatch[1];
         let resp: Response;
         if (method === 'GET') {
-          resp = await handleGetLegalDetails(request, env.DB, workspaceId, requestId, env);
+          resp = await handleGetLegalDetails(request, env.DB, workspaceId, requestId, env, authentication);
         } else if (method === 'PATCH') {
-          resp = await handlePatchLegalDetails(request, env.DB, workspaceId, requestId, env);
+          resp = await handlePatchLegalDetails(request, env.DB, workspaceId, requestId, env, authentication);
         } else {
           return addCors(new Response('Method Not Allowed', { status: 405 }), env);
         }
         return addCors(resp, env);
+      }
+
+      const journeyMatch = /^\/api\/v1\/workspaces\/([^/]+)\/(enquiries|jobs)(?:\/([^/]+)\/conversion)?$/.exec(pathname);
+      if (journeyMatch && !(journeyMatch[2] === 'jobs' && journeyMatch[3])) {
+        return addCors(await handleDemoJourney(request, env, journeyMatch[1], journeyMatch[2], journeyMatch[3], requestId, authentication), env);
       }
 
       // Unknown API route
@@ -162,7 +174,10 @@ export default {
       return addCors(internalErrorResponse('Unexpected server error', requestId), env);
     }
   },
-};
+  };
+}
+
+export default createWorker();
 
 function addCors(resp: Response, env?: Env): Response {
   const headers = new Headers(resp.headers);

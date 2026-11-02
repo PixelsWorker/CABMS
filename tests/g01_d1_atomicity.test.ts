@@ -15,6 +15,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLocalD1Database, D1Database } from '../backend/db/d1.ts';
 import { runLocalMigrations } from '../backend/db/migrate.ts';
+import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01SyntheticFixtures.ts';
 import {
   getWorkspaceSettings,
   getLegalDetails,
@@ -29,7 +30,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
   beforeEach(async () => {
     // Create a fresh, disposable in-memory SQLite database wrapped with D1 API
     db = createLocalD1Database(':memory:');
-    await runLocalMigrations(db);
+    await runLocalMigrations(db, { disposableTest: true });
+    await installG01TestAuthFixtures(db);
   });
 
   it('Invariant 1: Successful changes persist the correct audit evidence', async () => {
@@ -45,7 +47,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
         trading_name: 'Solarcell Commercial',
         contact_phone: '(07) 5500 9999',
       },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_test_inv1',
     });
 
@@ -71,7 +74,7 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
     assert.equal(event.event_type, 'SETTINGS_UPDATED');
     assert.equal(event.old_version, 1);
     assert.equal(event.new_version, 2);
-    assert.equal(event.actor_user_id, 'usr_super_admin');
+    assert.equal(event.actor_user_id, G01_TEST_AUTH.superAdmin.userId);
     assert.equal(event.request_id, 'req_test_inv1');
     assert.equal(event.transition_nonce, result.reqNonce);
 
@@ -89,7 +92,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'solarcell',
       expectedVersion: 1,
       patch: { trading_name: 'Solarcell v2' },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_v1_to_v2',
     });
 
@@ -101,7 +105,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'solarcell',
       expectedVersion: 1, // Stale! Current is 2
       patch: { trading_name: 'Solarcell Stale Overwrite' },
-      actorUserId: 'usr_owner_admin',
+      actorUserId: G01_TEST_AUTH.ownerAdmin.userId,
+      actorUid: G01_TEST_AUTH.ownerAdmin.uid,
       requestId: 'req_stale',
     });
 
@@ -130,7 +135,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
           workspaceId: 'solarcell',
           expectedVersion: 1,
           patch: { trading_name: 'Failed Mutation Attempt' },
-          actorUserId: 'usr_super_admin',
+          actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
           requestId: 'req_forced_fail',
           forcedAuditFailure: true,
         });
@@ -159,7 +165,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'solarcell',
       expectedVersion: 1,
       patch: { trading_name: 'Concurrent Request 1' },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_concurrent_1',
     });
 
@@ -167,7 +174,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'solarcell',
       expectedVersion: 1,
       patch: { trading_name: 'Concurrent Request 2' },
-      actorUserId: 'usr_owner_admin',
+      actorUserId: G01_TEST_AUTH.ownerAdmin.userId,
+      actorUid: G01_TEST_AUTH.ownerAdmin.uid,
       requestId: 'req_concurrent_2',
     });
 
@@ -196,10 +204,11 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'unknown_workspace',
       expectedVersion: 1,
       patch: { trading_name: 'Ghost' },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_missing',
     });
-    assert.equal(missingRes.status, 'NOT_FOUND');
+    assert.equal(missingRes.status, 'DENIED');
 
     // 5b. No-op request (submitting identical values)
     const current = (await getWorkspaceSettings(db, 'solarcell'))!;
@@ -210,7 +219,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
         trading_name: current.trading_name, // identical
         contact_phone: current.contact_phone, // identical
       },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_noop',
     });
 
@@ -240,7 +250,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
         abn: '12 345 678 901',
         electrical_licence: 'Q-ELEC-99999',
       },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_legal_privacy',
     });
 
@@ -290,7 +301,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'smart_home',
       expectedVersion: 1,
       patch: { trading_name: 'Smart Home Automation' },
-      actorUserId: 'usr_owner_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_indep_1',
     });
 
@@ -304,7 +316,8 @@ describe('G01 D1 Atomicity & Audit Invariant Proof', () => {
       workspaceId: 'smart_home',
       expectedVersion: 1,
       patch: { legal_issuer_name: 'Gold Coast Smart Home Systems Pty Ltd' },
-      actorUserId: 'usr_super_admin',
+      actorUserId: G01_TEST_AUTH.superAdmin.userId,
+      actorUid: G01_TEST_AUTH.superAdmin.uid,
       requestId: 'req_indep_2',
     });
 

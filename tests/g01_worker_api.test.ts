@@ -12,9 +12,11 @@
 
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../backend/index.ts';
-import { installFirebaseFixture, installTestKey, fixtureToken } from './support/firebaseTokens.ts';
-import { createLocalD1Database, D1Database } from '../backend/db/d1.ts';
+import { createWorker } from '../backend/index.ts';
+import { createAuthenticationService } from '../backend/workers/auth.ts';
+import { createFirebaseFixture } from './support/firebaseTokens.ts';
+import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01SyntheticFixtures.ts';
+import { createLocalD1Database, D1Database, LocalD1Database } from '../backend/db/d1.ts';
 import { runLocalMigrations } from '../backend/db/migrate.ts';
 import { getAuditEvents } from '../backend/modules/settings/settingsRepo.ts';
 import { Env } from '../backend/types.ts';
@@ -41,6 +43,8 @@ async function createSignedToken(
 }
 
 describe('G01 Worker API Endpoints', () => {
+  let fixture: Awaited<ReturnType<typeof createFirebaseFixture>>;
+  let worker: ReturnType<typeof createWorker>;
   let db!: D1Database;
   let env!: Env;
 
@@ -52,13 +56,15 @@ describe('G01 Worker API Endpoints', () => {
 
   beforeEach(async () => {
     db = createLocalD1Database(':memory:');
-    await runLocalMigrations(db);
-    await installFirebaseFixture();
+    await runLocalMigrations(db, { disposableTest: true });
+    await installG01TestAuthFixtures(db);
+    fixture = await createFirebaseFixture();
+    worker = createWorker(createAuthenticationService(fixture.transport));
     env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
-    superAdminAuth = `Bearer ${await fixtureToken('firebase_uid_super_admin')}`;
-    ownerAdminAuth = `Bearer ${await fixtureToken('firebase_uid_owner_admin')}`;
-    officeStaffAuth = `Bearer ${await fixtureToken('firebase_uid_office_staff')}`;
-    technicianAuth = `Bearer ${await fixtureToken('firebase_uid_technician')}`;
+    superAdminAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.superAdmin.uid, G01_TEST_AUTH.superAdmin.email)}`;
+    ownerAdminAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.ownerAdmin.uid, G01_TEST_AUTH.ownerAdmin.email)}`;
+    officeStaffAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email)}`;
+    technicianAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.technician.uid, G01_TEST_AUTH.technician.email)}`;
   });
 
   it('GET /api/v1/auth/me: rejects unauthenticated requests with 401 Problem Details', async () => {
@@ -83,7 +89,7 @@ describe('G01 Worker API Endpoints', () => {
 
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.user.email, 'admin@cabms.example.invalid');
+    assert.equal(body.user.email, G01_TEST_AUTH.superAdmin.email);
     assert.equal(body.memberships.length, 3);
   });
 
@@ -103,7 +109,7 @@ describe('G01 Worker API Endpoints', () => {
   });
 
   it('GET /api/v1/workspaces/:workspaceId/settings: blocks access if user has no membership', async () => {
-    // usr_owner_admin is only a member of solarcell, not cctv
+    // Dedicated test owner is only a member of solarcell, not cctv
     const req = new Request('http://localhost/api/v1/workspaces/cctv/settings', {
       method: 'GET',
       headers: { Authorization: ownerAdminAuth },
@@ -269,7 +275,7 @@ describe('G01 Worker API Endpoints', () => {
     // 4. Nonmember rejected (403)
     await db.prepare("INSERT INTO users (id, email, display_name, created_at, updated_at) VALUES ('usr_nonmember', 'nonmember@cabms.example.invalid', 'Non Member', datetime('now'), datetime('now'))").run();
     await db.prepare("INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES ('map_nonmember', 'usr_nonmember', 'firebase', 'firebase_uid_nonmember', datetime('now'))").run();
-    const nonMemberToken = `Bearer ${await fixtureToken('firebase_uid_nonmember', 'nonmember@cabms.example.invalid')}`;
+    const nonMemberToken = `Bearer ${await fixture.token('firebase_uid_nonmember', 'nonmember@cabms.example.invalid')}`;
     const nonMemberRes = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
       headers: { Authorization: nonMemberToken },
     }), env);
@@ -355,19 +361,19 @@ describe('G01 Worker API Endpoints', () => {
     );
     const jwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey & { kid?: string };
     jwk.kid = 'test-key-1';
-    installTestKey('test-key-1', jwk);
+    fixture.installKey('test-key-1', jwk);
 
     const projectId = 'cabms-real-project';
     const now = Math.floor(Date.now() / 1000);
     const validPayload = {
       iss: `https://securetoken.google.com/${projectId}`,
       aud: projectId,
-      sub: 'firebase_uid_super_admin',
-      user_id: 'firebase_uid_super_admin',
+      sub: G01_TEST_AUTH.superAdmin.uid,
+      user_id: G01_TEST_AUTH.superAdmin.uid,
       auth_time: now - 10,
       iat: now - 10,
       exp: now + 3600,
-      email: 'admin@cabms.example.invalid',
+      email: G01_TEST_AUTH.superAdmin.email,
       email_verified: true,
     };
 
@@ -384,7 +390,7 @@ describe('G01 Worker API Endpoints', () => {
     const res = await worker.fetch(req, cryptoEnv);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.equal(body.user.email, 'admin@cabms.example.invalid');
+    assert.equal(body.user.email, G01_TEST_AUTH.superAdmin.email);
 
     // Forged signature fails (tampered token)
     const tamperedToken = token.slice(0, -6) + 'xxxxxx';
@@ -443,11 +449,11 @@ describe('G01 Worker API Endpoints', () => {
     );
     const jwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey & { kid?: string };
     jwk.kid = 'test-key-2';
-    installTestKey('test-key-2', jwk);
+    fixture.installKey('test-key-2', jwk);
 
     const projectId = 'cabms-real-project';
     const now = Math.floor(Date.now() / 1000);
-    // New unlinked Firebase UID, but email matches an existing user (admin@cabms.example.invalid)
+    // Unmapped UID matches an active staff email; email_verified=false alone must deny linking.
     const unverifiedPayload = {
       iss: `https://securetoken.google.com/${projectId}`,
       aud: projectId,
@@ -456,7 +462,7 @@ describe('G01 Worker API Endpoints', () => {
       auth_time: now - 10,
       iat: now - 10,
       exp: now + 3600,
-      email: 'admin@cabms.example.invalid',
+      email: G01_TEST_AUTH.officeStaff.email,
       email_verified: false, // Refuses linking!
     };
 
@@ -540,7 +546,10 @@ describe('G01 Worker API Endpoints', () => {
     }
   });
 
-  it('Authentication: admin@chinedigital.com.au is recognized with Super Admin access across all 3 workspaces', async () => {
+  it('Authentication: a separately enrolled test-only operator has Super Admin access without reviving the Chine seed', async (t) => {
+    const operatorDb = createLocalD1Database() as LocalD1Database;
+    t.after(() => operatorDb.getSqliteHandle().close());
+    await runLocalMigrations(operatorDb, { disposableTest: true });
     const keyPair = await crypto.subtle.generateKey(
       {
         name: 'RSASSA-PKCS1-v1_5',
@@ -553,25 +562,25 @@ describe('G01 Worker API Endpoints', () => {
     );
     const jwk = (await crypto.subtle.exportKey('jwk', keyPair.publicKey)) as JsonWebKey & { kid?: string };
     jwk.kid = 'test-chine-sa';
-    installTestKey('test-chine-sa', jwk);
+    fixture.installKey('test-chine-sa', jwk);
 
     const projectId = 'cabms-panel';
     const now = Math.floor(Date.now() / 1000);
     const chinePayload = {
       iss: `https://securetoken.google.com/${projectId}`,
       aud: projectId,
-      sub: 'firebase_chine_digital_admin_uid',
-      user_id: 'firebase_chine_digital_admin_uid',
+      sub: 'test_g01_operator_uid',
+      user_id: 'test_g01_operator_uid',
       auth_time: now - 10,
       iat: now - 10,
       exp: now + 3600,
-      email: 'admin@chinedigital.com.au',
+      email: 'test-g01-operator@example.invalid',
       email_verified: true,
     };
 
     const token = await createSignedToken(chinePayload, keyPair.privateKey, 'test-chine-sa');
     const chineEnv: Env = {
-      DB: db,
+      DB: operatorDb,
       ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: projectId,
     };
 
@@ -582,28 +591,37 @@ describe('G01 Worker API Endpoints', () => {
     const meRes = await worker.fetch(meReq, chineEnv);
     assert.equal(meRes.status, 401);
 
-    // 2. Controlled operator bootstrap: enroll provider UID for Chine Digital Admin
-    await db.prepare(
-      "INSERT OR REPLACE INTO users (id, email, display_name, created_at, updated_at) VALUES ('usr_chine_super_admin', 'admin@chinedigital.com.au', 'Chine Digital Admin', datetime('now'), datetime('now'))"
-    ).run();
-    await db.prepare(
-      "INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES ('map_chine_sa', 'usr_chine_super_admin', 'firebase', 'firebase_chine_digital_admin_uid', datetime('now'))"
-    ).run();
-    await db.prepare(
-      "INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at) VALUES ('mem_cd_sc', 'solarcell', 'usr_chine_super_admin', 'super_admin', datetime('now'), datetime('now')), ('mem_cd_sh', 'smart_home', 'usr_chine_super_admin', 'super_admin', datetime('now'), datetime('now')), ('mem_cd_cctv', 'cctv', 'usr_chine_super_admin', 'super_admin', datetime('now'), datetime('now'))"
-    ).run();
+    // 2. Controlled disposable fixture enrollment; NEVER run the bootstrap script.
+    // A real operator does not inherit the disabled historical Chine user ID.
+    await operatorDb.batch([
+      operatorDb.prepare("INSERT INTO users (id,email,display_name,created_at,updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))")
+        .bind('test_g01_usr_operator', 'test-g01-operator@example.invalid', 'Test Operator'),
+      operatorDb.prepare("INSERT INTO user_identity_mappings (id,user_id,provider_id,provider_subject_id,created_at) VALUES (?, ?, 'firebase', ?, datetime('now'))")
+        .bind('test_g01_map_operator', 'test_g01_usr_operator', 'test_g01_operator_uid'),
+      operatorDb.prepare("INSERT INTO workspace_memberships (id,workspace_id,user_id,role,created_at,updated_at) VALUES (?, ?, ?, 'super_admin', datetime('now'), datetime('now')), (?, ?, ?, 'super_admin', datetime('now'), datetime('now')), (?, ?, ?, 'super_admin', datetime('now'), datetime('now'))")
+        .bind('test_g01_mem_op_sc', 'solarcell', 'test_g01_usr_operator',
+              'test_g01_mem_op_sh', 'smart_home', 'test_g01_usr_operator',
+              'test_g01_mem_op_cctv', 'cctv', 'test_g01_usr_operator'),
+      operatorDb.prepare("INSERT INTO g01_protected_super_admin (singleton, user_id, provider_id, provider_subject_id, assigned_at, assigned_by) VALUES (1, ?, 'firebase', ?, datetime('now'), 'test-fixture')")
+        .bind('test_g01_usr_operator', 'test_g01_operator_uid'),
+      operatorDb.prepare("INSERT INTO privileged_identity_approvals (id,user_id,provider_id,provider_subject_id,workspace_id,role,granted_at,granted_by) VALUES (?, ?, 'firebase', ?, ?, 'super_admin', datetime('now'), 'test-fixture'), (?, ?, 'firebase', ?, ?, 'super_admin', datetime('now'), 'test-fixture'), (?, ?, 'firebase', ?, ?, 'super_admin', datetime('now'), 'test-fixture')")
+        .bind('test_op_approval_sc', 'test_g01_usr_operator', 'test_g01_operator_uid', 'solarcell',
+              'test_op_approval_sh', 'test_g01_usr_operator', 'test_g01_operator_uid', 'smart_home',
+              'test_op_approval_cctv', 'test_g01_usr_operator', 'test_g01_operator_uid', 'cctv'),
+    ]);
+    assert.equal((await operatorDb.prepare("SELECT disabled FROM users WHERE id = 'usr_chine_super_admin'").first<{ disabled: number }>())?.disabled, 1);
 
-    // 3. Now verified operator token succeeds with Super Admin across all 3 workspaces
+    // 3. Verified disposable operator token succeeds across all 3 workspaces
     const authedRes = await worker.fetch(meReq, chineEnv);
     assert.equal(authedRes.status, 200);
     const meBody = await authedRes.json();
-    assert.equal(meBody.user.email, 'admin@chinedigital.com.au');
+    assert.equal(meBody.user.email, 'test-g01-operator@example.invalid');
     assert.equal(meBody.memberships.length, 3);
     for (const m of meBody.memberships) {
       assert.equal(m.role, 'super_admin');
     }
 
-    // 2. Can modify legal issuer details (restricted strictly to super_admin)
+    // 4. Can modify legal issuer details (restricted strictly to super_admin)
     const patchReq = new Request('http://localhost/api/v1/workspaces/solarcell/legal-details', {
       method: 'PATCH',
       headers: {
@@ -611,13 +629,13 @@ describe('G01 Worker API Endpoints', () => {
         'Content-Type': 'application/json',
         'If-Match': '"1"',
       },
-      body: JSON.stringify({ legal_issuer_name: 'Solarcell Technologies (Updated by Chine Digital)' }),
+      body: JSON.stringify({ legal_issuer_name: 'Solarcell Technologies (Updated by Test Operator)' }),
     });
     const patchRes = await worker.fetch(patchReq, chineEnv);
     assert.equal(patchRes.status, 200);
     const patchBody = await patchRes.json();
     assert.equal(patchBody.version, 2);
-    assert.equal(patchBody.legal_issuer_name, 'Solarcell Technologies (Updated by Chine Digital)');
+    assert.equal(patchBody.legal_issuer_name, 'Solarcell Technologies (Updated by Test Operator)');
   });
 
   it('Firebase client: correctly initializes Firebase Auth with GoogleAuthProvider for cabms-panel', async () => {
@@ -638,24 +656,17 @@ describe('G01 Worker API Endpoints', () => {
       FIREBASE_API_KEY: 'test-firebase-api-key',
     };
 
-    let lookupHandler: () => Response | Promise<Response> = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false }] });
-    const originalFetch = globalThis.fetch;
-    mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('identitytoolkit.googleapis.com')) {
-        return lookupHandler();
-      }
-      return originalFetch(input, init);
-    });
+    let lookupHandler: () => Response | Promise<Response> = () => Response.json({ users: [{ localId: G01_TEST_AUTH.superAdmin.uid, disabled: false }] });
+    fixture.setLookup(() => lookupHandler());
 
     // 1. Disabled account rejected (401)
-    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: true }] });
+    lookupHandler = () => Response.json({ users: [{ localId: G01_TEST_AUTH.superAdmin.uid, disabled: true }] });
     const resDisabled = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
     assert.equal(resDisabled.status, 401);
 
     // 2. Revoked session (auth_time < validSince) rejected (401)
     const futureSec = Math.floor(Date.now() / 1000) + 1000;
-    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false, validSince: String(futureSec) }] });
+    lookupHandler = () => Response.json({ users: [{ localId: G01_TEST_AUTH.superAdmin.uid, disabled: false, validSince: String(futureSec) }] });
     const resRevoked = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
     assert.equal(resRevoked.status, 401);
 
@@ -671,13 +682,13 @@ describe('G01 Worker API Endpoints', () => {
     assert.equal(((await resOutage.json()) as { code: string }).code, 'SERVICE_UNAVAILABLE');
 
     // 5. Malformed validSince timestamp fails closed with 503
-    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false, validSince: 'invalid_non_numeric' }] });
+    lookupHandler = () => Response.json({ users: [{ localId: G01_TEST_AUTH.superAdmin.uid, disabled: false, validSince: 'invalid_non_numeric' }] });
     const resMalformed = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
     assert.equal(resMalformed.status, 503);
     assert.equal(((await resMalformed.json()) as { code: string }).code, 'SERVICE_UNAVAILABLE');
 
     // 6. Active valid account succeeds (200)
-    lookupHandler = () => Response.json({ users: [{ localId: 'firebase_uid_super_admin', disabled: false, validSince: '100' }] });
+    lookupHandler = () => Response.json({ users: [{ localId: G01_TEST_AUTH.superAdmin.uid, disabled: false, validSince: '100' }] });
     const resValid = await worker.fetch(new Request('http://localhost/api/v1/auth/me', { headers: { Authorization: superAdminAuth } }), liveEnv);
     assert.equal(resValid.status, 200);
   });

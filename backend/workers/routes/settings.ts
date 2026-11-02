@@ -11,6 +11,8 @@ import { Env } from '../../types.ts';
 import {
   getWorkspaceSettings,
   getLegalDetails,
+  getAuthorizedWorkspaceSettings,
+  getAuthorizedLegalDetails,
   updateWorkspaceSettings,
   updateLegalDetails,
 } from '../../modules/settings/settingsRepo.ts';
@@ -22,7 +24,7 @@ import type {
   EditableWorkspaceSettings,
   EditableLegalDetails,
 } from '../../../contracts/settings.ts';
-import { authenticateRequest, authorizeWorkspaceAccess } from '../auth.ts';
+import { authorizeWorkspaceAccess, productionAuthenticationService, type AuthenticationService } from '../auth.ts';
 import { parseIfMatchHeader, generateStrongETag } from '../http.ts';
 import { StructuredLogger } from '../logger.ts';
 import {
@@ -46,11 +48,12 @@ export async function handleGetWorkspaceSettings(
   db: D1Database,
   workspaceId: string,
   requestId: string,
-  env?: Env
+  env?: Env,
+  authentication: AuthenticationService = productionAuthenticationService
 ): Promise<Response> {
   const logger = new StructuredLogger(requestId, workspaceId);
 
-  const auth = await authenticateRequest(db, request, env);
+  const auth = await authentication.authenticateRequest(db, request, env);
   if (!auth) {
     logger.warn('AUTH_FAILED', 'Authentication required for settings read');
     return authenticationRequiredResponse('Valid staff authentication token is required', requestId);
@@ -62,9 +65,11 @@ export async function handleGetWorkspaceSettings(
     return accessDeniedResponse('You do not have access to this workspace', requestId);
   }
 
-  const settings = await getWorkspaceSettings(db, workspaceId);
+  const settings = await getAuthorizedWorkspaceSettings(db, workspaceId, auth);
   if (!settings) {
-    return resourceNotFoundResponse('Workspace settings not found', requestId);
+    return await authorizeWorkspaceAccess(db, workspaceId, auth)
+      ? resourceNotFoundResponse('Workspace settings not found', requestId)
+      : accessDeniedResponse('Workspace settings are unavailable', requestId);
   }
 
   logger.info('SETTINGS_READ', 'Workspace settings retrieved', {
@@ -86,12 +91,13 @@ export async function handlePatchWorkspaceSettings(
   db: D1Database,
   workspaceId: string,
   requestId: string,
-  env?: Env
+  env?: Env,
+  authentication: AuthenticationService = productionAuthenticationService
 ): Promise<Response> {
   const logger = new StructuredLogger(requestId, workspaceId);
 
   // 1. Authenticate
-  const auth = await authenticateRequest(db, request, env);
+  const auth = await authentication.authenticateRequest(db, request, env);
   if (!auth) {
     logger.warn('AUTH_FAILED', 'Authentication required for settings write');
     return authenticationRequiredResponse('Valid staff authentication token is required', requestId);
@@ -276,8 +282,13 @@ export async function handlePatchWorkspaceSettings(
       expectedVersion,
       patch,
       actorUserId: auth.userId,
+      actorUid: auth.providerSubjectId,
       requestId,
     });
+
+    if (result.status === 'DENIED') {
+      return accessDeniedResponse('You do not have permission to update workspace settings', requestId);
+    }
 
     if (result.status === 'NOT_FOUND') {
       return resourceNotFoundResponse('Workspace settings not found', requestId);
@@ -336,11 +347,12 @@ export async function handleGetLegalDetails(
   db: D1Database,
   workspaceId: string,
   requestId: string,
-  env?: Env
+  env?: Env,
+  authentication: AuthenticationService = productionAuthenticationService
 ): Promise<Response> {
   const logger = new StructuredLogger(requestId, workspaceId);
 
-  const auth = await authenticateRequest(db, request, env);
+  const auth = await authentication.authenticateRequest(db, request, env);
   if (!auth) {
     logger.warn('AUTH_FAILED', 'Authentication required for legal details read');
     return authenticationRequiredResponse('Valid staff authentication token is required', requestId);
@@ -359,9 +371,12 @@ export async function handleGetLegalDetails(
     return accessDeniedResponse('Viewing legal issuer details and licences is strictly restricted to Super Admin', requestId);
   }
 
-  const legal = await getLegalDetails(db, workspaceId);
+  const legal = await getAuthorizedLegalDetails(db, workspaceId, auth);
   if (!legal) {
-    return resourceNotFoundResponse('Legal issuer details not found', requestId);
+    const current = await authorizeWorkspaceAccess(db, workspaceId, auth);
+    return current?.role === 'super_admin'
+      ? resourceNotFoundResponse('Legal issuer details not found', requestId)
+      : accessDeniedResponse('Legal details are unavailable', requestId);
   }
 
   logger.info('LEGAL_READ', 'Legal details retrieved', {
@@ -383,12 +398,13 @@ export async function handlePatchLegalDetails(
   db: D1Database,
   workspaceId: string,
   requestId: string,
-  env?: Env
+  env?: Env,
+  authentication: AuthenticationService = productionAuthenticationService
 ): Promise<Response> {
   const logger = new StructuredLogger(requestId, workspaceId);
 
   // 1. Authenticate
-  const auth = await authenticateRequest(db, request, env);
+  const auth = await authentication.authenticateRequest(db, request, env);
   if (!auth) {
     logger.warn('AUTH_FAILED', 'Authentication required for legal details write');
     return authenticationRequiredResponse('Valid staff authentication token is required', requestId);
@@ -544,8 +560,13 @@ export async function handlePatchLegalDetails(
       expectedVersion,
       patch,
       actorUserId: auth.userId,
+      actorUid: auth.providerSubjectId,
       requestId,
     });
+
+    if (result.status === 'DENIED') {
+      return accessDeniedResponse('You do not have permission to update legal details', requestId);
+    }
 
     if (result.status === 'NOT_FOUND') {
       return resourceNotFoundResponse('Legal issuer details not found', requestId);

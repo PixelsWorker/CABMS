@@ -16,8 +16,10 @@ import { setApiFetchHandler, resetApiFetchHandler, setApiBase, resetApiBase } fr
 import { createLocalD1Database } from '../backend/db/d1.ts';
 import { runLocalMigrations } from '../backend/db/migrate.ts';
 import { getAuditEvents } from '../backend/modules/settings/settingsRepo.ts';
-import worker from '../backend/index.ts';
-import { fixtureToken, installFirebaseFixture } from './support/firebaseTokens.ts';
+import { createWorker } from '../backend/index.ts';
+import { createAuthenticationService } from '../backend/workers/auth.ts';
+import { createFirebaseFixture } from './support/firebaseTokens.ts';
+import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01SyntheticFixtures.ts';
 import { INITIAL_JOBS } from '../src/data/seedData.ts';
 
 test('G01 mounted settings: independent API saves, retained drafts, conflict recovery and durable audit', async () => {
@@ -28,9 +30,11 @@ test('G01 mounted settings: independent API saves, retained drafts, conflict rec
   const container = dom.window.document.getElementById('root')!;
   const root = createRoot(container);
   try {
-    await installFirebaseFixture();
-    const db = createLocalD1Database(); await runLocalMigrations(db);
-    const token = await fixtureToken('firebase_uid_super_admin');
+    const fixture = await createFirebaseFixture();
+    const worker = createWorker(createAuthenticationService(fixture.transport));
+    const db = createLocalD1Database(); await runLocalMigrations(db, { disposableTest: true });
+    await installG01TestAuthFixtures(db);
+    const token = await fixture.token(G01_TEST_AUTH.superAdmin.uid, G01_TEST_AUTH.superAdmin.email);
     const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
     let failNext = false;
     let release: (() => void) | undefined;
@@ -47,7 +51,7 @@ test('G01 mounted settings: independent API saves, retained drafts, conflict rec
     function Capture() { context = useCabms(); return null; }
     function Harness() {
       const [workspaceId, selectWorkspace] = React.useState<'solarcell' | 'cctv' | 'smart_home'>('solarcell');
-      session = { profile: { user: { id: 'usr_super_admin', email: 'admin@cabms.example.invalid', display_name: 'Admin' }, memberships: [
+      session = { profile: { user: { id: G01_TEST_AUTH.superAdmin.userId, email: G01_TEST_AUTH.superAdmin.email, display_name: 'Admin' }, memberships: [
         { workspace_id: 'solarcell', name: 'Solarcell', role },
         { workspace_id: 'cctv', name: 'Gold Coast CCTV', role },
       ] }, workspaceId, selectWorkspace, token: async () => token, login: async () => {}, logout: async () => {}, invalidate: () => { throw new Error('Unexpected invalidation'); }, loading: false, error: '' };

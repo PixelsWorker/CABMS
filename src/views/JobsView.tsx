@@ -9,6 +9,8 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
+import { demoDataMessage, useWorkspaceDemoData } from '../hooks/useWorkspaceDemoData.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowRight,
@@ -34,7 +36,7 @@ import {
 import { Job, JobStatus, ActivityLogEntry } from '../types/cabms.ts';
 import { CompletionValidationResult } from '../utils/cabmsLogic.ts';
 
-export const JobsView: React.FC = () => {
+const SimulatedJobsView: React.FC = () => {
   // Hooks called unconditionally at top (G00-008)
   const {
     jobs,
@@ -902,3 +904,16 @@ export const JobsView: React.FC = () => {
     </div>
   );
 };
+
+export const JobsView: React.FC = () => {
+ const session = useG01Session();
+ return session ? <PersistentJobs key={session.workspaceId ?? 'none'} /> : <SimulatedJobsView />;
+};
+function PersistentJobs() {
+ const state = useWorkspaceDemoData(false);
+ const message = demoDataMessage(state);
+ return <section className="cabms-card p-5 space-y-4"><h1>Jobs — saved demo data</h1><p>These jobs were created from saved synthetic enquiries. Scheduling, quotes and completion remain simulations.</p>
+  {message && <p role={state.status === 'loading' ? 'status' : 'alert'}>{message}</p>}
+  {state.status === 'ready' && (state.jobs.length === 0 ? <p>No saved jobs in this workspace.</p> : <ul>{state.jobs.map(job=><li key={job.id}>{job.title} — job {job.id} — enquiry {job.enquiry_id}</li>)}</ul>)}
+ </section>;
+}

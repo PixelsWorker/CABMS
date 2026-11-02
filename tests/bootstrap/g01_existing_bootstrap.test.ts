@@ -1,4 +1,4 @@
-// Existing bootstrap test; execute only with separate bootstrap approval.
+// Disposable in-memory bootstrap test; persistent bootstrap remains approval-gated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

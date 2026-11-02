@@ -112,7 +112,7 @@ test('G01: oversized operational and legal fields fail validation without audit 
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM settings_audit_events').first<{ n: number }>())?.n, 0);
 });
 
-// Existing bootstrap test is isolated in tests/bootstrap and requires separate execution approval.
+// Existing bootstrap test uses disposable in-memory state in tests/bootstrap; persistent bootstrap remains approval-gated.
 
 test('G01: frontend and worker Firebase project configuration match without drift', () => {
   const wranglerConfig = JSON.parse(fs.readFileSync(path.resolve('./wrangler.jsonc'), 'utf-8').replace(/\/\/.*$/gm, ''));

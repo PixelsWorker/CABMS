@@ -1,6 +1,6 @@
 /**
  * S2 proposal: denied Firebase email linking must not persist a mapping.
- * Run only after separate approval, against fresh disposable in-memory D1.
+ * Runs against fresh disposable in-memory D1; persistent identity changes remain approval-gated.
  * Uses the S1b fixture-owned transport and authentication service.
  */
 import assert from 'node:assert/strict';

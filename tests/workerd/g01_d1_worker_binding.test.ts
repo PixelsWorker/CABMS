@@ -153,23 +153,35 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
       throw new Error('Wrangler exited before verified process-tree teardown; temporary state preserved');
     }
     if (wranglerProc && wranglerProc.pid && wranglerProc.exitCode === null && wranglerProc.signalCode === null) {
-      const exited = new Promise<void>((resolveExit, rejectExit) => {
-        const timeout = setTimeout(() => rejectExit(new Error('Wrangler did not exit; temporary state preserved')), 10000);
-        wranglerProc!.once('exit', () => { clearTimeout(timeout); resolveExit(); });
+      const closed = new Promise<void>((resolveClose, rejectClose) => {
+        const timeout = setTimeout(() => rejectClose(new Error('Wrangler process and stdio did not close; temporary state preserved')), 10000);
+        wranglerProc!.once('close', () => { clearTimeout(timeout); resolveClose(); });
       });
       if (process.platform === 'win32') {
         execFileSync('taskkill', ['/pid', String(wranglerProc.pid), '/f', '/t'], { timeout: 10000 });
       } else {
         process.kill(-wranglerProc.pid, 'SIGKILL');
       }
-      await exited;
+      await closed;
     }
     if (!cleanupAllowed) throw new Error('Wrangler CLI shutdown not verified; temporary state preserved');
     const rel = relative(tempReal, isolationReal);
     if (!rel || isAbsolute(rel) || rel === '..' || rel.startsWith('..' + sep) || !rel.startsWith('cabms-g01-d1-') || realpathSync(isolation) !== isolationReal) {
       throw new Error('Unsafe disposable directory; temporary state preserved');
     }
-    rmSync(isolationReal, { recursive: true, force: true });
+    // Windows can briefly retain Wrangler's SQLite handles after the process
+    // tree closes. Retry only those transient sharing/permission errors; keep
+    // the disposable directory and fail visibly for every other condition.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        rmSync(isolationReal, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if ((code !== 'EPERM' && code !== 'EBUSY') || attempt >= 4) throw error;
+        await new Promise(resolveRetry => setTimeout(resolveRetry, 200 * (attempt + 1)));
+      }
+    }
   });
 
   it('1. GET workspace settings returns ETag and current state from local D1', async () => {

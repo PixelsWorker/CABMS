@@ -1,4 +1,4 @@
-// PROPOSAL ONLY. Run only with explicit approval against fresh in-memory SQLite.
+// Disposable in-memory SQLite test; persistent migration remains approval-gated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLocalD1Database, LocalD1Database } from '../../backend/db/d1.ts';

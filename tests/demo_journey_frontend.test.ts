@@ -9,6 +9,7 @@ import { WebsiteInboxView } from '../src/views/WebsiteInboxView.tsx';
 import { JobsView } from '../src/views/JobsView.tsx';
 import { DashboardView } from '../src/views/DashboardView.tsx';
 import { useWorkspaceDemoData, demoDataMessage } from '../src/hooks/useWorkspaceDemoData.ts';
+import { DemoJourneyError, demoJourneyRequest } from '../src/services/demoJourneyClient.ts';
 import { setApiBase, resetApiBase } from '../src/services/g01Client.ts';
 import { createLocalD1Database, type LocalD1Database } from '../backend/db/d1.ts';
 import { runLocalMigrations } from '../backend/db/migrate.ts';
@@ -16,6 +17,17 @@ import { createWorker } from '../backend/index.ts';
 import { createAuthenticationService } from '../backend/workers/auth.ts';
 import { createFirebaseFixture } from './support/firebaseTokens.ts';
 import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01SyntheticFixtures.ts';
+
+test('saved-data errors retain only valid request references, with header fallback', async t => {
+ t.after(()=>{mock.restoreAll();resetApiBase();}); setApiBase('http://localhost');
+ let response=Response.json({detail:'Unavailable',request_id:'req_body-123'},{status:503,headers:{'X-Request-Id':'req_header-456'}});
+ mock.method(globalThis,'fetch',async()=>response);
+ await assert.rejects(()=>demoJourneyRequest('solarcell','test-token','jobs'),(e:unknown)=>e instanceof DemoJourneyError && e.requestId==='req_body-123' && e.message.includes('Ref: req_body-123'));
+ response=Response.json({detail:'Unavailable',request_id:'unsafe reference'},{status:503,headers:{'X-Request-Id':'req_header-456'}});
+ await assert.rejects(()=>demoJourneyRequest('solarcell','test-token','jobs'),(e:unknown)=>e instanceof DemoJourneyError && e.requestId==='req_header-456');
+ response=Response.json({detail:'Unavailable',request_id:'unsafe reference'},{status:503,headers:{'X-Request-Id':'unsafe header'}});
+ await assert.rejects(()=>demoJourneyRequest('solarcell','test-token','jobs'),(e:unknown)=>e instanceof DemoJourneyError && e.requestId===undefined && !e.message.includes('unsafe'));
+});
 
 test('authenticated UI saves enquiry, converts it, and reloads persisted records', async t => {
  const db=createLocalD1Database() as LocalD1Database; t.after(()=>db.getSqliteHandle().close());
@@ -80,6 +92,34 @@ test('failed enquiry save does not discard a pending initial list', async t => {
  assert.match(container.textContent!,/Invalid enquiry/);
  await act(async()=>{resolveInitial(Response.json([{id:'existing',workspace_id:'solarcell',customer_name:'Existing synthetic customer',service:'Inspection',created_at:'2026',job_id:null}]));await new Promise(r=>setTimeout(r,0));});
  assert.match(container.textContent!,/Existing synthetic customer/);
+ await act(async()=>root.unmount());
+});
+
+test('successful save with failed reload reports reference, ignores stale read and isolates workspace', async t => {
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
+ const keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
+ setApiBase('http://localhost');
+ let resolveOld!: (r:Response)=>void; let reads=0;
+ mock.method(globalThis,'fetch',async (url:RequestInfo | URL,init?:RequestInit)=>{
+  if(init?.method==='POST') return Response.json({id:'new'},{status:201});
+  if(String(url).includes('/cctv/')) return Response.json([{id:'cctv',workspace_id:'cctv',customer_name:'CCTV only',service:'Synthetic',created_at:'2026',job_id:null}]);
+  if(++reads===1) return new Promise<Response>(resolve=>{resolveOld=resolve;});
+  return Response.json({detail:'Temporarily unavailable'},{status:503,headers:{'X-Request-Id':'req_test-123'}});
+ });
+ const actor=G01_TEST_AUTH.officeStaff;
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'},{workspace_id:'cctv',name:'CCTV',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=> 'test-token',login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!;const root=createRoot(container);
+ const render=async(value:Session)=>act(async()=>{root.render(React.createElement(SessionContext.Provider,{value},React.createElement(CabmsProvider,null,React.createElement(WebsiteInboxView))));await new Promise(r=>setTimeout(r,0));});
+ await render(session);
+ await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,0));});
+ assert.match(container.textContent!,/Saved, but the enquiry list could not be reloaded/);assert.match(container.textContent!,/Ref: req_test-123/);
+ await render({...session,workspaceId:'cctv'});
+ assert.match(container.textContent!,/CCTV only/);
+ await act(async()=>{resolveOld(Response.json([{id:'old',customer_name:'Stale old result',service:'Synthetic'}]));await new Promise(r=>setTimeout(r,0));});
+ assert.match(container.textContent!,/CCTV only/);assert.doesNotMatch(container.textContent!,/Stale old result|req_test-123/);
  await act(async()=>root.unmount());
 });
 

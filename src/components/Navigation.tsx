@@ -102,8 +102,8 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
     const sync = (event: Event) => {
       const detail = (event as CustomEvent<EnquiryCountEvent>).detail;
       if (detail?.workspace !== workspace || detail.userId !== userId) return;
-      generation++;
-      setSavedCount({key:countKey,count:detail.count});
+      if (detail.count === null) { generation++; setSavedCount({key:countKey,count:null}); }
+      else reload();
     };
     window.addEventListener(ENQUIRY_COUNT_EVENT,sync);
     window.addEventListener('focus', reload);

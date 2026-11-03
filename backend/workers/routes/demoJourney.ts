@@ -40,6 +40,8 @@ export async function handleDemoJob(request: Request, env: Env, workspace: strin
   let body: unknown; try { body = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || (body as {state?: unknown}).state !== 'done') return validationErrorResponse('Only completion is supported', [], requestId);
   if (!await completeJobStep(env.DB, workspace, auth, jobId, stepId)) {
+   const current = await authorizeWorkspaceAccess(env.DB, workspace, auth);
+   if (!current || current.role === 'technician') return accessDeniedResponse('Permission changed', requestId);
    const steps = await getJobSteps(env.DB, workspace, auth, jobId) as Array<{id: string; step_key: string; state: string}>;
    if (steps.some(step => step.id === stepId && step.step_key === 'review_details')) return createProblemResponse(409, 'CONFLICT', 'conflict', 'Conflict', 'Step cannot be completed from its current state', requestId);
    return createProblemResponse(404, 'NOT_FOUND', 'not-found', 'Not Found', 'Step unavailable', requestId);

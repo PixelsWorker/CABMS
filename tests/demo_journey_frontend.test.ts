@@ -309,14 +309,14 @@ test('authenticated enquiry badge follows saved inbox and hides on failed or una
  for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
  t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
  let rows: Array<{id:string;customer_name:string;service:string;job_id:string|null}> = [];
- let fail=false; let rejectWrite=false;
+ let fail=false; let rejectWrite=false; let holdRead=false; let releaseRead: ((response:Response)=>void) | null=null;
  const channels: Array<any> = [];
  class FakeBroadcastChannel { onmessage: ((event:{data:unknown})=>void)|null=null; constructor(public name:string){channels.push(this);} postMessage(data:unknown){for(const channel of channels) if(channel!==this && channel.name===this.name) channel.onmessage?.({data});} close(){const i=channels.indexOf(this);if(i>=0)channels.splice(i,1);} }
  Object.defineProperty(dom.window,'BroadcastChannel',{value:FakeBroadcastChannel,configurable:true});
  mock.method(globalThis,'fetch',async (input:RequestInfo|URL,init?:RequestInit)=>{
   const req=new Request(input,init), path=new URL(req.url).pathname;
   if(path.includes('/cctv/')) return Response.json({detail:'Forbidden'},{status:403});
-  if(req.method==='GET') return fail ? Response.json({detail:'Unavailable'},{status:503}) : Response.json(rows);
+  if(req.method==='GET') { if(holdRead){holdRead=false;return await new Promise<Response>(resolve=>{releaseRead=resolve;});} return fail ? Response.json({detail:'Unavailable'},{status:503}) : Response.json(rows); }
   if(req.method==='POST' && path.endsWith('/enquiries')) {if(rejectWrite) return Response.json({detail:'Rejected'},{status:422});const body=await req.json() as {customer_name:string;service:string};rows.push({id:String(rows.length+1),...body,job_id:null});return Response.json({id:rows.length},{status:201});}
   if(req.method==='POST' && path.endsWith('/conversion')) {const id=path.split('/').at(-2);rows=rows.map(row=>row.id===id?{...row,job_id:'job-'+id}:row);return Response.json({id:'job-'+id},{status:201});}
   throw new Error('Unexpected request');
@@ -333,8 +333,11 @@ test('authenticated enquiry badge follows saved inbox and hides on failed or una
  const add=async(name:string)=>{const inputs=container.querySelectorAll('input');await act(async()=>{change(inputs[0],name);change(inputs[1],'Synthetic service');});await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();};
  await add('Synthetic one');assert.equal(badge(),'1');
  await add('Synthetic two');assert.equal(badge(),'2');
+ const oldRows=structuredClone(rows); holdRead=true;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Refresh saved enquiries')!.click();await new Promise(r=>setTimeout(r,10));});
  rows.push({id:'external',customer_name:'Other tab',service:'Synthetic',job_id:null});
  await act(async()=>{const other=new dom.window.BroadcastChannel('cabms:enquiry-count-invalidated');other.postMessage({workspace:'solarcell',userId:'other-user',count:999});other.close();});await flush();assert.equal(badge(),'3');
+ assert.ok(releaseRead); await act(async()=>{(releaseRead as (response:Response)=>void)(Response.json(oldRows));});await flush();assert.equal(badge(),'3', 'an older inbox response cannot overwrite the newer authorized count');
  rows=rows.filter(row=>row.id!=='external');await act(async()=>{dom.window.dispatchEvent(new dom.window.Event('focus'));});await flush();assert.equal(badge(),'2');
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Convert to job')!.click();});await flush();assert.equal(badge(),'1');
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Refresh saved enquiries')!.click();});await flush();assert.equal(badge(),'1');

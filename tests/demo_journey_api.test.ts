@@ -47,6 +47,12 @@ test('demo enquiry conversion persists once, isolates workspaces, and rejects un
  assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,409);
  const skipped=await db.prepare('SELECT state FROM demo_job_steps WHERE id=?').bind(detail.steps[0].id).first<{state:string}>();
  assert.equal(skipped?.state,'skipped');
+ let revoked=false;
+ const guardedDb={prepare:(sql:string)=>{if(!revoked && sql.startsWith('UPDATE demo_job_steps')) {db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(G01_TEST_AUTH.officeStaff.userId,'solarcell');revoked=true;}return db.prepare(sql);},exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db)};
+ const denied=await worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/jobs/${jobId}/steps/${step}`,{method:'PATCH',headers:{Authorization:`Bearer ${staff}`,'Content-Type':'application/json'},body:JSON.stringify({state:'done'})}),{...env,DB:guardedDb});
+ assert.equal(revoked,true);assert.equal(denied.status,403);
+ assert.equal((await db.prepare('SELECT state FROM demo_job_steps WHERE id=?').bind(detail.steps[0].id).first<{state:string}>())?.state,'skipped');
+
 
 });
 

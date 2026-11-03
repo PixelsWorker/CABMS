@@ -6,8 +6,12 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useSettingsResource } from '../services/useSettingsResource.ts';
+import { SettingsFeedback } from '../components/SettingsFeedback.tsx';
+import type { WorkspaceSettingsRow } from '../../contracts/settings.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { BrandConfig, BrandId, VisualPreset } from '../types/cabms.ts';
+import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBuilding,
@@ -52,15 +56,32 @@ export const WorkspaceSettingsView: React.FC = () => {
     setVisualPreset,
   } = useCabms();
 
-  const currentBrand = brands[activeBrandId] || brands.solarcell;
+  const resource = useSettingsResource('settings');
+  const serverValues = resource.value as WorkspaceSettingsRow | undefined;
+  const currentBrand = brands[activeBrandId];
+  const canEdit = persona === 'super_admin' || persona === 'owner_admin';
+
+  useEffect(() => {
+    if (resource.active && resource.row && 'preferred_preset' in resource.row) setVisualPreset(resource.row.preferred_preset as VisualPreset);
+  }, [resource.row?.version, activeBrandId]);
 
   // Retain unsaved form drafts per brand across workspace tab switches
   const [drafts, setDrafts] = useState<Record<string, WorkspaceDraft>>({});
 
   // Active form values fall back to current brand config if no draft exists
-  const currentFormValues: WorkspaceDraft = drafts[activeBrandId] ?? getBrandDefaults(currentBrand, visualPreset);
+  const currentFormValues: WorkspaceDraft = resource.active ? {
+    tagline: serverValues?.tagline || '', contactPhone: serverValues?.contact_phone || '',
+    contactEmail: serverValues?.contact_email || '', operationalAddress: serverValues?.operational_address || '',
+    operatingHours: serverValues?.operating_hours || '', preferredPreset: (serverValues?.preferred_preset || 'dark_company') as VisualPreset,
+  } : drafts[activeBrandId] ?? (currentBrand ? getBrandDefaults(currentBrand, visualPreset) : ({} as WorkspaceDraft));
 
   const updateDraftField = <K extends keyof WorkspaceDraft>(key: K, value: WorkspaceDraft[K]) => {
+    if (resource.active) {
+      const fields = { tagline: 'tagline', contactPhone: 'contact_phone', contactEmail: 'contact_email', operationalAddress: 'operational_address', operatingHours: 'operating_hours', preferredPreset: 'preferred_preset' };
+      resource.setField(fields[key], value);
+      return;
+    }
+    if (!currentBrand) return;
     setDrafts(prev => ({
       ...prev,
       [activeBrandId]: {
@@ -78,6 +99,8 @@ export const WorkspaceSettingsView: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentBrand) return;
+    if (resource.active) { void resource.save(); return; }
     const updated: BrandConfig = {
       ...currentBrand,
       tagline: currentFormValues.tagline,
@@ -102,9 +125,19 @@ export const WorkspaceSettingsView: React.FC = () => {
     setTimeout(() => setSavedFeedback(false), 4000);
   };
 
-  const operationalBrandList = (['solarcell', 'smart_home', 'cctv'] as BrandId[]).map(
+  const operationalBrandList = (['solarcell', 'smart_home', 'cctv'] as BrandId[]).filter(id => !!brands[id]).map(
     id => brands[id] || { id, name: id }
   );
+
+  if (!currentBrand) {
+    return (
+      <AccessDeniedView
+        resourceName="Workspace Settings"
+        requiredRoleDescription="Authorized Workspace Administrator"
+        customExplanation="The selected workspace is not accessible to your account."
+      />
+    );
+  }
 
   return (
     <div className="space-y-6" data-testid="workspace-settings-view">
@@ -152,6 +185,7 @@ export const WorkspaceSettingsView: React.FC = () => {
       </div>
 
       {/* Read-only Integration Health Strip */}
+      {resource.active && <p className="text-xs">Integration indicators below are synthetic demonstrations; no provider is connected.</p>}
       <div className="cabms-card p-4 bg-(--cabms-surface-subtle) border border-(--cabms-border-base) rounded-lg">
         <h3 className="text-xs font-bold uppercase tracking-wider text-(--cabms-text-secondary) mb-3">
           Integration Health Status (Read-Only)
@@ -194,6 +228,12 @@ export const WorkspaceSettingsView: React.FC = () => {
 
       <div className="space-y-6">
         <form onSubmit={handleSave} className="cabms-card p-6 space-y-4">
+          {resource.active && <SettingsFeedback resource={resource} />}
+          <fieldset className="space-y-4" disabled={resource.active && (!canEdit || !resource.row || resource.loading)}>
+          {resource.active && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="text-xs">Trading Name<input id="ws-trading-name" required maxLength={100} className="w-full cabms-card-subtle rounded p-2" value={serverValues?.trading_name || ''} onChange={e => resource.setField('trading_name', e.target.value)} /></label>
+            <label className="text-xs">Brand Accent<input id="ws-accent" type="color" value={serverValues?.accent_color || '#0284c7'} onChange={e => resource.setField('accent_color', e.target.value)} /></label>
+          </div>}
           <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">
             <FontAwesomeIcon icon={faBuilding} className="text-amber-500" />
             Operational Contact & Preferences
@@ -304,21 +344,24 @@ export const WorkspaceSettingsView: React.FC = () => {
             <div className="pt-2 flex items-center gap-3">
               <button
                 type="submit"
+                disabled={resource.active && (resource.saving || resource.reviewRequired || !resource.dirty)}
                 className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-semibold rounded text-sm transition-colors shadow-sm flex items-center gap-2"
               >
                 <FontAwesomeIcon icon={faCheck} />
                 Save Workspace Settings
               </button>
-              {savedFeedback && (
+              {!resource.active && savedFeedback && (
                 <span className="text-xs text-emerald-400 font-medium flex items-center gap-1.5">
                   <FontAwesomeIcon icon={faCircleCheck} />
                   Settings saved successfully!
                 </span>
               )}
             </div>
+          </fieldset>
           </form>
 
           {/* Legal Entity & Licences (Read-only for Admin) */}
+          {!resource.active && <>
           <div className="cabms-card p-6 bg-(--cabms-surface-subtle) border border-(--cabms-border-base) rounded-lg space-y-4">
             <div className="flex items-center justify-between border-b border-(--cabms-border-base) pb-3">
               <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2">
@@ -370,6 +413,7 @@ export const WorkspaceSettingsView: React.FC = () => {
               </div>
             </div>
           </div>
+          </>}
       </div>
     </div>
   );

@@ -6,6 +6,8 @@
 import React from 'react';
 import { isInBusinessWeek } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
+import { demoDataMessage, useWorkspaceDemoData } from '../hooks/useWorkspaceDemoData.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faArrowRight,
@@ -22,6 +24,9 @@ import {
 import { JobStatus } from '../types/cabms.ts';
 
 export const DashboardView: React.FC = () => {
+  const session = useG01Session();
+  const saved = useWorkspaceDemoData(true);
+  const savedMessage = demoDataMessage(saved);
   const {
     activeBrand,
     activeBrandId,
@@ -50,7 +55,7 @@ export const DashboardView: React.FC = () => {
   const outstandingJobs = jobs.filter(j =>
     j.status !== 'COMPLETED' &&
     j.status !== 'CANCELLED' &&
-    (!isTechnician || j.assignedTechId === 'TECH-001')
+    (!isTechnician || j.assignedTechId === 'TECH-001') && !!brands[j.brandId]
   );
 
   const getStatusBadge = (status: JobStatus) => {
@@ -72,6 +77,12 @@ export const DashboardView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {session && <section className="cabms-card p-4 space-y-2" aria-label="Saved demo data">
+        <h2 className="font-bold">Saved demo data — current workspace</h2>
+        {savedMessage && <p role={saved.status === 'loading' ? 'status' : 'alert'}>{savedMessage}</p>}
+        {saved.status === 'ready' && <p>Saved enquiries: <strong>{saved.enquiries.length}</strong> · Saved jobs: <strong>{saved.jobs.length}</strong></p>}
+      </section>}
+      <p className="cabms-card p-4 text-sm text-(--cabms-text-primary)">The operational figures, sample jobs and workflows below are simulated G00 data. Saved demo enquiries and jobs are shown in Website Enquiries and Jobs &amp; Operations.</p>
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="cabms-card p-5">
@@ -127,9 +138,9 @@ export const DashboardView: React.FC = () => {
           <div className="flex items-center justify-between mb-5">
             <div>
               <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
-                {activeBrand.name} Operational Jobs
+                {activeBrand.name} Sample Operational Jobs (Simulation)
               </h2>
-              <p className="text-sm text-(--cabms-text-secondary) mt-1">Current work orders and compliance requirements</p>
+              <p className="text-sm text-(--cabms-text-secondary) mt-1">Simulated work orders and compliance requirements</p>
             </div>
             <button
               onClick={() => setActiveTab('jobs')}
@@ -145,10 +156,11 @@ export const DashboardView: React.FC = () => {
               <div
                 key={job.id}
                 onClick={() => {
+                  if (session) return;
                   setSelectedJobId(job.id);
                   setActiveTab('jobs');
                 }}
-                className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-4 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                className="cabms-card-subtle hover:bg-(--cabms-surface) transition p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
               >
                 <div className="space-y-2">
                   <div className="flex items-center space-x-2.5">
@@ -182,7 +194,7 @@ export const DashboardView: React.FC = () => {
                     {job.scheduledDate} {job.scheduledTime}
                   </div>
                   <span className="text-xs font-semibold text-sky-400 hover:underline inline-block">
-                    Open Job Details →
+                    {session ? 'Simulated sample' : 'Open Job Details →'}
                   </span>
                 </div>
               </div>
@@ -196,10 +208,14 @@ export const DashboardView: React.FC = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
-                  Cross-Company Outstanding Jobs
+                  Cross-Company Outstanding Sample Jobs (Simulation)
                 </h2>
                 <p className="text-sm text-(--cabms-text-secondary) mt-1">
-                  Consolidated queue across Solarcell, Smart Home, and CCTV
+                  {Object.keys(brands).length >= 3
+                    ? 'Consolidated queue across Solarcell, Smart Home, and CCTV'
+                    : Object.keys(brands).length > 1
+                      ? `Consolidated queue across ${Object.values(brands).map(b => b.name).join(' and ')}`
+                      : `Consolidated queue for ${activeBrand.name}`}
                 </p>
               </div>
               <span className="text-xs px-2.5 py-1 rounded-full font-mono font-semibold bg-sky-950/60 text-sky-300 border border-sky-800/60">
@@ -214,14 +230,16 @@ export const DashboardView: React.FC = () => {
                 </div>
               ) : (
                 outstandingJobs.map(job => {
-                  const jobBrand = brands[job.brandId] || brands.solarcell;
+                  const jobBrand = brands[job.brandId];
+                  if (!jobBrand) return null;
                   return (
                     <div
                       key={job.id}
                       data-testid={`consolidated-job-${job.id}`}
-                      role="button"
-                      tabIndex={0}
+                      role={session ? undefined : 'button'}
+                      tabIndex={session ? undefined : 0}
                       onClick={() => {
+                        if (session) return;
                         if (job.brandId !== activeBrandId) {
                           setActiveBrandId(job.brandId);
                         }
@@ -229,6 +247,7 @@ export const DashboardView: React.FC = () => {
                         setActiveTab('jobs');
                       }}
                       onKeyDown={e => {
+                        if (session) return;
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
                           if (job.brandId !== activeBrandId) {
@@ -262,7 +281,7 @@ export const DashboardView: React.FC = () => {
                           {job.scheduledDate} {job.scheduledTime}
                         </div>
                         <span className="text-xs font-semibold text-sky-400 hover:underline inline-block">
-                          Switch & View →
+                          {session ? 'Simulated sample' : 'Switch & View →'}
                         </span>
                       </div>
                     </div>

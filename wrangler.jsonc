@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cabms",
+  "main": "backend/index.ts",
+  "compatibility_date": "2026-10-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "cabms-d1",
+      "database_id": "cabms-d1-local"
+    }
+  ],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "FIREBASE_PROJECT_ID": "cabms-panel",
+    "FIREBASE_API_KEY": "AIzaSyD_y4n7pK9H7XwmFxBcFxAOxCWKfR4Rd9M"
+  }
+}

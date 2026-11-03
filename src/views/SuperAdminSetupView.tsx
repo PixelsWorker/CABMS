@@ -7,6 +7,8 @@
  */
 
 import React, { useState } from 'react';
+import { useG01Session } from '../context/G01Session.tsx';
+import { LegalDetailsForm } from './LegalDetailsForm.tsx';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -30,6 +32,11 @@ import { BrandConfig, BrandId } from '../types/cabms.ts';
 let brandSeqCounter = 1;
 
 export const SuperAdminSetupView: React.FC = () => {
+  const session = useG01Session();
+  return session ? <LegalDetailsForm /> : <DemoSuperAdminSetupView />;
+};
+
+const DemoSuperAdminSetupView: React.FC = () => {
   // Hooks called unconditionally at top (G00-008)
   const {
     persona,

@@ -167,29 +167,15 @@ export const ScheduleView: React.FC = () => {
               </div>
             </div>
 
-            <div className="cabms-card-subtle p-2.5">
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #1</span>
-              <span className="text-amber-400 font-semibold">{brands.solarcell?.calendarMappingName}</span>
-              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
+            {Object.entries(brands).map(([brandId, b], index) => (
+              <div key={brandId} className="cabms-card-subtle p-2.5">
+                <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #{index + 1}</span>
+                <span className="font-semibold" style={{ color: b.accentColor || b.primaryColor }}>{b.calendarMappingName}</span>
+                <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                  <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
+                </div>
               </div>
-            </div>
-
-            <div className="cabms-card-subtle p-2.5">
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #2</span>
-              <span className="text-sky-400 font-semibold">{brands.smart_home?.calendarMappingName || brands.smarthome?.calendarMappingName}</span>
-              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
-              </div>
-            </div>
-
-            <div className="cabms-card-subtle p-2.5">
-              <span className="text-[10px] text-slate-500 uppercase font-bold block">Calendar Map #3</span>
-              <span className="text-emerald-400 font-semibold">{brands.cctv?.calendarMappingName}</span>
-              <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <FontAwesomeIcon icon={faCircleCheck} className="w-3 h-3" /> Synced
-              </div>
-            </div>
+            ))}
           </div>
         </div>
       </div>

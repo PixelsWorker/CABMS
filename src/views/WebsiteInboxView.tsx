@@ -4,7 +4,9 @@
  * duplicate/customer matching, and explicit office conversion to draft work orders.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useG01Session } from '../context/G01Session.tsx';
+import { DemoJourneyError, demoJourneyRequest, type DemoEnquiry } from '../services/demoJourneyClient.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -25,7 +27,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { BrandId, WebsiteEnquiry } from '../types/cabms.ts';
 
-export const WebsiteInboxView: React.FC = () => {
+const SimulatedWebsiteInboxView: React.FC = () => {
   const {
     websiteEnquiries,
     simulateWebsiteSubmission,
@@ -448,3 +450,50 @@ export const WebsiteInboxView: React.FC = () => {
     </div>
   );
 };
+
+/** Authenticated demo data is kept separate from the G00 simulated inbox. */
+export const WebsiteInboxView: React.FC = () => {
+ const session = useG01Session();
+ return session ? <PersistentInbox key={JSON.stringify([session.workspaceId, session.profile?.user.id])} /> : <SimulatedWebsiteInboxView />;
+};
+function PersistentInbox() {
+ const session = useG01Session()!;
+ const {setActiveTab} = useCabms();
+ const [items,setItems] = useState<DemoEnquiry[]>([]);
+ const [name,setName] = useState(''); const [service,setService] = useState('');
+ const [error,setError] = useState(''); const [busy,setBusy] = useState(false); const [uncertain,setUncertain] = useState(false); const [uncertainError,setUncertainError] = useState(''); const [conversionUncertain,setConversionUncertain] = useState<string[]>([]);
+ const generation = useRef(0);
+ const workspace = session.workspaceId;
+ useEffect(() => {
+  const request = ++generation.current; setItems([]); setError('');
+  if (workspace) void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {if(generation.current===request)setItems(rows);}).catch(e => {if(generation.current===request)setError(e instanceof Error ? e.message : 'Could not load enquiries.');});
+  return () => {generation.current++;};
+ },[workspace,session.profile?.user.id]);
+ const refresh = async (reason: 'saved' | 'save-uncertain' | 'conversion-uncertain' | 'manual' = 'saved') => { if (!workspace) return; const request=++generation.current; try { const rows = await demoJourneyRequest<DemoEnquiry[]>(workspace,await session.token(),'enquiries'); if (generation.current===request) { setItems(rows); setConversionUncertain(previous => previous.filter(id => !rows.some(row => row.id === id && row.job_id))); return true; } return false; } catch(e) { if(generation.current===request) {setItems([]);setError(`${reason === 'saved' ? 'Saved, but' : reason === 'save-uncertain' ? 'The save outcome is unknown, and' : reason === 'conversion-uncertain' ? 'The conversion outcome is unknown, and' : 'Unable to reload:'} the enquiry list could not be reloaded. Refresh to see the latest state.${e instanceof Error ? ` ${e.message}` : ''}`);} return false; } };
+ const create = async (event: React.FormEvent) => {
+  event.preventDefault(); if (!workspace || busy || uncertain) return; setBusy(true); setError('');
+  let token: string;
+  try { token = await session.token(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not verify session.'); setBusy(false); return; }
+  try { await demoJourneyRequest(workspace,token,'enquiries','POST',{customer_name:name,service}); setName('');setService(''); await refresh(); }
+  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setUncertain(true); setUncertainError(e instanceof Error ? e.message : 'The save request did not complete.'); setError(''); await refresh('save-uncertain'); } else setError(e.message); } finally {setBusy(false);}
+ };
+ const convert = async (id:string) => {
+  if (!workspace || busy || conversionUncertain.includes(id)) return; setBusy(true);setError('');
+  let token: string;
+  try { token = await session.token(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not verify session.'); setBusy(false); return; }
+  try {await demoJourneyRequest(workspace,token,`enquiries/${encodeURIComponent(id)}/conversion`,'POST'); await refresh();}
+  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setConversionUncertain(previous => previous.includes(id) ? previous : [...previous, id]); await refresh('conversion-uncertain'); } else setError(e.message); } finally {setBusy(false);}
+ };
+ return <section className="cabms-card p-5 space-y-4"><h1 className="text-lg font-bold">Enquiries — saved demo data</h1>
+  <p>Use synthetic names and descriptions only. These records are saved to the demo database.</p>
+  {uncertain && <p role="alert">The save outcome is unknown and may have succeeded. Refreshing saved enquiries does not resubmit it; a missing or similar enquiry does not confirm its outcome. This save remains blocked to prevent duplicates. {uncertainError}</p>}
+  {conversionUncertain.length > 0 && <p role="alert">The conversion outcome may still be pending. Reload and verify the enquiry before trying again.</p>}
+  {error && <p role="alert">{error}</p>}
+  <form onSubmit={create} className="flex flex-col gap-4 sm:flex-row sm:items-end">
+   <label className="flex flex-1 flex-col gap-2 text-sm font-semibold">Customer name<input className="cabms-input w-full rounded border px-3 py-2 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" value={name} maxLength={120} required onChange={e=>setName(e.target.value)} /></label>
+   <label className="flex flex-1 flex-col gap-2 text-sm font-semibold">Requested service<input className="cabms-input w-full rounded border px-3 py-2 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" value={service} maxLength={500} required onChange={e=>setService(e.target.value)} /></label>
+   <button className="rounded bg-amber-400 px-4 py-2 font-semibold text-slate-950 hover:bg-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || uncertain} type="submit">Save enquiry</button></form>
+  <button type="button" disabled={busy} onClick={() => { setError(''); void refresh('manual'); }} className="rounded border border-amber-400 px-3 py-2 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:opacity-50">Refresh saved enquiries</button>
+  <ul className="space-y-3">{items.map(item=><li className="cabms-card-subtle rounded p-3" key={item.id}>{item.customer_name} — {item.service} — {item.job_id ? `Converted to job ${item.job_id}` : <button className="rounded border border-amber-400 px-3 py-1 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:opacity-50" disabled={busy || conversionUncertain.includes(item.id)} onClick={()=>void convert(item.id)}>Convert to job</button>}</li>)}</ul>
+  <button className="rounded border border-amber-400 px-3 py-2 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" onClick={()=>setActiveTab('jobs')}>Open jobs</button></section>;
+}

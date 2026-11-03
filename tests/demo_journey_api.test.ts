@@ -18,6 +18,7 @@ test('demo enquiry conversion persists once, isolates workspaces, and rejects un
  const call=(path:string,method='GET',body?:unknown,token=staff)=>worker.fetch(new Request(`http://local/api/v1/workspaces/${path}`,{method,headers:{Authorization:`Bearer ${token}`,...(body ? {'Content-Type':'application/json'} : {})},...(body ? {body:JSON.stringify(body)} : {})}),env);
  assert.equal((await call('solarcell/enquiries','GET',undefined,'bad')).status,401);
  assert.equal((await call('cctv/enquiries')).status,403);
+ for (const path of ['solarcell/jobs/%ZZ','solarcell/jobs/valid/steps/%ZZ']) { const response=await call(path); assert.equal(response.status,400); assert.ok(response.headers.get('X-Request-Id')); }
  assert.equal((await call('solarcell/enquiries','GET',undefined,technician)).status,403);
  assert.equal((await call('solarcell/enquiries','POST',{customer_name:'',service:'Demo'})).status,422);
  const created=await call('solarcell/enquiries','POST',{customer_name:'Synthetic Client',service:'Demo service'}); assert.equal(created.status,201);
@@ -29,12 +30,13 @@ test('demo enquiry conversion persists once, isolates workspaces, and rejects un
  const jobs=await (await call('solarcell/jobs')).json() as Array<{id:string;enquiry_id:string}>;
  assert.equal(jobs.length,1); assert.equal(enquiries[0].job_id,jobs[0].id); assert.equal(jobs[0].enquiry_id,id);
  const jobId=jobs[0].id;
- const detail=await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{id:string;state:string;required:number}>};
+ const detailResponse=await call(`solarcell/jobs/${jobId}`); assert.ok(detailResponse.headers.get('X-Request-Id'));
+ const detail=await detailResponse.json() as {steps:Array<{id:string;state:string;required:number}>};
  assert.equal(detail.steps[0].state,'pending'); assert.equal(detail.steps[0].required,1);
  const step=encodeURIComponent(detail.steps[0].id);
  assert.equal((await call(`cctv/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,403);
  assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'},technician)).status,403);
- assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,200);
+ const completed=await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'}); assert.equal(completed.status,200); assert.ok(completed.headers.get('X-Request-Id'));
  const refreshed=await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{state:string;required:number}>};
  assert.equal(refreshed.steps[0].state,'done'); assert.equal(refreshed.steps[0].required,1);
  const previous = await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{updated_at:string}>};

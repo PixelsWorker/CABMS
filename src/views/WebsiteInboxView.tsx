@@ -1,4 +1,4 @@
-import { publishEnquiryCount } from '../services/enquiryCount.ts';
+import { publishEnquiryCount, invalidateOtherTabs } from '../services/enquiryCount.ts';
 /**
  * Area J: Existing-Website Handoff
  * Internal website submission simulation, pending review inbox,
@@ -478,14 +478,14 @@ function PersistentInbox() {
   let token: string;
   try { token = await session.token(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not verify session.'); setBusy(false); return; }
   try { await demoJourneyRequest(workspace,token,'enquiries','POST',{customer_name:name,service}); setName('');setService(''); await refresh(); }
-  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setUncertain(true); setUncertainError(e instanceof Error ? e.message : 'The save request did not complete.'); setError(''); await refresh('save-uncertain'); } else { setError(e.message); await refresh('manual'); } } finally {setBusy(false);}
+  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setUncertain(true); setUncertainError(e instanceof Error ? e.message : 'The save request did not complete.'); setError(''); await refresh('save-uncertain'); } else { setError(e.message); await refresh('manual'); } } finally {if (workspace && userId) invalidateOtherTabs(workspace);setBusy(false);}
  };
  const convert = async (id:string) => {
   if (!workspace || busy || conversionUncertain.includes(id)) return; setBusy(true);setError(''); publishCount(null);
   let token: string;
   try { token = await session.token(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not verify session.'); setBusy(false); return; }
   try {await demoJourneyRequest(workspace,token,`enquiries/${encodeURIComponent(id)}/conversion`,'POST'); await refresh();}
-  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setConversionUncertain(previous => previous.includes(id) ? previous : [...previous, id]); await refresh('conversion-uncertain'); } else { setError(e.message); await refresh('manual'); } } finally {setBusy(false);}
+  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setConversionUncertain(previous => previous.includes(id) ? previous : [...previous, id]); await refresh('conversion-uncertain'); } else { setError(e.message); await refresh('manual'); } } finally {if (workspace && userId) invalidateOtherTabs(workspace);setBusy(false);}
  };
  return <section className="cabms-card p-5 space-y-4"><h1 className="text-lg font-bold">Enquiries — saved demo data</h1>
   <p>Use synthetic names and descriptions only. These records are saved to the demo database.</p>

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { useG01Session } from '../context/G01Session.tsx';
 import { demoJourneyRequest, type DemoEnquiry } from '../services/demoJourneyClient.ts';
-import { ENQUIRY_COUNT_EVENT, type EnquiryCountEvent } from '../services/enquiryCount.ts';
+import { ENQUIRY_COUNT_EVENT, ENQUIRY_COUNT_CHANNEL, type EnquiryCountEvent } from '../services/enquiryCount.ts';
 import { Persona } from '../types/cabms.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
@@ -91,10 +91,14 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
     let active = true;
     let generation = 0;
     setSavedCount({key:countKey,count:null});
-    const request = ++generation;
-    void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {
-      if (active && generation === request) setSavedCount({key:countKey,count:rows.filter(row => !row.job_id).length});
-    }).catch(() => { if (active && generation === request) setSavedCount({key:countKey,count:null}); });
+    const reload = () => {
+      const request = ++generation;
+      setSavedCount({key:countKey,count:null});
+      void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {
+        if (active && generation === request) setSavedCount({key:countKey,count:rows.filter(row => !row.job_id).length});
+      }).catch(() => { if (active && generation === request) setSavedCount({key:countKey,count:null}); });
+    };
+    reload();
     const sync = (event: Event) => {
       const detail = (event as CustomEvent<EnquiryCountEvent>).detail;
       if (detail?.workspace !== workspace || detail.userId !== userId) return;
@@ -102,7 +106,10 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
       setSavedCount({key:countKey,count:detail.count});
     };
     window.addEventListener(ENQUIRY_COUNT_EVENT,sync);
-    return () => {active=false; window.removeEventListener(ENQUIRY_COUNT_EVENT,sync);};
+    window.addEventListener('focus', reload);
+    let channel: BroadcastChannel | null = null;
+    try { if (window.BroadcastChannel) { channel = new window.BroadcastChannel(ENQUIRY_COUNT_CHANNEL); channel.onmessage = event => { if (event.data?.workspace === workspace) reload(); }; } } catch { /* focus refresh remains available */ }
+    return () => {active=false; window.removeEventListener(ENQUIRY_COUNT_EVENT,sync); window.removeEventListener('focus',reload); channel?.close();};
   }, [countKey]);
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);

@@ -1,4 +1,4 @@
-import { demoJourneyRequest } from '../services/demoJourneyClient.ts';
+import { demoJourneyRequest, DemoJourneyError } from '../services/demoJourneyClient.ts';
 /**
  * Area D & G: Operational Jobs & Completion Action
  * Structured work orders, site details, MYOB invoice panel,
@@ -927,6 +927,6 @@ function SavedJobDetails({workspace, id, token}: {workspace: string; id: string;
  const [busy, setBusy] = React.useState(false);
  const [uncertain, setUncertain] = React.useState(false);
  React.useEffect(()=>{ let active = true; void token().then(t=>demoJourneyRequest<typeof details>(workspace,t,`jobs/${encodeURIComponent(id)}`)).then(data=>{if(active)setDetails(data);}).catch(()=>{if(active)setError('Could not load this job.');}); return ()=>{active=false;}; },[workspace,id]);
- const complete = async (step: string) => { setBusy(true); setError(''); try { const t=await token(); setDetails(await demoJourneyRequest(workspace,t,`jobs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}`,'PATCH',{state:'done'})); } catch { setUncertain(true); setError('Update could not be confirmed. Reopen the job to check its saved state.'); } finally { setBusy(false); } };
+ const complete = async (step: string) => { setBusy(true); setError(''); try { const t=await token(); setDetails(await demoJourneyRequest(workspace,t,`jobs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}`,'PATCH',{state:'done'})); } catch (error) { if (error instanceof DemoJourneyError && error.status === 409) { setDetails(null); setError(error.message + ' Reopen the job to see its current state.'); } else { setUncertain(true); setError('Update could not be confirmed. Reopen the job to check its saved state.'); } } finally { setBusy(false); } };
  return <div className="cabms-card-subtle rounded p-4"><h2>Job details</h2>{error && <p role="alert">{error}</p>}{!details && !error && <p role="status">Loading job details...</p>}{details && <><p>{details.job.title} - enquiry {details.job.enquiry_id}</p>{details.steps.map(step=><div key={step.id}>{step.label} - {step.state === 'done' ? 'Completed' : step.state === 'pending' ? 'Pending' : step.state === 'skipped' ? 'Skipped' : step.state === 'n/a' ? 'Not applicable' : 'Unknown state'} {step.required ? '(required)' : '(optional)'} {step.state === 'pending' && <button type="button" disabled={busy || uncertain} className="rounded border px-3 py-1" onClick={()=>void complete(step.id)}>Mark step complete</button>}</div>)}</>}</div>;
 }

@@ -151,7 +151,12 @@ export function createWorker(authentication: AuthenticationService = productionA
       }
 
       const jobMatch = /^\/api\/v1\/workspaces\/([^/]+)\/jobs\/([^/]+)(?:\/steps\/([^/]+))?$/.exec(pathname);
-      if (jobMatch) return addCors(await handleDemoJob(request, env, jobMatch[1], decodeURIComponent(jobMatch[2]), jobMatch[3] ? decodeURIComponent(jobMatch[3]) : undefined, requestId, authentication), env);
+      if (jobMatch) {
+        let jobId: string, stepId: string | undefined;
+        try { jobId = decodeURIComponent(jobMatch[2]); stepId = jobMatch[3] ? decodeURIComponent(jobMatch[3]) : undefined; }
+        catch (error) { if (error instanceof URIError) return addCors(createProblemResponse(400, 'VALIDATION_FAILED', 'validation-failed', 'Bad Request', 'Invalid path encoding', requestId), env); throw error; }
+        return addCors(await handleDemoJob(request, env, jobMatch[1], jobId, stepId, requestId, authentication), env);
+      }
 
       const journeyMatch = /^\/api\/v1\/workspaces\/([^/]+)\/(enquiries|jobs)(?:\/([^/]+)\/conversion)?$/.exec(pathname);
       if (journeyMatch && !(journeyMatch[2] === 'jobs' && journeyMatch[3])) {

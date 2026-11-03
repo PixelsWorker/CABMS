@@ -41,8 +41,8 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  const saved=new Map(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
  for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
  t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
- let rejectNext = false;
- mock.method(globalThis,'fetch',async (input: RequestInfo | URL, init?: RequestInit)=>{ if(rejectNext){rejectNext=false;return Response.json({detail:'Demo service unavailable'},{status:422});} return worker.fetch(new Request(input,init),env); });
+ let rejectNext = false; let rejectStep = false;
+ mock.method(globalThis,'fetch',async (input: RequestInfo | URL, init?: RequestInit)=>{ if(rejectNext){rejectNext=false;return Response.json({detail:'Demo service unavailable'},{status:422});} if(rejectStep && init?.method==='PATCH'){rejectStep=false;return Response.json({detail:'Step conflict'},{status:409});} return worker.fetch(new Request(input,init),env); });
  setApiBase('http://localhost');
  const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
  const container=dom.window.document.getElementById('root')!;
@@ -73,6 +73,11 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  assert.match(container.textContent!,/Synthetic installation/);
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click(); await new Promise(r=>setTimeout(r,30));});
  assert.match(container.textContent!,/Review job details/);
+ rejectStep=true;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Mark step complete')!.click(); await new Promise(r=>setTimeout(r,30));});
+ assert.match(container.textContent!,/Step conflict/); assert.doesNotMatch(container.textContent!,/could not be confirmed/);
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click();});
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click(); await new Promise(r=>setTimeout(r,30));});
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Mark step complete')!.click(); await new Promise(r=>setTimeout(r,30));});
  assert.match(container.textContent!,/Completed/);
  session.profile!.memberships[0].role='technician';
@@ -305,6 +310,9 @@ test('authenticated enquiry badge follows saved inbox and hides on failed or una
  t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
  let rows: Array<{id:string;customer_name:string;service:string;job_id:string|null}> = [];
  let fail=false; let rejectWrite=false;
+ const channels: Array<any> = [];
+ class FakeBroadcastChannel { onmessage: ((event:{data:unknown})=>void)|null=null; constructor(public name:string){channels.push(this);} postMessage(data:unknown){for(const channel of channels) if(channel!==this && channel.name===this.name) channel.onmessage?.({data});} close(){const i=channels.indexOf(this);if(i>=0)channels.splice(i,1);} }
+ Object.defineProperty(dom.window,'BroadcastChannel',{value:FakeBroadcastChannel,configurable:true});
  mock.method(globalThis,'fetch',async (input:RequestInfo|URL,init?:RequestInit)=>{
   const req=new Request(input,init), path=new URL(req.url).pathname;
   if(path.includes('/cctv/')) return Response.json({detail:'Forbidden'},{status:403});
@@ -325,6 +333,9 @@ test('authenticated enquiry badge follows saved inbox and hides on failed or una
  const add=async(name:string)=>{const inputs=container.querySelectorAll('input');await act(async()=>{change(inputs[0],name);change(inputs[1],'Synthetic service');});await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();};
  await add('Synthetic one');assert.equal(badge(),'1');
  await add('Synthetic two');assert.equal(badge(),'2');
+ rows.push({id:'external',customer_name:'Other tab',service:'Synthetic',job_id:null});
+ await act(async()=>{const other=new dom.window.BroadcastChannel('cabms:enquiry-count-invalidated');other.postMessage({workspace:'solarcell',userId:'other-user',count:999});other.close();});await flush();assert.equal(badge(),'3');
+ rows=rows.filter(row=>row.id!=='external');await act(async()=>{dom.window.dispatchEvent(new dom.window.Event('focus'));});await flush();assert.equal(badge(),'2');
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Convert to job')!.click();});await flush();assert.equal(badge(),'1');
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Refresh saved enquiries')!.click();});await flush();assert.equal(badge(),'1');
  rejectWrite=true;await add('Rejected synthetic');assert.equal(badge(),'1');rejectWrite=false;

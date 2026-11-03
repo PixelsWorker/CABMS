@@ -208,6 +208,9 @@ test('LAYER 4: Components — ComplianceFormsView renders JSA, Electrical, Smoke
   const html = renderToString(
     React.createElement(CabmsProvider, null, React.createElement(ComplianceFormsView))
   );
+  assert.ok(html.includes('Simulation only.'));
+  assert.ok(html.includes('not legally signed certificates or persistent job evidence'));
+  assert.ok(html.includes('Required preview forms awaiting sign-off:'));
   assert.ok(html.includes('Job Safety Analysis (JSA)'));
   assert.ok(html.includes('TCA1 Cabling'));
   assert.ok(html.includes('TCA2 Defect Notice'));

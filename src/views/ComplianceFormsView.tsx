@@ -42,6 +42,7 @@ import {
   Tca2CertData,
 } from '../types/cabms.ts';
 import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
+import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../utils/g05PreviewReadiness.ts';
 
 type ActiveFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
 
@@ -118,6 +119,16 @@ export const ComplianceFormsView: React.FC = () => {
       case 'TCA2': return currentTca2.signedOff;
     }
   })();
+
+  const previewSignedOff = { JSA: currentJsa.signedOff, ELECTRICAL: currentElec.signedOff, SMOKE_ALARM: currentSmoke.signedOff, TCA1: currentTca1.signedOff, TCA2: currentTca2.signedOff };
+  const pendingPreviewForms = getPendingPreviewForms(currentJob.formsRequired, previewSignedOff);
+  const invalidPreviewForms = getInvalidPreviewForms(currentJob.formsRequired, previewSignedOff, {
+    JSA: isValidPreviewSignOff('JSA', currentJob.id, currentJsa.signedOff, currentJsa.fullSnapshot),
+    ELECTRICAL: isValidPreviewSignOff('ELECTRICAL', currentJob.id, currentElec.signedOff, currentElec.fullSnapshot),
+    SMOKE_ALARM: isValidPreviewSignOff('SMOKE_ALARM', currentJob.id, currentSmoke.signedOff, currentSmoke.fullSnapshot),
+    TCA1: isValidPreviewSignOff('TCA1', currentJob.id, currentTca1.signedOff, currentTca1.fullSnapshot),
+    TCA2: isValidPreviewSignOff('TCA2', currentJob.id, currentTca2.signedOff, currentTca2.fullSnapshot),
+  });
 
   // Persona boundary: Technicians can only access jobs assigned to them (G00-001)
   const isTechnicianRestricted =
@@ -256,6 +267,11 @@ export const ComplianceFormsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="cabms-card p-4" role="note">
+        <strong>Simulation only.</strong> These forms and sign-offs are preview data; they are not legally signed certificates or persistent job evidence.
+        <p>Required preview forms awaiting sign-off: {pendingPreviewForms.length ? pendingPreviewForms.join(', ') : 'None listed as pending'}.</p>
+        {invalidPreviewForms.length > 0 && <p role="alert">Invalid signed preview snapshots require review: {invalidPreviewForms.join(', ')}.</p>}
+      </div>
       {/* Top Header & Job Switcher */}
       <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">

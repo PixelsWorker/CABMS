@@ -34,6 +34,12 @@ test('demo enquiry conversion persists once, isolates workspaces, and rejects un
  const detail=await detailResponse.json() as {steps:Array<{id:string;state:string;required:number}>};
  assert.equal(detail.steps[0].state,'pending'); assert.equal(detail.steps[0].required,1);
  const step=encodeURIComponent(detail.steps[0].id);
+ for (const [path,method,body] of [[`solarcell/jobs/missing`,'GET',undefined],[`solarcell/jobs/${jobId}/steps/missing`,'PATCH',{state:'done'}]] as const) {
+  const response=await call(path,method,body); assert.equal(response.status,404); assert.equal(response.headers.get('Content-Type'),'application/problem+json');
+  const requestId=response.headers.get('X-Request-Id'); assert.ok(requestId); const problem=await response.json() as {code:string;type:string;request_id:string};
+  assert.equal(problem.code,'RESOURCE_NOT_FOUND'); assert.match(problem.type,/\/resource-not-found$/); assert.equal(problem.request_id,requestId);
+ }
+
  for (const [path,allow] of [[`solarcell/jobs/${jobId}`,'GET'],[`solarcell/jobs/${jobId}/steps/${step}`,'PATCH']] as const) {
   const response=await call(path,'DELETE'); assert.equal(response.status,405); assert.equal(response.headers.get('Allow'),allow);
   assert.equal(response.headers.get('Content-Type'),'application/problem+json'); const requestId=response.headers.get('X-Request-Id'); assert.ok(requestId);

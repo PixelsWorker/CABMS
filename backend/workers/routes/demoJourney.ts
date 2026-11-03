@@ -1,6 +1,6 @@
 import type { Env } from '../../types.ts';
 import { authorizeWorkspaceAccess, type AuthenticationService } from '../auth.ts';
-import { accessDeniedResponse, authenticationRequiredResponse, createProblemResponse, validationErrorResponse } from '../problem.ts';
+import { accessDeniedResponse, authenticationRequiredResponse, createProblemResponse, validationErrorResponse, resourceNotFoundResponse } from '../problem.ts';
 import { createEnquiry, convertEnquiry, listEnquiries, listJobs, getJob, getJobSteps, completeJobStep } from '../../modules/demoJourney/demoJourneyRepo.ts';
 
 export async function handleDemoJourney(request: Request, env: Env, workspace: string, resource: string, enquiry: string | undefined, requestId: string, authentication: AuthenticationService): Promise<Response> {
@@ -37,7 +37,7 @@ export async function handleDemoJob(request: Request, env: Env, workspace: strin
  if (!job) {
   const current = await authorizeWorkspaceAccess(env.DB, workspace, auth);
   if (!current || current.role === 'technician') return accessDeniedResponse('Permission changed', requestId);
-  return createProblemResponse(404, 'NOT_FOUND', 'not-found', 'Not Found', 'Job unavailable', requestId);
+  return resourceNotFoundResponse('Job unavailable', requestId);
  }
  const replyWithSteps = async () => {
   const steps = await getJobSteps(env.DB, workspace, auth, jobId);
@@ -54,7 +54,7 @@ export async function handleDemoJob(request: Request, env: Env, workspace: strin
    if (!current || current.role === 'technician') return accessDeniedResponse('Permission changed', requestId);
    const steps = await getJobSteps(env.DB, workspace, auth, jobId) as Array<{id: string; step_key: string; state: string}>;
    if (steps.some(step => step.id === stepId && step.step_key === 'review_details')) return createProblemResponse(409, 'CONFLICT', 'conflict', 'Conflict', 'Step cannot be completed from its current state', requestId);
-   return createProblemResponse(404, 'NOT_FOUND', 'not-found', 'Not Found', 'Step unavailable', requestId);
+   return resourceNotFoundResponse('Step unavailable', requestId);
   }
   return replyWithSteps();
  }

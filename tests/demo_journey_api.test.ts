@@ -89,3 +89,19 @@ test('migration 0009 backfills existing jobs on a disposable database', async t 
  const step=await db.prepare("SELECT job_id, required, state FROM demo_job_steps WHERE job_id='j'").first<{job_id:string;required:number;state:string}>();
  assert.deepEqual({...step},{job_id:'j',required:1,state:'pending'});
 });
+
+for (const target of ['SELECT j.* FROM demo_jobs j','SELECT s.* FROM demo_job_steps s']) test(`job detail denies membership revoked before ${target}`, async t => {
+ const db=createLocalD1Database() as LocalD1Database; t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true}); await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport));
+ const actor=G01_TEST_AUTH.officeStaff,token=await fixture.token(actor.uid,actor.email);
+ const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'};
+ const call=(path:string,method='GET',body?:unknown)=>worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/${path}`,{method,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})}),env);
+ const enquiry=await (await call('enquiries','POST',{customer_name:'Synthetic',service:'Demo'})).json() as {id:string};
+ const job=await (await call(`enquiries/${enquiry.id}/conversion`,'POST')).json() as {id:string};
+ let revoked=false;
+ const guardedDb={prepare:(sql:string)=>{if(!revoked && sql.startsWith(target)){db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(actor.userId,'solarcell');revoked=true;}return db.prepare(sql);},exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db)};
+ const response=await worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/jobs/${job.id}`,{headers:{Authorization:`Bearer ${token}`}}),{...env,DB:guardedDb});
+ assert.equal(revoked,true);assert.equal(response.status,403);
+ const body=await response.text();assert.doesNotMatch(body,/Synthetic|review_details|enquiry_id/);
+});

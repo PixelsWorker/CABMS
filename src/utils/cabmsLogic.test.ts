@@ -63,12 +63,28 @@ test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results'
 
 test('validateSignedSnapshot rejects malformed synthetic smoke alarm schedule field types', () => {
   const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
-  const invalid = structuredClone(valid);
-  invalid.alarmSchedule[0].roomLocation = { value: 'Hallway' };
-  assert.equal(
-    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
-    false,
-  );
+  for (const malformed of [{ value: 'Hallway' }, '', '   ']) {
+    const invalid = structuredClone(valid);
+    invalid.alarmSchedule[0].roomLocation = malformed;
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+      false,
+      `roomLocation ${JSON.stringify(malformed)}`,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects malformed synthetic electrical work item types', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  for (const malformed of [{ invalid: true }, '', '   ']) {
+    const invalid = structuredClone(valid);
+    invalid.testedWorkItems[0].circuitsTested = malformed;
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(invalid), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+      false,
+      `circuitsTested ${JSON.stringify(malformed)}`,
+    );
+  }
 });
 
 test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {

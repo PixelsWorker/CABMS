@@ -825,9 +825,16 @@ export function validateSignedSnapshot(
     }
     if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
       ['id', 'roomLocation', 'alarmBrandModel', 'standardMarkingPlaceholder', 'manufactureDateOrExpiry', 'powerSource', 'complianceStatusProvisional']
-        .some(field => typeof alarm[field] !== 'string')
+        .some(field => typeof alarm[field] !== 'string' || alarm[field].trim() === '')
     )) {
-      return { valid: false, error: 'SMOKE_ALARM snapshot contains invalid alarm schedule fields.' };
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains missing or invalid alarm schedule fields.' };
+    }
+    if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
+      ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
+        .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||
+      (typeof item.rcdTripTimeMs !== 'number' && typeof item.rcdTripTimeMs !== 'string')
+    )) {
+      return { valid: false, error: 'ELECTRICAL snapshot contains invalid tested work item fields.' };
     }
     return { valid: true, parsedSnapshot: parsed };
   } catch (e: any) {

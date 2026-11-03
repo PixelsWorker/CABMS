@@ -3,3 +3,4 @@ migrations/*.sql text eol=lf
 migrations/0005_g01_retire_synthetic_access.sql -text -eol
 backend/db/migrate.ts text eol=lf
 tests/s2/g01_package1_schema.test.ts text eol=lf
+migrations/0009_demo_job_steps.sql -text -eol

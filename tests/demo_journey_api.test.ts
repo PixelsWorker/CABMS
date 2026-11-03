@@ -28,6 +28,24 @@ test('demo enquiry conversion persists once, isolates workspaces, and rejects un
  const enquiries=await (await call('solarcell/enquiries')).json() as Array<{id:string;job_id:string}>;
  const jobs=await (await call('solarcell/jobs')).json() as Array<{id:string;enquiry_id:string}>;
  assert.equal(jobs.length,1); assert.equal(enquiries[0].job_id,jobs[0].id); assert.equal(jobs[0].enquiry_id,id);
+ const jobId=jobs[0].id;
+ const detail=await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{id:string;state:string;required:number}>};
+ assert.equal(detail.steps[0].state,'pending'); assert.equal(detail.steps[0].required,1);
+ const step=encodeURIComponent(detail.steps[0].id);
+ assert.equal((await call(`cctv/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,403);
+ assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'},technician)).status,403);
+ assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,200);
+ const refreshed=await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{state:string;required:number}>};
+ assert.equal(refreshed.steps[0].state,'done'); assert.equal(refreshed.steps[0].required,1);
+ const previous = await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{updated_at:string}>};
+ assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,200);
+ const again = await (await call(`solarcell/jobs/${jobId}`)).json() as {steps:Array<{updated_at:string}>};
+ assert.equal(again.steps[0].updated_at,previous.steps[0].updated_at);
+ await db.prepare("UPDATE demo_job_steps SET state='skipped' WHERE id=?").bind(detail.steps[0].id).run();
+ assert.equal((await call(`solarcell/jobs/${jobId}/steps/${step}`,'PATCH',{state:'done'})).status,409);
+ const skipped=await db.prepare('SELECT state FROM demo_job_steps WHERE id=?').bind(detail.steps[0].id).first<{state:string}>();
+ assert.equal(skipped?.state,'skipped');
+
 });
 
 test('failed job insertion leaves the enquiry unconverted and no partial job', async t => {
@@ -51,4 +69,15 @@ test('write boundary refuses an identity whose membership was revoked after an e
  await db.prepare('DELETE FROM workspace_memberships WHERE workspace_id=? AND user_id=?').bind('solarcell',actor.userId).run();
  assert.equal(await createEnquiry(db,'solarcell',auth,{customer_name:'Synthetic',service:'test'}),null);
  assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM demo_enquiries').first<{count:number}>())?.count,0);
+});
+
+test('migration 0009 backfills existing jobs on a disposable database', async t => {
+ const db=createLocalD1Database() as LocalD1Database; t.after(()=>db.getSqliteHandle().close());
+ const {loadVerifiedMigrations}=await import('../backend/db/migrate.ts');
+ const migrations=loadVerifiedMigrations();
+ for (const m of migrations.filter(m=>m.name!=='0009_demo_job_steps.sql')) await db.exec(m.bytes.toString('utf8'));
+ await db.exec("INSERT INTO demo_enquiries (id,workspace_id,customer_name,service,created_at) VALUES ('e','solarcell','Synthetic','Demo','2026-01-01'); INSERT INTO demo_jobs (id,workspace_id,enquiry_id,title,created_at) VALUES ('j','solarcell','e','Demo','2026-01-01');");
+ await db.exec(migrations.find(m=>m.name==='0009_demo_job_steps.sql')!.bytes.toString('utf8'));
+ const step=await db.prepare("SELECT job_id, required, state FROM demo_job_steps WHERE job_id='j'").first<{job_id:string;required:number;state:string}>();
+ assert.deepEqual({...step},{job_id:'j',required:1,state:'pending'});
 });

@@ -25,6 +25,17 @@ export async function createEnquiry(db: D1Database, workspace: string, auth: Aut
 export async function convertEnquiry(db: D1Database, workspace: string, auth: AuthContext, enquiry: string) {
  const id = crypto.randomUUID();
  // A single INSERT is atomic. The unique enquiry_id constraint rejects races.
- const r = await db.prepare(`INSERT INTO demo_jobs (id,workspace_id,enquiry_id,title,created_at) SELECT ?,e.workspace_id,e.id,e.service,? FROM demo_enquiries e WHERE e.workspace_id=? AND e.id=? AND ${allowed} ON CONFLICT(enquiry_id) DO NOTHING`).bind(id,new Date().toISOString(),workspace,enquiry,...who(workspace,auth)).run();
- return r.meta.changes === 1 ? id : null;
+ const row = await db.prepare(`INSERT INTO demo_jobs (id,workspace_id,enquiry_id,title,created_at) SELECT ?,e.workspace_id,e.id,e.service,? FROM demo_enquiries e WHERE e.workspace_id=? AND e.id=? AND ${allowed} ON CONFLICT(enquiry_id) DO NOTHING RETURNING id`).bind(id,new Date().toISOString(),workspace,enquiry,...who(workspace,auth)).first<{id:string}>();
+ return row?.id ?? null;
+}
+
+export async function getJob(db: D1Database, workspace: string, auth: AuthContext, job: string) {
+ return db.prepare(`SELECT j.* FROM demo_jobs j WHERE j.workspace_id=? AND j.id=? AND ${allowed}`).bind(workspace,job,...who(workspace,auth)).first();
+}
+export async function getJobSteps(db: D1Database, workspace: string, auth: AuthContext, job: string) {
+ return (await db.prepare(`SELECT s.* FROM demo_job_steps s WHERE s.workspace_id=? AND s.job_id=? AND ${allowed} ORDER BY s.step_key`).bind(workspace,job,...who(workspace,auth)).all()).results;
+}
+export async function completeJobStep(db: D1Database, workspace: string, auth: AuthContext, job: string, step: string) {
+ const result = await db.prepare(`UPDATE demo_job_steps SET updated_at=CASE WHEN state='done' THEN updated_at ELSE ? END, state='done' WHERE workspace_id=? AND job_id=? AND id=? AND step_key='review_details' AND state IN ('pending','done') AND ${allowed}`).bind(new Date().toISOString(),workspace,job,step,...who(workspace,auth)).run();
+ return result.meta.changes === 1;
 }

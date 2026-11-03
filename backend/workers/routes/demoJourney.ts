@@ -1,7 +1,7 @@
 import type { Env } from '../../types.ts';
 import { authorizeWorkspaceAccess, type AuthenticationService } from '../auth.ts';
 import { accessDeniedResponse, authenticationRequiredResponse, createProblemResponse, validationErrorResponse } from '../problem.ts';
-import { createEnquiry, convertEnquiry, listEnquiries, listJobs } from '../../modules/demoJourney/demoJourneyRepo.ts';
+import { createEnquiry, convertEnquiry, listEnquiries, listJobs, getJob, getJobSteps, completeJobStep } from '../../modules/demoJourney/demoJourneyRepo.ts';
 
 export async function handleDemoJourney(request: Request, env: Env, workspace: string, resource: string, enquiry: string | undefined, requestId: string, authentication: AuthenticationService): Promise<Response> {
  const auth = await authentication.authenticateRequest(env.DB,request,env);
@@ -26,4 +26,25 @@ export async function handleDemoJourney(request: Request, env: Env, workspace: s
   return createProblemResponse(409,'CONFLICT','conflict','Conflict','Enquiry unavailable or already converted',requestId);
  }
  return new Response('Method Not Allowed',{status:405});
+}
+
+export async function handleDemoJob(request: Request, env: Env, workspace: string, jobId: string, stepId: string | undefined, requestId: string, authentication: AuthenticationService): Promise<Response> {
+ const auth = await authentication.authenticateRequest(env.DB, request, env);
+ if (!auth) return authenticationRequiredResponse('Valid staff authentication token is required', requestId);
+ const membership = await authorizeWorkspaceAccess(env.DB, workspace, auth);
+ if (!membership || membership.role === 'technician') return accessDeniedResponse('You do not have access to this workspace', requestId);
+ const job = await getJob(env.DB, workspace, auth, jobId);
+ if (!job) return createProblemResponse(404, 'NOT_FOUND', 'not-found', 'Not Found', 'Job unavailable', requestId);
+ if (request.method === 'GET' && !stepId) return Response.json({job, steps: await getJobSteps(env.DB, workspace, auth, jobId)});
+ if (request.method === 'PATCH' && stepId) {
+  let body: unknown; try { body = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 1 || (body as {state?: unknown}).state !== 'done') return validationErrorResponse('Only completion is supported', [], requestId);
+  if (!await completeJobStep(env.DB, workspace, auth, jobId, stepId)) {
+   const steps = await getJobSteps(env.DB, workspace, auth, jobId) as Array<{id: string; step_key: string; state: string}>;
+   if (steps.some(step => step.id === stepId && step.step_key === 'review_details')) return createProblemResponse(409, 'CONFLICT', 'conflict', 'Conflict', 'Step cannot be completed from its current state', requestId);
+   return createProblemResponse(404, 'NOT_FOUND', 'not-found', 'Not Found', 'Step unavailable', requestId);
+  }
+  return Response.json({job, steps: await getJobSteps(env.DB, workspace, auth, jobId)});
+ }
+ return new Response('Method Not Allowed', {status:405});
 }

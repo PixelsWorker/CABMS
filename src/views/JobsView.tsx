@@ -1,3 +1,4 @@
+import { demoJourneyRequest } from '../services/demoJourneyClient.ts';
 /**
  * Area D & G: Operational Jobs & Completion Action
  * Structured work orders, site details, MYOB invoice panel,
@@ -907,13 +908,25 @@ const SimulatedJobsView: React.FC = () => {
 
 export const JobsView: React.FC = () => {
  const session = useG01Session();
- return session ? <PersistentJobs key={session.workspaceId ?? 'none'} /> : <SimulatedJobsView />;
+ return session ? <PersistentJobs key={JSON.stringify([session.workspaceId, session.profile?.user.id])} /> : <SimulatedJobsView />;
 };
 function PersistentJobs() {
  const state = useWorkspaceDemoData(false);
+ const session = useG01Session()!;
+ const [selected, setSelected] = React.useState<string | null>(null);
  const message = demoDataMessage(state);
- return <section className="cabms-card p-5 space-y-4"><h1>Jobs — saved demo data</h1><p>These jobs were created from saved synthetic enquiries. Scheduling, quotes and completion remain simulations.</p>
+ return <section className="cabms-card p-5 space-y-4"><h1>Jobs - saved demo data</h1><p>These jobs were created from saved synthetic enquiries. Scheduling, quotes and completion remain simulations.</p>
   {message && <p role={state.status === 'loading' ? 'status' : 'alert'}>{message}</p>}
-  {state.status === 'ready' && (state.jobs.length === 0 ? <p>No saved jobs in this workspace.</p> : <ul>{state.jobs.map(job=><li key={job.id}>{job.title} — job {job.id} — enquiry {job.enquiry_id}</li>)}</ul>)}
+  {state.status === 'ready' && (state.jobs.length === 0 ? <p>No saved jobs in this workspace.</p> : <ul>{state.jobs.map(job=><li key={job.id}>{job.title} - job {job.id} - enquiry {job.enquiry_id} <button type="button" className="rounded border px-3 py-1" onClick={()=>setSelected(previous => previous === job.id ? null : job.id)}>Open job</button></li>)}</ul>)}
+  {state.status === 'ready' && selected && state.jobs.some(job => job.id === selected) && session.workspaceId && <SavedJobDetails key={JSON.stringify([session.workspaceId, selected])} workspace={session.workspaceId} id={selected} token={session.token} />}
  </section>;
+}
+function SavedJobDetails({workspace, id, token}: {workspace: string; id: string; token: () => Promise<string>}) {
+ const [details, setDetails] = React.useState<{job: {title: string; enquiry_id: string}; steps: Array<{id: string; label: string; state: string; required: number}>} | null>(null);
+ const [error, setError] = React.useState('');
+ const [busy, setBusy] = React.useState(false);
+ const [uncertain, setUncertain] = React.useState(false);
+ React.useEffect(()=>{ let active = true; void token().then(t=>demoJourneyRequest<typeof details>(workspace,t,`jobs/${encodeURIComponent(id)}`)).then(data=>{if(active)setDetails(data);}).catch(()=>{if(active)setError('Could not load this job.');}); return ()=>{active=false;}; },[workspace,id]);
+ const complete = async (step: string) => { setBusy(true); setError(''); try { const t=await token(); setDetails(await demoJourneyRequest(workspace,t,`jobs/${encodeURIComponent(id)}/steps/${encodeURIComponent(step)}`,'PATCH',{state:'done'})); } catch { setUncertain(true); setError('Update could not be confirmed. Reopen the job to check its saved state.'); } finally { setBusy(false); } };
+ return <div className="cabms-card-subtle rounded p-4"><h2>Job details</h2>{error && <p role="alert">{error}</p>}{!details && !error && <p role="status">Loading job details...</p>}{details && <><p>{details.job.title} - enquiry {details.job.enquiry_id}</p>{details.steps.map(step=><div key={step.id}>{step.label} - {step.state === 'done' ? 'Completed' : step.state === 'pending' ? 'Pending' : step.state === 'skipped' ? 'Skipped' : step.state === 'n/a' ? 'Not applicable' : 'Unknown state'} {step.required ? '(required)' : '(optional)'} {step.state === 'pending' && <button type="button" disabled={busy || uncertain} className="rounded border px-3 py-1" onClick={()=>void complete(step.id)}>Mark step complete</button>}</div>)}</>}</div>;
 }

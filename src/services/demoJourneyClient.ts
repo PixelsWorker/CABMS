@@ -5,7 +5,7 @@ export class DemoJourneyError extends Error {
  constructor(public readonly status: number, message: string, public readonly requestId?: string) { super(requestId ? `${message} (Ref: ${requestId})` : message); this.name = 'DemoJourneyError'; }
 }
 
-export async function demoJourneyRequest<T>(workspace: string, token: string, path: string, method = 'GET', body?: CreateDemoEnquiry): Promise<T> {
+export async function demoJourneyRequest<T>(workspace: string, token: string, path: string, method = 'GET', body?: CreateDemoEnquiry | { state: 'done' }): Promise<T> {
  const response = await fetch(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspace)}/${path}`), {
   method, signal: AbortSignal.timeout(10000), headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
   ...(body ? {body:JSON.stringify(body)} : {}),

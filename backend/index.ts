@@ -24,7 +24,7 @@ import {
 } from './workers/problem.ts';
 import { StructuredLogger } from './workers/logger.ts';
 import { approvedMembership } from './workers/privilegedApproval.ts';
-import { handleDemoJourney } from './workers/routes/demoJourney.ts';
+import { handleDemoJourney, handleDemoJob } from './workers/routes/demoJourney.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
   return {
@@ -149,6 +149,9 @@ export function createWorker(authentication: AuthenticationService = productionA
         }
         return addCors(resp, env);
       }
+
+      const jobMatch = /^\/api\/v1\/workspaces\/([^/]+)\/jobs\/([^/]+)(?:\/steps\/([^/]+))?$/.exec(pathname);
+      if (jobMatch) return addCors(await handleDemoJob(request, env, jobMatch[1], decodeURIComponent(jobMatch[2]), jobMatch[3] ? decodeURIComponent(jobMatch[3]) : undefined, requestId, authentication), env);
 
       const journeyMatch = /^\/api\/v1\/workspaces\/([^/]+)\/(enquiries|jobs)(?:\/([^/]+)\/conversion)?$/.exec(pathname);
       if (journeyMatch && !(journeyMatch[2] === 'jobs' && journeyMatch[3])) {

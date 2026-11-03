@@ -2,6 +2,9 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
+import { demoJourneyRequest, type DemoEnquiry } from '../services/demoJourneyClient.ts';
+import { ENQUIRY_COUNT_EVENT, type EnquiryCountEvent } from '../services/enquiryCount.ts';
 import { Persona } from '../types/cabms.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
@@ -77,6 +80,30 @@ export const getBrandBadgeConfig = (brandId: string) => {
 export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { activeTab, setActiveTab, activeBrand, activeBrandId, setActiveBrandId, brands, persona, websiteEnquiries,
     demoNotification, clearDemoNotification, simulateSignOut } = useCabms();
+  const session = useG01Session();
+  const workspace = session?.workspaceId ?? null;
+  const userId = session?.profile?.user.id ?? null;
+  const role = session?.profile?.memberships.find(m => m.workspace_id === workspace)?.role;
+  const countKey = session && workspace && userId && role && role !== 'technician' ? JSON.stringify([workspace,userId,role]) : null;
+  const [savedCount, setSavedCount] = React.useState<{key:string; count:number|null} | null>(null);
+  React.useEffect(() => {
+    if (!countKey || !session || !workspace || !userId) return;
+    let active = true;
+    let generation = 0;
+    setSavedCount({key:countKey,count:null});
+    const request = ++generation;
+    void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {
+      if (active && generation === request) setSavedCount({key:countKey,count:rows.filter(row => !row.job_id).length});
+    }).catch(() => { if (active && generation === request) setSavedCount({key:countKey,count:null}); });
+    const sync = (event: Event) => {
+      const detail = (event as CustomEvent<EnquiryCountEvent>).detail;
+      if (detail?.workspace !== workspace || detail.userId !== userId) return;
+      generation++;
+      setSavedCount({key:countKey,count:detail.count});
+    };
+    window.addEventListener(ENQUIRY_COUNT_EVENT,sync);
+    return () => {active=false; window.removeEventListener(ENQUIRY_COUNT_EVENT,sync);};
+  }, [countKey]);
   const [collapsed, setCollapsed] = React.useState(false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
   const [brandDropdownOpen, setBrandDropdownOpen] = React.useState(false);
@@ -165,7 +192,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
   const closeRef = React.useRef<HTMLButtonElement>(null);
   const collapseRef = React.useRef<HTMLButtonElement>(null);
 
-  const pendingEnquiries = websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW').length;
+  const pendingEnquiries = session ? (savedCount?.key === countKey ? savedCount.count ?? 0 : 0) : websiteEnquiries.filter(e => e.status === 'PENDING_REVIEW').length;
   const permitted = CORE_DESTINATIONS.filter(item => item.roles.includes(persona));
   const activeDestination = CORE_DESTINATIONS.find(item => item.id === activeTab);
 

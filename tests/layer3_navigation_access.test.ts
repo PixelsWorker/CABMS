@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { renderToString } from 'react-dom/server';
 import App, { AppContent } from '../src/App.tsx';
 import { CabmsProvider, useCabms } from '../src/context/CabmsContext.tsx';
+import { SessionContext, type Session } from '../src/context/G01Session.tsx';
 import { verifyPersonaAccess } from '../src/utils/cabmsLogic.ts';
 import { AccessDeniedView } from '../src/components/AccessDeniedView.tsx';
 import { SignInScreen } from '../src/components/SignInScreen.tsx';
@@ -219,6 +220,17 @@ test('LAYER 3: Wave A — Technician dashboard and work-order selection stay ins
     assert.ok(container.textContent?.includes('Emergency Aircon Automation Inverter Reset'), container.textContent || 'empty jobs view');
   });
 });
+test('Authenticated navigation never exposes the preview enquiry badge', async () => {
+  const session = {} as Session;
+  await mountView(React.createElement(SessionContext.Provider, { value: session }, React.createElement(Navigation)), async (ctx, container) => {
+    assert.ok(ctx.websiteEnquiries.some(item => item.status === 'PENDING_REVIEW'), 'preview contains pending enquiries');
+    const button = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(item => item.title === 'Website Enquiries');
+    assert.ok(button);
+    assert.equal(button.getAttribute('aria-label'), 'Website Enquiries');
+    assert.equal(button.querySelector('.cabms-nav-badge'), null);
+  });
+});
+
 test('LAYER 3: WIN-CR-01 — Navigation accessible name announces pending enquiry count in aria-label (multiple, one, and zero)', async () => {
   await mountView(React.createElement(Navigation), async (ctx, container) => {
     // 1. Initial mounted state has multiple pending website enquiries

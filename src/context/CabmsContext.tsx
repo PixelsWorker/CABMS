@@ -2503,7 +2503,15 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const total = Math.round((subtotal + gst) * 100) / 100;
 
     const brand = brands[targetBrandId];
-    const termsTpl = templates.find(t => t.type === 'TERMS') || templates[0];
+    // The editable template content may be a draft. Only the matching published
+    // revision is eligible for this synthetic quote snapshot.
+    const termsTpl = templates.find(t => t.type === 'TERMS');
+    const publishedTerms = termsTpl?.revisions.find(r => r.status === 'PUBLISHED' && r.version === termsTpl.currentVersion);
+    if (!publishedTerms) {
+      const message = 'Cannot prepare quote: published terms are unavailable.';
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
     let issuedAt: string;
     let expiresAt: string;
     const region = brand?.holidayRegion || 'brisbane';
@@ -2555,9 +2563,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       subtotal,
       gst,
       total,
-      lineItems,
-      termsVersion: termsTpl.currentVersion,
-      termsContentSnapshot: termsTpl.content,
+      lineItems: structuredClone(lineItems),
+      termsVersion: publishedTerms.version,
+      termsContentSnapshot: publishedTerms.content,
       frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,
       acceptanceStatus: 'SENT',
       linkScenario: 'valid',
@@ -2583,7 +2591,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
 
     showDemoNotification(`Quote ${newQuote.externalMyobRef} prepared (Subtotal: $${subtotal.toLocaleString()} + GST: $${gst.toLocaleString()} = Total: $${total.toLocaleString()}).`, 'success');
-    return newQuote;
+    return structuredClone(newQuote);
   };
 
   const simulateQuoteAcceptance = (
@@ -2602,8 +2610,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (scenario === 'invalid') {
       return { success: false, message: 'Invalid or broken quotation acceptance token.' };
     }
-    const isPastExpiry = Boolean(job.quote.expiresAt)
-      && new Date(demoClock).getTime() >= new Date(job.quote.expiresAt!).getTime();
+    const now = new Date(demoClock).getTime();
+    const expiry = job.quote.expiresAt ? new Date(job.quote.expiresAt).getTime() : null;
+    if (!Number.isFinite(now) || (expiry !== null && !Number.isFinite(expiry))) {
+      return { success: false, message: 'Quotation expiry could not be verified.' };
+    }
+    const isPastExpiry = expiry !== null && now >= expiry;
     if (scenario === 'expired' || job.quote.acceptanceStatus === 'EXPIRED' || isPastExpiry) {
       return { success: false, message: 'This quotation link has expired (14-day validity exceeded).' };
     }
@@ -2615,6 +2627,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     if (scenario === 'already_accepted' || job.quote.acceptanceStatus === 'ACCEPTED') {
       return { success: false, message: `Quotation was already accepted on ${job.quote.acceptedAt}. Duplicate acceptance rejected.` };
+    }
+    if (job.quote.acceptanceStatus !== 'SENT') {
+      return { success: false, message: 'Only an issued quotation can be accepted.' };
     }
 
     const acceptedTimestamp = serializeBusinessInstant(demoClock);

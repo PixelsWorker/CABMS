@@ -3779,3 +3779,64 @@ test('LAYER 6: MAN-SEC-01 — certificate dispatch and retry enforce session aut
     assert.equal(ownerDispatch.success, true, 'Owner Admin dispatch succeeds');
   });
 });
+
+
+test('G03 preview quote uses published terms while a later draft exists and detaches issued items', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const original = ctx.templates.find(t => t.type === 'TERMS')!;
+    const published = original.revisions.find(r => r.status === 'PUBLISHED' && r.version === original.currentVersion)!;
+    assert.ok(published);
+    await act(async () => { ctx.createTemplateDraftRevision(original.id, 'Unpublished synthetic draft terms'); });
+    assert.equal(ctx.templates.find(t => t.id === original.id)?.activeStatus, 'DRAFT');
+    const lines = [{ id: 'synthetic', description: 'Synthetic service', quantity: 1, unitPrice: 100, total: 100 }];
+    let result!: Quote;
+    await act(async () => { result = ctx.prepareQuoteForJob('JOB-2026-101', 'Synthetic quote', lines); });
+    assert.equal(result.termsVersion, published.version);
+    assert.equal(result.termsContentSnapshot, published.content);
+    lines[0].description = 'Caller changed';
+    result.lineItems[0].description = 'Returned object changed';
+    const stored = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote!;
+    assert.equal(stored.lineItems[0].description, 'Synthetic service');
+    assert.equal(stored.termsContentSnapshot, published.content);
+  });
+});
+
+
+test('G03 preview acceptance fails closed for unissued quotes and invalid expiry', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Synthetic quote', [{ id: '1', description: 'Synthetic', quantity: 1, unitPrice: 100, total: 100 }]); });
+    const job = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!;
+    job.quote!.acceptanceStatus = 'DRAFT';
+    let result!: {success: boolean; message: string};
+    await act(async () => { result = ctx.simulateQuoteAcceptance(job.id, 'valid'); });
+    assert.equal(result.success, false);
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === job.id)!.quote!.acceptanceStatus, 'DRAFT');
+    job.quote!.acceptanceStatus = 'SENT';
+    job.quote!.expiresAt = 'invalid';
+    await act(async () => { result = ctx.simulateQuoteAcceptance(job.id, 'valid'); });
+    assert.equal(result.success, false);
+    assert.match(result.message, /could not be verified/);
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === job.id)!.quote!.acceptanceStatus, 'SENT');
+  });
+});
+
+
+test('G03 preview refuses issuance when the published terms revision is missing', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const terms = ctx.templates.find(t => t.type === 'TERMS')!;
+    const originalRevisions = terms.revisions;
+    try {
+      terms.revisions = terms.revisions.filter(r => r.version !== terms.currentVersion);
+      const before = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote);
+      await act(async () => {
+        assert.throws(() => ctx.prepareQuoteForJob('JOB-2026-101', 'Synthetic quote', [{ id: '1', description: 'Synthetic', quantity: 1, unitPrice: 100, total: 100 }]), /published terms are unavailable/);
+      });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote, before);
+    } finally {
+      terms.revisions = originalRevisions;
+    }
+  });
+});

@@ -58,5 +58,5 @@ export async function handleDemoJob(request: Request, env: Env, workspace: strin
   }
   return replyWithSteps();
  }
- return new Response('Method Not Allowed', {status:405});
+ return createProblemResponse(405, 'METHOD_NOT_ALLOWED', 'method-not-allowed', 'Method Not Allowed', 'Method not allowed for this resource', requestId, undefined, undefined, {Allow: stepId ? 'PATCH' : 'GET'});
 }

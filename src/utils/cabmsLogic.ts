@@ -817,6 +817,12 @@ export function validateSignedSnapshot(
         return { valid: false, error: `${formType} snapshot contains an incomplete ${arrayField} entry.` };
       }
     }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      (alarm.passFail !== 'Pass' && alarm.passFail !== 'Fail') ||
+      typeof alarm.buttonTestPass !== 'boolean' || typeof alarm.interconnectionPass !== 'boolean'
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains invalid alarm test results.' };
+    }
     return { valid: true, parsedSnapshot: parsed };
   } catch (e: any) {
     return { valid: false, error: `Snapshot JSON syntax error: ${e.message}` };

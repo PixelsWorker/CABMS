@@ -51,6 +51,16 @@ test('validateSignedSnapshot accepts all five CABMS signed form schemas', () => 
   }
 });
 
+test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  assert.ok(valid.alarmSchedule.length > 0);
+  for (const [field, value] of [['passFail', null], ['buttonTestPass', 'false'], ['interconnectionPass', null]] as const) {
+    const invalid = structuredClone(valid);
+    invalid.alarmSchedule[0][field] = value;
+    assert.equal(validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false, field);
+  }
+});
+
 test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {
   const validElectrical = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
   const invalidCases: [string | undefined, string, string, string][] = [

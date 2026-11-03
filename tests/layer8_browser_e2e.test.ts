@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
+import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { createServer, preview } from 'vite';
 
 test('LAYER 8: Build inspection - Production build bundle integrity and entry point inspection', () => {
   // Check dist output
@@ -59,6 +63,8 @@ test('LAYER 8: FC-06 — Production assetsignore and planning assets exclusion a
   assert.ok(fs.existsSync('./dist/.assetsignore'), 'dist/.assetsignore exists in production build output');
   const ignoreContent = fs.readFileSync('./dist/.assetsignore', 'utf-8');
   assert.ok(ignoreContent.includes('assets/aistudio/'), 'dist/.assetsignore contains assets/aistudio/ pattern');
+
+  assert.equal(fs.existsSync('./dist/assets/aistudio'), false, 'Production output excludes planning assets');
 
   // 2. Verify all 5 planning asset files exist in public/assets/aistudio and are covered by .assetsignore
   const planningDir = './public/assets/aistudio';
@@ -124,5 +130,52 @@ test('LAYER 8: Browser checks — Browser smoke test (Google sign-in button visi
   } finally {
     await page.close();
     await browser.close();
+  }
+});
+
+
+test('LAYER 8: FC-06 blocks case and encoding variants over dev and preview HTTP', async () => {
+  const filename = '01-G00-GROUP-PLAN-FOR-REVIEW_02f12f1f.md';
+  const sourcePath = path.resolve('public/assets/aistudio', filename);
+  const source = fs.readFileSync(sourcePath);
+  assert.ok(source.length > 256);
+  assert.equal(fs.existsSync(path.resolve('dist/assets/aistudio', filename)), false);
+  // Keep the dev server close hook away from existing build outputs.
+  const devOut = path.join(os.tmpdir(), `cabms-fc06-unused-${randomUUID()}`);
+  assert.equal(fs.existsSync(devOut), false);
+  const dev = await createServer({ logLevel: 'silent', build: { outDir: devOut }, server: { host: '127.0.0.1', port: 0, strictPort: true } });
+  let previewServer: Awaited<ReturnType<typeof preview>> | undefined;
+  try {
+    await dev.listen();
+    previewServer = await preview({ logLevel: 'silent', preview: { host: '127.0.0.1', port: 0, strictPort: true } });
+    const paths = [
+      `/assets/aistudio/${filename}`, `/assets/AISTUDIO/${filename}`, `/assets/AiStUdIo/${filename}`,
+      `/assets/%61istudio/${filename}`, `/assets/%41ISTUDIO/${filename}`, `/assets%2fAISTUDIO/${filename}`,
+      `/assets/other/../AISTUDIO/${filename}`, `/assets/other/%2e%2e/AISTUDIO/${filename}`,
+      `/assets%5cAISTUDIO%5c${filename}`, `/public/assets/AISTUDIO/${filename}`,
+      `/@fs/${path.resolve('public/assets/AISTUDIO', filename).replace(/\\/g, '/')}`,
+    ];
+    const request = (port: number, url: string) => new Promise<{status: number; body: Buffer}>((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port, path: url, headers: { Accept: '*/*' } }, res => {
+        const chunks: Buffer[] = []; res.on('data', chunk => chunks.push(Buffer.from(chunk)));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks) }));
+        res.on('error', reject);
+      });
+      req.setTimeout(10000, () => req.destroy(new Error('HTTP probe timed out'))); req.on('error', reject);
+    });
+    for (const server of [dev.httpServer!, previewServer.httpServer]) {
+      const address = server.address(); assert.ok(address && typeof address !== 'string');
+      for (const url of paths) {
+        const result = await request(address.port, url);
+        assert.equal(result.status, 404, `${url} must be blocked`);
+        assert.equal(result.body.includes(source.subarray(0, 256)), false, `${url} must not disclose planning content`);
+      }
+      assert.equal((await request(address.port, '/assets/%ZZ')).status, 400);
+      assert.equal((await request(address.port, '/assets/branding/solarcell_logo.svg')).status, 200);
+    }
+    assert.deepEqual(fs.readFileSync(sourcePath), source);
+  } finally {
+    if (previewServer) await new Promise<void>((resolve, reject) => previewServer!.httpServer.close(error => error ? reject(error) : resolve()));
+    await dev.close();
   }
 });

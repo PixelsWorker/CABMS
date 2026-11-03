@@ -44,9 +44,11 @@ function base64UrlToUint8Array(base64Url: string): Uint8Array {
 export function createAuthenticationService(transport: typeof fetch) {
   let cachedJwks: { keys: Record<string, JsonWebKey>; expiresAt: number } | null = null;
   let pendingJwks: Promise<Record<string, JsonWebKey>> | null = null;
-async function getGoogleJwks(): Promise<Record<string, JsonWebKey>> {
+  let lastUnknownKidRefresh = 0;
+  let unknownKidRefreshFailed = false;
+async function getGoogleJwks(force = false): Promise<Record<string, JsonWebKey>> {
   const now = Date.now();
-  if (cachedJwks && cachedJwks.expiresAt > now) {
+  if (!force && cachedJwks && cachedJwks.expiresAt > now) {
     return cachedJwks.keys;
   }
   if (!pendingJwks) {
@@ -84,6 +86,7 @@ async function fetchGoogleJwks(): Promise<Record<string, JsonWebKey>> {
   }
 
   cachedJwks = { keys: map, expiresAt: now + maxAge * 1000 };
+  unknownKidRefreshFailed = false;
   return map;
 }
 
@@ -171,11 +174,22 @@ async function verifyFirebaseToken(
 
   // 3. Cryptographic signature check
   try {
+    const hadCurrentCache = !!cachedJwks && cachedJwks.expiresAt > Date.now();
     const jwks = await getGoogleJwks();
-    const jwk = jwks[header.kid];
-    if (!jwk) {
-      return null;
+    let jwk = jwks[header.kid];
+    if (!jwk && hadCurrentCache && (pendingJwks || Date.now() - lastUnknownKidRefresh >= (unknownKidRefreshFailed ? 5000 : 30000))) {
+      if (!pendingJwks) lastUnknownKidRefresh = Date.now();
+      try {
+        const refreshed = await getGoogleJwks(true);
+        unknownKidRefreshFailed = false;
+        jwk = refreshed[header.kid];
+      } catch (error) {
+        unknownKidRefreshFailed = true;
+        throw error;
+      }
     }
+    if (!jwk && unknownKidRefreshFailed) throw new AuthenticationUnavailable('Identity verification is temporarily unavailable');
+    if (!jwk) return null;
 
     const cryptoKey = await crypto.subtle.importKey(
       'jwk',

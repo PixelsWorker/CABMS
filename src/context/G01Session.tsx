@@ -51,47 +51,78 @@ export function G01SessionProvider({ children, dependencies = productionDependen
   const [workspaceId, setWorkspaceId] = useState<BrandId | null>(null);
   const generation = useRef(0);
   const principal = useRef<string | null>(null);
+  const authorizedProfile = useRef<Profile | null>(null);
+  const identityEpoch = useRef(0);
+  const verification = useRef<{ generation: number; promise: Promise<void> } | null>(null);
+  const wakeVerification = useRef(new Set<() => void>());
+  const wakePendingTokens = () => { for (const wake of wakeVerification.current) wake(); wakeVerification.current.clear(); };
   const signOutPending = useRef<{ id: number; uid: string } | null>(null);
   const logoutSequence = useRef(0);
   useEffect(() => {
     let active = true;
-    const unsubscribe = dependencies.onIdTokenChanged(async (user: User | null) => {
+    const unsubscribe = dependencies.onIdTokenChanged((user: User | null) => {
+      wakePendingTokens();
+      const pending = handleUser(user);
+      const operation = { generation: generation.current, promise: pending };
+      verification.current = operation;
+      void pending.finally(() => { if (verification.current === operation) verification.current = null; });
+      return pending;
+    });
+    async function handleUser(user: User | null) {
       if (user && signOutPending.current?.uid === user.uid) return;
       if (user && signOutPending.current && signOutPending.current.uid !== user.uid) signOutPending.current = null;
+      if (!user || (principal.current && principal.current !== user.uid)) identityEpoch.current++;
       if (!user) {
         principal.current = null;
+        authorizedProfile.current = null;
         signOutPending.current = null;
         setProfile(null);
         setWorkspaceId(null);
       }
       const request = ++generation.current;
       const sameUser = !!user && principal.current === user.uid;
-      if (!sameUser) { setProfile(null); setWorkspaceId(null); setLoading(true); }
+      if (!sameUser) { principal.current = null; authorizedProfile.current = null; setProfile(null); setWorkspaceId(null); setLoading(true); }
       setError('');
       try {
         if (user) {
-          const response = await dependencies.getCurrentUser(await user.getIdToken());
-          if (!active || request !== generation.current) return;
-          if (!response.ok) {
-            if (response.status === 401 || response.status === 403 || response.status === 404) throw new AccessVerificationDenied();
-            throw new Error('CABMS is temporarily unavailable');
+          const verify = async () => {
+            const response = await dependencies.getCurrentUser(await user.getIdToken());
+            if (!response.ok) {
+              if (response.status === 401 || response.status === 403 || response.status === 404) throw new AccessVerificationDenied();
+              throw new Error('CABMS is temporarily unavailable');
+            }
+            if (!isAuthorizedProfile(response.data)) throw new AccessVerificationDenied();
+            return response.data;
+          };
+          let response: Awaited<ReturnType<typeof verify>>;
+          try {
+            response = await verify();
+          } catch (error) {
+            const code = (error as { code?: string })?.code;
+            if (error instanceof AccessVerificationDenied || ['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token'].includes(code || '') || !sameUser) throw error;
+            if (!active || request !== generation.current || dependencies.currentUser()?.uid !== user.uid) return;
+            identityEpoch.current++; wakePendingTokens(); principal.current = null; authorizedProfile.current = null; setProfile(null); setWorkspaceId(null);
+            setLoading(true); setError('CABMS is temporarily unavailable. Retrying access verification.');
+            response = await verify();
           }
-          if (!isAuthorizedProfile(response.data)) throw new AccessVerificationDenied();
-          if (!response.data.memberships.length) throw new Error('No authorized workspace membership.');
-          setProfile(response.data);
+          if (!active || request !== generation.current || dependencies.currentUser()?.uid !== user.uid) return;
+          setError('');
+          if (!response.memberships.length) throw new Error('No authorized workspace membership.');
+          authorizedProfile.current = response;
+          setProfile(response);
           principal.current = user.uid;
-          setWorkspaceId(previous => response.data!.memberships.some(m => m.workspace_id === previous) ? previous : response.data!.memberships[0].workspace_id as BrandId);
+          setWorkspaceId(previous => response.memberships.some(m => m.workspace_id === previous) ? previous : response.memberships[0].workspace_id as BrandId);
         }
       } catch (error) {
         const code = (error as { code?: string })?.code;
         const denied = error instanceof AccessVerificationDenied || ['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token'].includes(code || '');
-        if (active && request === generation.current && (!sameUser || denied)) { principal.current = null; setProfile(null); setWorkspaceId(null); }
-        if (active && request === generation.current) setError('CABMS access could not be verified. Check your connection and authorized membership, then sign in again.');
+        if (active && request === generation.current) { identityEpoch.current++; wakePendingTokens(); principal.current = null; authorizedProfile.current = null; setProfile(null); setWorkspaceId(null); }
+        if (active && request === generation.current) setError(denied ? 'CABMS access was denied. Sign in again after your membership is restored.' : 'CABMS is temporarily unavailable. Please try signing in again later.');
       } finally {
         if (active && request === generation.current) setLoading(false);
       }
-    });
-    return () => { active = false; generation.current++; unsubscribe(); };
+    }
+    return () => { active = false; generation.current++; identityEpoch.current++; wakePendingTokens(); unsubscribe(); };
   }, [dependencies]);
   const login = async () => {
     setError('');
@@ -102,9 +133,12 @@ export function G01SessionProvider({ children, dependencies = productionDependen
   const logout = async () => {
     const user = dependencies.currentUser();
     const request = ++generation.current;
+    identityEpoch.current++;
+    wakePendingTokens();
     const operation = user ? { id: ++logoutSequence.current, uid: user.uid } : null;
     signOutPending.current = operation;
     principal.current = null;
+    authorizedProfile.current = null;
     setProfile(null);
     setWorkspaceId(null);
     setLoading(true);
@@ -125,12 +159,17 @@ export function G01SessionProvider({ children, dependencies = productionDependen
           const response = await dependencies.getCurrentUser(await user.getIdToken());
           if (retryGeneration !== generation.current || dependencies.currentUser()?.uid !== user.uid) return;
           if (!response.ok || !isAuthorizedProfile(response.data)) throw new AccessVerificationDenied();
+          if (verification.current && verification.current.generation < retryGeneration) {
+            verification.current = null;
+            wakePendingTokens();
+          }
+          authorizedProfile.current = response.data;
           setProfile(response.data);
           principal.current = user.uid;
           setWorkspaceId(response.data.memberships.some(m => m.workspace_id === workspaceId) ? workspaceId : response.data.memberships[0].workspace_id as BrandId);
           setError('Sign-out failed. You are still signed in; please retry.');
         } catch {
-          if (retryGeneration === generation.current) { principal.current = null; setProfile(null); setWorkspaceId(null); }
+          if (retryGeneration === generation.current) { principal.current = null; authorizedProfile.current = null; setProfile(null); setWorkspaceId(null); }
         } finally {
           if (retryGeneration === generation.current) setLoading(false);
         }
@@ -140,21 +179,33 @@ export function G01SessionProvider({ children, dependencies = productionDependen
   const token = async () => {
     const user = dependencies.currentUser();
     const verifiedPrincipal = principal.current;
-    const requestGeneration = generation.current;
+    const requestEpoch = identityEpoch.current;
     const verifiedProfile = profile;
     if (!user || !verifiedProfile || !verifiedPrincipal || user.uid !== verifiedPrincipal || signOutPending.current) throw new Error('Authentication required');
     const idToken = await user.getIdToken();
-    if (requestGeneration !== generation.current || dependencies.currentUser()?.uid !== user.uid || principal.current !== verifiedPrincipal || signOutPending.current) {
+    while (verification.current) {
+      const pending = verification.current;
+      let wake!: () => void;
+      const superseded = new Promise<void>(resolve => { wake = resolve; wakeVerification.current.add(resolve); });
+      await Promise.race([pending.promise, superseded]);
+      wakeVerification.current.delete(wake);
+      if (requestEpoch !== identityEpoch.current) break;
+      if (verification.current === pending) break;
+    }
+    if (requestEpoch !== identityEpoch.current || dependencies.currentUser()?.uid !== user.uid || principal.current !== verifiedPrincipal || signOutPending.current) {
       throw new Error('Authentication changed while obtaining a token');
     }
     return idToken;
   };
   const selectWorkspace = (id: BrandId) => {
-    if (profile?.memberships.some(m => m.workspace_id === id)) setWorkspaceId(id);
+    if (principal.current && dependencies.currentUser()?.uid === principal.current && !signOutPending.current && !verification.current && authorizedProfile.current?.memberships.some(m => m.workspace_id === id)) setWorkspaceId(id);
   };
   const invalidate = () => {
     generation.current++;
+    identityEpoch.current++;
+    wakePendingTokens();
     principal.current = null;
+    authorizedProfile.current = null;
     setProfile(null);
     setWorkspaceId(null);
     setLoading(false);

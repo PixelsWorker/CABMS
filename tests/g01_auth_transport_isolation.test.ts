@@ -100,3 +100,20 @@ test('failed JWKS fetch fails closed and does not poison future refresh', async 
   unavailable = false;
   assert.ok((await service.getGoogleJwks()).fixture);
 });
+
+test('unknown signing key refresh is shared and bounded, including provider failures', async () => {
+ const keys=await Promise.all([0,1].map(()=>crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify'])));
+ const jwks=await Promise.all(keys.map(async (key,i)=>({...await crypto.subtle.exportKey('jwk',key.publicKey),kid:`kid${i}`})));
+ const sign=async (kid:string,index:number)=>{const encode=(v:unknown)=>Buffer.from(JSON.stringify(v)).toString('base64url');const now=Math.floor(Date.now()/1000);const a=encode({alg:'RS256',kid});const b=encode({sub:'uid',email_verified:true,firebase:{sign_in_provider:'google.com'},iss:'https://securetoken.google.com/cabms-test',aud:'cabms-test',auth_time:now-1,iat:now-1,exp:now+300});const sig=await crypto.subtle.sign('RSASSA-PKCS1-v1_5',keys[index].privateKey,new TextEncoder().encode(`${a}.${b}`));return `${a}.${b}.${Buffer.from(sig).toString('base64url')}`;};
+ let coldCalls=0;const cold=createAuthenticationService(async()=>{coldCalls++;return Response.json({keys:[jwks[0]]},{headers:{'Cache-Control':'max-age=3600'}});});
+ assert.equal(await cold.verifyFirebaseToken(await sign('unknown',0),'cabms-test'),null);assert.equal(coldCalls,1);
+ let calls=0;let rotate=false;let outage=false;
+ const service=createAuthenticationService(async()=>{calls++; if(outage)throw Error('outage');return Response.json({keys:rotate?jwks:[jwks[0]]},{headers:{'Cache-Control':'max-age=3600'}});});
+ assert.ok(await service.verifyFirebaseToken(await sign('kid0',0),'cabms-test')); assert.equal(calls,1);
+ rotate=true; const fresh=await sign('kid1',1); const result=await Promise.all([service.verifyFirebaseToken(fresh,'cabms-test'),service.verifyFirebaseToken(fresh,'cabms-test')]); assert.ok(result.every(Boolean)); assert.equal(calls,2);
+ assert.equal(await service.verifyFirebaseToken(await sign('unknown',0),'cabms-test'),null); assert.equal(calls,2);
+ assert.equal(await service.verifyFirebaseToken(await sign('kid0',1),'cabms-test'),null); assert.equal(calls,2);
+ let failures=0; let recovered=false; const broken=createAuthenticationService(async()=>{failures++;if(failures>1 && !recovered)throw Error('outage');return Response.json({keys:recovered?jwks:[jwks[0]]},{headers:{'Cache-Control':'max-age=3600'}});});
+ await broken.verifyFirebaseToken(await sign('kid0',0),'cabms-test'); await assert.rejects(()=>broken.verifyFirebaseToken(fresh,'cabms-test'),AuthenticationUnavailable); await assert.rejects(()=>broken.verifyFirebaseToken(fresh,'cabms-test'),AuthenticationUnavailable); assert.equal(failures,2);
+ const originalNow=Date.now;try {Date.now=()=>originalNow()+6000;recovered=true;assert.ok(await broken.verifyFirebaseToken(fresh,'cabms-test'));assert.equal(failures,3);} finally {Date.now=originalNow;}
+});

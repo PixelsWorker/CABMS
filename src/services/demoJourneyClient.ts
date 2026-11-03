@@ -7,7 +7,7 @@ export class DemoJourneyError extends Error {
 
 export async function demoJourneyRequest<T>(workspace: string, token: string, path: string, method = 'GET', body?: CreateDemoEnquiry): Promise<T> {
  const response = await fetch(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspace)}/${path}`), {
-  method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+  method, signal: AbortSignal.timeout(10000), headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
   ...(body ? {body:JSON.stringify(body)} : {}),
  });
  if (!response.ok) {

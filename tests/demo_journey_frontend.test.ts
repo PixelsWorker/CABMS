@@ -41,7 +41,7 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
  t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
  let rejectNext = false;
- mock.method(globalThis,'fetch',async (input: RequestInfo | URL, init?: RequestInit)=>{ if(rejectNext){rejectNext=false;return Response.json({detail:'Demo service unavailable'},{status:503});} return worker.fetch(new Request(input,init),env); });
+ mock.method(globalThis,'fetch',async (input: RequestInfo | URL, init?: RequestInit)=>{ if(rejectNext){rejectNext=false;return Response.json({detail:'Demo service unavailable'},{status:422});} return worker.fetch(new Request(input,init),env); });
  setApiBase('http://localhost');
  const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
  const container=dom.window.document.getElementById('root')!;
@@ -57,7 +57,8 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM demo_enquiries').first<{count:number}>())?.count,0);
  await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,30));});
  assert.match(container.textContent!,/Synthetic customer/);
- await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent?.includes('Convert to job'))!.click();await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent?.includes('Convert to job'))!.click();});
+ for (let i=0; i<100 && !container.textContent?.includes('Converted to job'); i++) await act(async()=>{await new Promise(r=>setTimeout(r,20));});
  assert.match(container.textContent!,/Converted to job/);
  await act(async()=>root.unmount()); root=createRoot(container);
  await render(React.createElement(WebsiteInboxView)); await act(async()=>{await new Promise(r=>setTimeout(r,30));});
@@ -166,4 +167,114 @@ test('workspace data reader isolates identities and workspaces and distinguishes
  assert.equal(pending.length,beforeRoleSwitch+4, 'restored office membership must refetch');
  await settle(beforeRoleSwitch+2,[]); await settle(beforeRoleSwitch+3,[]); assert.match(container.textContent!,/^ready 0/);
  await act(async()=>root.unmount());
+});
+
+test('demo requests time out without retrying a possibly committed write', async t => {
+ t.after(()=>{mock.restoreAll();resetApiBase();}); setApiBase('http://localhost');
+ let calls=0; const realTimeout=AbortSignal.timeout;
+ mock.method(AbortSignal,'timeout',()=>realTimeout(20));
+ mock.method(globalThis,'fetch',async (_input:RequestInfo|URL, init?:RequestInit)=>{calls++;return new Promise<Response>((_resolve,reject)=>init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true}));});
+ await assert.rejects(demoJourneyRequest('solarcell','token','jobs'));
+ await assert.rejects(demoJourneyRequest('solarcell','token','enquiries','POST',{customer_name:'Synthetic',service:'Demo'}));
+ assert.equal(calls,2);
+});
+
+test('timed-out enquiry write clears busy without automatic retry', async t => {
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
+ const names=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+ for(const n of names) Object.defineProperty(globalThis,n,{configurable:true,writable:true,value:n==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[n]});
+ const root=createRoot(dom.window.document.getElementById('root')!);
+ t.after(async()=>{await act(async()=>root.unmount()); mock.restoreAll();resetApiBase();dom.window.close();for(const n of names){const d=saved.get(n);if(d)Object.defineProperty(globalThis,n,d);else delete (globalThis as any)[n];}});
+ const realTimeout=AbortSignal.timeout; mock.method(AbortSignal,'timeout',()=>realTimeout(20)); let writes=0;
+ mock.method(globalThis,'fetch',async (_input:RequestInfo|URL,init?:RequestInit)=>{if(init?.method!=='POST')return Response.json([{id:'synthetic-1',workspace_id:'solarcell',customer_name:'Synthetic',service:'Demo',created_at:'2026-01-01',job_id:writes>=2?'synthetic-job':null}]);writes++;return new Promise<Response>((_resolve,reject)=>init.signal!.addEventListener('abort',()=>reject(init.signal!.reason),{once:true}));}); setApiBase('http://localhost');
+ const actor=G01_TEST_AUTH.officeStaff; const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=> 'token',login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(WebsiteInboxView))));});
+ const doc=dom.window.document; const inputs=doc.querySelectorAll('input');
+ await act(async()=>{for(const [index,value] of ['Synthetic','Demo'].entries()){const node=inputs[index];const key=Object.keys(node).find(k=>k.startsWith('__reactProps$'))!;(node as any)[key].onChange({target:{value}});}});
+ await act(async()=>{doc.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,50));});
+ assert.equal(writes,1); await act(async()=>{doc.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));}); assert.equal(writes,1); const save=Array.from(doc.querySelectorAll('button')).find(b=>b.textContent?.includes('Save enquiry'))!;assert.equal(save.disabled,true);assert.match(doc.body.textContent!,/outcome is unknown/);
+ const convert=Array.from(doc.querySelectorAll('button')).find(b=>b.textContent?.includes('Convert to job'))!;
+ await act(async()=>{convert.click();await new Promise(r=>setTimeout(r,50));});
+ assert.equal(writes,2);assert.match(doc.body.textContent!,/Converted to job synthetic-job/);assert.doesNotMatch(doc.body.textContent!,/conversion outcome may still be pending/);assert.equal(save.disabled,true);
+});
+
+test('committed enquiry with lost response is not automatically retried', async t => {
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>{mock.restoreAll();resetApiBase();db.getSqliteHandle().close();});
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(), worker=createWorker(createAuthenticationService(fixture.transport));const actor=G01_TEST_AUTH.officeStaff;const token=await fixture.token(actor.uid,actor.email);let posts=0;setApiBase('http://localhost');
+ const originalTimeout=AbortSignal.timeout; mock.method(AbortSignal,'timeout',()=>originalTimeout(50));
+ mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{posts++;const result=await worker.fetch(new Request(input,init),{DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'});assert.equal(result.status,201);return new Promise<Response>((_resolve,reject)=>{if(init!.signal!.aborted)reject(init!.signal!.reason);else init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true});});});
+ await assert.rejects(demoJourneyRequest('solarcell',token,'enquiries','POST',{customer_name:'Synthetic',service:'Demo'}));
+ assert.equal(posts,1);assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM demo_enquiries').first<{n:number}>())?.n,1);
+});
+
+async function recoveryHarness(t: import('node:test').TestContext, postStatus: number | 'lost') {
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
+ const names=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(names.map(n=>[n,Object.getOwnPropertyDescriptor(globalThis,n)]));
+ for(const n of names) Object.defineProperty(globalThis,n,{configurable:true,writable:true,value:n==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[n]});
+ const root=createRoot(dom.window.document.getElementById('root')!);const doc=dom.window.document;
+ t.after(async()=>{await act(async()=>root.unmount());mock.restoreAll();resetApiBase();dom.window.close();for(const n of names){const d=saved.get(n);if(d)Object.defineProperty(globalThis,n,d);else delete (globalThis as any)[n];}});
+ setApiBase('http://localhost');let posts=0,gets=0;let rows:any[]=[];let failGet=false;let pendingGet:Promise<Response>|null=null;
+ mock.method(globalThis,'fetch',async(_input:RequestInfo|URL,init?:RequestInit)=>{
+  if(init?.method==='POST'){posts++;if(postStatus==='lost')throw Error('connection lost');return Response.json({detail:'Request failed'},{status:postStatus});}
+  gets++;if(pendingGet){const value=pendingGet;pendingGet=null;return value;}if(failGet)return Response.json({detail:'List unavailable'},{status:503});return Response.json(rows);
+ });
+ const actor=G01_TEST_AUTH.officeStaff;const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'},{workspace_id:'cctv',name:'CCTV',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=> 'token',login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const render=async(value:Session|null)=>act(async()=>{root.render(React.createElement(SessionContext.Provider,{value},React.createElement(CabmsProvider,null,React.createElement(WebsiteInboxView))));await new Promise(r=>setTimeout(r,0));});
+ await render(session);
+ const input=async()=>act(async()=>{const inputs=doc.querySelectorAll('input');for(const [i,value] of ['Synthetic','Demo'].entries()){const node=inputs[i];const key=Object.keys(node).find(k=>k.startsWith('__reactProps$'))!;(node as any)[key].onChange({target:{value}});}});
+ const submit=async()=>act(async()=>{doc.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,0));});
+ const button=(name:string)=>Array.from(doc.querySelectorAll('button')).find(b=>b.textContent?.includes(name))!;
+ const click=async(name:string)=>act(async()=>{button(name).focus();button(name).click();await new Promise(r=>setTimeout(r,0));});
+ return {doc,session,render,input,submit,button,click,get posts(){return posts;},get gets(){return gets;},setRows:(value:any[])=>{rows=value;},setFail:(value:boolean)=>{failGet=value;},setPending:(value:Promise<Response>)=>{pendingGet=value;}};
+}
+
+test('uncertain save refreshes GET only and never unlocks on empty or matching results',async t=>{
+ const h=await recoveryHarness(t,'lost');await h.input();await h.submit();
+ assert.equal(h.posts,1);assert.equal(h.gets,2);assert.equal(h.button('Save enquiry').disabled,true);
+ assert.match(h.doc.body.textContent!,/may have succeeded/);assert.match(h.doc.body.textContent!,/does not resubmit/);assert.match(h.doc.body.textContent!,/connection lost/);
+ assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.doc.querySelectorAll('input')[1].value,'Demo');
+ h.setFail(true);await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/save outcome is unknown.*could not be reloaded/i);assert.equal(h.button('Save enquiry').disabled,true);
+ h.setFail(false);h.setRows([{id:'unrelated',workspace_id:'solarcell',customer_name:'Synthetic',service:'Demo',created_at:'2026',job_id:null}]);
+ const refresh=h.button('Refresh saved enquiries');assert.equal(refresh.type,'button');refresh.focus();assert.equal(h.doc.activeElement,refresh);await h.click('Refresh saved enquiries');
+ assert.match(h.doc.body.textContent!,/Synthetic — Demo/);assert.equal(h.button('Save enquiry').disabled,true);await h.submit();assert.equal(h.posts,1);
+ // Model the original request committing only after the first empty reconciliation GET.
+ const delayedCommit=()=>h.setRows([{id:'late',workspace_id:'solarcell',customer_name:'Synthetic',service:'Demo',created_at:'2026',job_id:null}]);
+ delayedCommit();await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/Synthetic — Demo/);assert.equal(h.button('Save enquiry').disabled,true);assert.equal(h.posts,1);
+});
+for(const status of [408,503,422] as const) test(`save HTTP ${status} ${status===422?'remains correctable':'remains uncertain'}`,async t=>{
+ const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,status===422?1:2);if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
+});
+
+test('late refresh from previous workspace and user does not replace current data',async t=>{
+ const h=await recoveryHarness(t,'lost');await h.input();await h.submit();assert.equal(h.button('Save enquiry').disabled,true);let release!:(r:Response)=>void;h.setPending(new Promise<Response>(resolve=>{release=resolve;}));
+ await act(async()=>{h.button('Refresh saved enquiries').click();await Promise.resolve();});
+ const changed={...h.session,workspaceId:'cctv' as const,profile:{...h.session.profile!,user:{...h.session.profile!.user,id:'different-user'}}};h.setRows([{id:'new',workspace_id:'cctv',customer_name:'Current user',service:'CCTV',created_at:'2026',job_id:null}]);await h.render(changed);assert.match(h.doc.body.textContent!,/Current user/);
+ await act(async()=>{release(Response.json([{id:'old',workspace_id:'solarcell',customer_name:'Old private record',service:'Old',created_at:'2026',job_id:null}]));await new Promise(r=>setTimeout(r,0));});assert.doesNotMatch(h.doc.body.textContent!,/Old private record/);assert.match(h.doc.body.textContent!,/Current user/);
+});
+
+test('uncertain conversion remains locked until its own job is confirmed',async t=>{
+ const h=await recoveryHarness(t,'lost');h.setRows([{id:'e1',workspace_id:'solarcell',customer_name:'Customer',service:'Demo',created_at:'2026',job_id:null}]);await h.click('Refresh saved enquiries');await h.click('Convert to job');assert.equal(h.posts,1);assert.equal(h.button('Convert to job').disabled,true);
+ h.setFail(true);await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/could not be reloaded/);h.setFail(false);
+ await h.click('Refresh saved enquiries');assert.equal(h.button('Convert to job').disabled,true);assert.equal(h.posts,1);
+ h.setRows([{id:'e1',workspace_id:'solarcell',customer_name:'Customer',service:'Demo',created_at:'2026',job_id:'job1'}]);await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/Converted to job job1/);assert.doesNotMatch(h.doc.body.textContent!,/conversion outcome may still be pending/);assert.equal(h.posts,1);
+});
+
+for(const change of ['identity','workspace','signout'] as const) test(`stale refresh is ignored after ${change}`,async t=>{
+ const h=await recoveryHarness(t,'lost');await h.input();await h.submit();let release!:(r:Response)=>void;h.setPending(new Promise<Response>(resolve=>{release=resolve;}));
+ await act(async()=>{h.button('Refresh saved enquiries').click();await Promise.resolve();});
+ h.setRows([{id:'new',workspace_id:change==='workspace'?'cctv':'solarcell',customer_name:'Fresh scoped row',service:'Synthetic',created_at:'2026',job_id:null}]);
+ const next=change==='signout'?null:change==='workspace'?{...h.session,workspaceId:'cctv' as const}:{...h.session,profile:{...h.session.profile!,user:{...h.session.profile!.user,id:'new-identity'}}};
+ await h.render(next);if(next)assert.match(h.doc.body.textContent!,/Fresh scoped row/);
+ await act(async()=>{release(Response.json([{id:'old',workspace_id:'solarcell',customer_name:'Stale scoped row',service:'Synthetic',created_at:'2026',job_id:null}]));await new Promise(r=>setTimeout(r,0));});
+ assert.doesNotMatch(h.doc.body.textContent!,/Stale scoped row/);if(next)assert.match(h.doc.body.textContent!,/Fresh scoped row/);
+});
+
+for (const status of [500, 502, 504] as const) test(`save HTTP ${status} stays locked and refresh is GET only`, async t => {
+ const h=await recoveryHarness(t,status);await h.input();await h.submit();
+ assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,true);assert.match(h.doc.body.textContent!,/outcome is unknown/);
+ const refresh=h.button('Refresh saved enquiries');assert.equal(refresh.type,'button');assert.equal(refresh.closest('form'),null);assert.equal(refresh.tabIndex,0);assert.equal(refresh.disabled,false);refresh.focus();assert.equal(h.doc.activeElement,refresh);
+ const before=h.gets;await h.click('Refresh saved enquiries');assert.equal(h.gets,before+1);assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,true);
 });

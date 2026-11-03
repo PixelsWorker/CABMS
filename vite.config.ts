@@ -6,7 +6,15 @@ import { defineConfig, type Plugin, type ResolvedConfig } from 'vite';
 
 function blockPlanningAssetRequests(server: { middlewares: { use: (handler: (req: { url?: string }, res: { statusCode: number; end: (body: string) => void }, next: () => void) => void) => void } }) {
   server.middlewares.use((req, res, next) => {
-    const url = req.url?.split('?')[0];
+    let url: string | undefined;
+    try {
+      url = req.url ? path.posix.normalize(decodeURIComponent(req.url.split('?')[0]).replace(/\\/g, '/')) : undefined;
+    } catch {
+      res.statusCode = 400;
+      res.end('Bad Request');
+      return;
+    }
+    url = url?.toLowerCase();
     if (url && (url === '/assets/aistudio' || url.startsWith('/assets/aistudio/') ||
         url === '/public/assets/aistudio' || url.startsWith('/public/assets/aistudio/') || url.includes('assets/aistudio'))) {
       res.statusCode = 404;
@@ -33,11 +41,14 @@ function excludePlanningAssetsPlugin(): Plugin {
       const outputRoot = path.resolve(outDir, 'assets');
       const planningAssets = path.resolve(outputRoot, 'aistudio');
       const relativeTarget = path.relative(outputRoot, planningAssets);
-      const sourceAssets = path.resolve(root, 'public/assets/aistudio');
+      const sourceAssets = path.resolve(resolved.publicDir || path.join(root, 'public'), 'assets/aistudio');
+      const sourceReal = fs.existsSync(sourceAssets) ? fs.realpathSync(sourceAssets) : sourceAssets;
       const targetReal = fs.existsSync(planningAssets) ? fs.realpathSync(planningAssets) : planningAssets;
       const outputReal = fs.existsSync(outputRoot) ? fs.realpathSync(outputRoot) : outputRoot;
       if (outDir === root || !relativeTarget || relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget) ||
           planningAssets === sourceAssets || planningAssets.startsWith(sourceAssets + path.sep) ||
+          targetReal === sourceReal || targetReal.startsWith(sourceReal + path.sep) ||
+          (fs.existsSync(outputRoot) && outputReal.toLowerCase() !== outputRoot.toLowerCase()) ||
           (fs.existsSync(planningAssets) && !targetReal.startsWith(outputReal + path.sep))) {
         throw new Error(`Refusing unsafe planning-asset cleanup target: ${planningAssets}`);
       }

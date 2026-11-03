@@ -1,3 +1,4 @@
+import { publishEnquiryCount, invalidateOtherTabs } from '../services/enquiryCount.ts';
 /**
  * Area J: Existing-Website Handoff
  * Internal website submission simulation, pending review inbox,
@@ -464,25 +465,27 @@ function PersistentInbox() {
  const [error,setError] = useState(''); const [busy,setBusy] = useState(false); const [uncertain,setUncertain] = useState(false); const [uncertainError,setUncertainError] = useState(''); const [conversionUncertain,setConversionUncertain] = useState<string[]>([]);
  const generation = useRef(0);
  const workspace = session.workspaceId;
+ const userId = session.profile?.user.id;
+ const publishCount = (count: number | null) => { if (workspace && userId) publishEnquiryCount({workspace,userId,count}); };
  useEffect(() => {
-  const request = ++generation.current; setItems([]); setError('');
-  if (workspace) void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {if(generation.current===request)setItems(rows);}).catch(e => {if(generation.current===request)setError(e instanceof Error ? e.message : 'Could not load enquiries.');});
+  const request = ++generation.current; setItems([]); setError(''); publishCount(null);
+  if (workspace) void session.token().then(token => demoJourneyRequest<DemoEnquiry[]>(workspace,token,'enquiries')).then(rows => {if(generation.current===request){setItems(rows);publishCount(rows.filter(row => !row.job_id).length);}}).catch(e => {if(generation.current===request){publishCount(null);setError(e instanceof Error ? e.message : 'Could not load enquiries.');}});
   return () => {generation.current++;};
  },[workspace,session.profile?.user.id]);
- const refresh = async (reason: 'saved' | 'save-uncertain' | 'conversion-uncertain' | 'manual' = 'saved') => { if (!workspace) return; const request=++generation.current; try { const rows = await demoJourneyRequest<DemoEnquiry[]>(workspace,await session.token(),'enquiries'); if (generation.current===request) { setItems(rows); setConversionUncertain(previous => previous.filter(id => !rows.some(row => row.id === id && row.job_id))); return true; } return false; } catch(e) { if(generation.current===request) {setItems([]);setError(`${reason === 'saved' ? 'Saved, but' : reason === 'save-uncertain' ? 'The save outcome is unknown, and' : reason === 'conversion-uncertain' ? 'The conversion outcome is unknown, and' : 'Unable to reload:'} the enquiry list could not be reloaded. Refresh to see the latest state.${e instanceof Error ? ` ${e.message}` : ''}`);} return false; } };
+ const refresh = async (reason: 'saved' | 'save-uncertain' | 'conversion-uncertain' | 'manual' = 'saved') => { if (!workspace) return; const request=++generation.current; publishCount(null); try { const rows = await demoJourneyRequest<DemoEnquiry[]>(workspace,await session.token(),'enquiries'); if (generation.current===request) { setItems(rows); publishCount(rows.filter(row => !row.job_id).length); setConversionUncertain(previous => previous.filter(id => !rows.some(row => row.id === id && row.job_id))); return true; } return false; } catch(e) { if(generation.current===request) {setItems([]);publishCount(null);setError(`${reason === 'saved' ? 'Saved, but' : reason === 'save-uncertain' ? 'The save outcome is unknown, and' : reason === 'conversion-uncertain' ? 'The conversion outcome is unknown, and' : 'Unable to reload:'} the enquiry list could not be reloaded. Refresh to see the latest state.${e instanceof Error ? ` ${e.message}` : ''}`);} return false; } };
  const create = async (event: React.FormEvent) => {
-  event.preventDefault(); if (!workspace || busy || uncertain) return; setBusy(true); setError('');
+  event.preventDefault(); if (!workspace || busy || uncertain) return; setBusy(true); setError(''); publishCount(null);
   let token: string;
   try { token = await session.token(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not verify session.'); setBusy(false); return; }
   try { await demoJourneyRequest(workspace,token,'enquiries','POST',{customer_name:name,service}); setName('');setService(''); await refresh(); }
-  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setUncertain(true); setUncertainError(e instanceof Error ? e.message : 'The save request did not complete.'); setError(''); await refresh('save-uncertain'); } else setError(e.message); } finally {setBusy(false);}
+  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setUncertain(true); setUncertainError(e instanceof Error ? e.message : 'The save request did not complete.'); setError(''); await refresh('save-uncertain'); } else { setError(e.message); await refresh('manual'); } } finally {if (workspace && userId) invalidateOtherTabs(workspace);setBusy(false);}
  };
  const convert = async (id:string) => {
-  if (!workspace || busy || conversionUncertain.includes(id)) return; setBusy(true);setError('');
+  if (!workspace || busy || conversionUncertain.includes(id)) return; setBusy(true);setError(''); publishCount(null);
   let token: string;
   try { token = await session.token(); } catch (e) { setError(e instanceof Error ? e.message : 'Could not verify session.'); setBusy(false); return; }
   try {await demoJourneyRequest(workspace,token,`enquiries/${encodeURIComponent(id)}/conversion`,'POST'); await refresh();}
-  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setConversionUncertain(previous => previous.includes(id) ? previous : [...previous, id]); await refresh('conversion-uncertain'); } else setError(e.message); } finally {setBusy(false);}
+  catch(e) { if (!(e instanceof DemoJourneyError) || e.status >= 500 || e.status === 408) { setConversionUncertain(previous => previous.includes(id) ? previous : [...previous, id]); await refresh('conversion-uncertain'); } else { setError(e.message); await refresh('manual'); } } finally {if (workspace && userId) invalidateOtherTabs(workspace);setBusy(false);}
  };
  return <section className="cabms-card p-5 space-y-4"><h1 className="text-lg font-bold">Enquiries — saved demo data</h1>
   <p>Use synthetic names and descriptions only. These records are saved to the demo database.</p>

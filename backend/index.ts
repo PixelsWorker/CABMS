@@ -24,7 +24,7 @@ import {
 } from './workers/problem.ts';
 import { StructuredLogger } from './workers/logger.ts';
 import { approvedMembership } from './workers/privilegedApproval.ts';
-import { handleDemoJourney } from './workers/routes/demoJourney.ts';
+import { handleDemoJourney, handleDemoJob } from './workers/routes/demoJourney.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
   return {
@@ -148,6 +148,14 @@ export function createWorker(authentication: AuthenticationService = productionA
           return addCors(new Response('Method Not Allowed', { status: 405 }), env);
         }
         return addCors(resp, env);
+      }
+
+      const jobMatch = /^\/api\/v1\/workspaces\/([^/]+)\/jobs\/([^/]+)(?:\/steps\/([^/]+))?$/.exec(pathname);
+      if (jobMatch) {
+        let jobId: string, stepId: string | undefined;
+        try { jobId = decodeURIComponent(jobMatch[2]); stepId = jobMatch[3] ? decodeURIComponent(jobMatch[3]) : undefined; }
+        catch (error) { if (error instanceof URIError) return addCors(createProblemResponse(400, 'VALIDATION_FAILED', 'validation-failed', 'Bad Request', 'Invalid path encoding', requestId), env); throw error; }
+        return addCors(await handleDemoJob(request, env, jobMatch[1], jobId, stepId, requestId, authentication), env);
       }
 
       const journeyMatch = /^\/api\/v1\/workspaces\/([^/]+)\/(enquiries|jobs)(?:\/([^/]+)\/conversion)?$/.exec(pathname);

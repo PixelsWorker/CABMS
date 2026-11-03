@@ -7,6 +7,7 @@ import { SessionContext, type Session } from '../src/context/G01Session.tsx';
 import { CabmsProvider } from '../src/context/CabmsContext.tsx';
 import { WebsiteInboxView } from '../src/views/WebsiteInboxView.tsx';
 import { JobsView } from '../src/views/JobsView.tsx';
+import { Navigation } from '../src/components/Navigation.tsx';
 import { DashboardView } from '../src/views/DashboardView.tsx';
 import { useWorkspaceDemoData, demoDataMessage } from '../src/hooks/useWorkspaceDemoData.ts';
 import { DemoJourneyError, demoJourneyRequest } from '../src/services/demoJourneyClient.ts';
@@ -40,14 +41,19 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  const saved=new Map(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
  for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
  t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
- let rejectNext = false;
- mock.method(globalThis,'fetch',async (input: RequestInfo | URL, init?: RequestInit)=>{ if(rejectNext){rejectNext=false;return Response.json({detail:'Demo service unavailable'},{status:422});} return worker.fetch(new Request(input,init),env); });
+ let rejectNext = false; let rejectStep = false;
+ mock.method(globalThis,'fetch',async (input: RequestInfo | URL, init?: RequestInit)=>{ if(rejectNext){rejectNext=false;return Response.json({detail:'Demo service unavailable'},{status:422});} if(rejectStep && init?.method==='PATCH'){rejectStep=false;return Response.json({detail:'Step conflict'},{status:409});} return worker.fetch(new Request(input,init),env); });
  setApiBase('http://localhost');
  const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
  const container=dom.window.document.getElementById('root')!;
  let root=createRoot(container);
  const render=async (view:React.ReactNode)=>act(async()=>{root.render(React.createElement(SessionContext.Provider, {value:session}, React.createElement(CabmsProvider, null, view)));await new Promise(r=>setTimeout(r,20));});
  const input=(node:HTMLInputElement,value:string)=>{const k=Object.keys(node).find(k=>k.startsWith('__reactProps$'))!;(node as any)[k].onChange({target:{value}});};
+ await render(React.createElement(Navigation));
+ const inboxButton=Array.from(container.querySelectorAll('button')).find(button=>button.title==='Website Enquiries');
+ assert.ok(inboxButton);
+ assert.equal(inboxButton.getAttribute('aria-label'),'Website Enquiries');
+ assert.equal(inboxButton.querySelector('.cabms-nav-badge'),null);
  await render(React.createElement(WebsiteInboxView));
  const inputs=container.querySelectorAll('input');
  await act(async()=>{input(inputs[0],'Synthetic customer');input(inputs[1],'Synthetic installation');});
@@ -65,6 +71,22 @@ test('authenticated UI saves enquiry, converts it, and reloads persisted records
  assert.match(container.textContent!,/Synthetic customer/);assert.match(container.textContent!,/Converted to job/);
  await render(React.createElement(JobsView));await act(async()=>{await new Promise(r=>setTimeout(r,30));});
  assert.match(container.textContent!,/Synthetic installation/);
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click(); await new Promise(r=>setTimeout(r,30));});
+ assert.match(container.textContent!,/Review job details/);
+ rejectStep=true;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Mark step complete')!.click(); await new Promise(r=>setTimeout(r,30));});
+ assert.match(container.textContent!,/Step conflict/); assert.doesNotMatch(container.textContent!,/could not be confirmed/);
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click();});
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click(); await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Mark step complete')!.click(); await new Promise(r=>setTimeout(r,30));});
+ assert.match(container.textContent!,/Completed/);
+ session.profile!.memberships[0].role='technician';
+ await render(React.createElement(JobsView));
+ assert.doesNotMatch(container.textContent!,/Review job details/);
+ session.profile!.memberships[0].role='office_staff';
+ await act(async()=>root.unmount()); root=createRoot(container); await render(React.createElement(JobsView)); await act(async()=>{await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Open job')!.click(); await new Promise(r=>setTimeout(r,30));});
+ assert.match(container.textContent!,/Completed/);
  await render(React.createElement(DashboardView)); await act(async()=>{await new Promise(r=>setTimeout(r,30));});
  assert.match(container.textContent!,/Saved enquiries:\s*1/); assert.match(container.textContent!,/Saved jobs:\s*1/);
  await render(React.createElement(JobsView)); await act(async()=>{await new Promise(r=>setTimeout(r,30));});
@@ -245,7 +267,7 @@ test('uncertain save refreshes GET only and never unlocks on empty or matching r
  delayedCommit();await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/Synthetic — Demo/);assert.equal(h.button('Save enquiry').disabled,true);assert.equal(h.posts,1);
 });
 for(const status of [408,503,422] as const) test(`save HTTP ${status} ${status===422?'remains correctable':'remains uncertain'}`,async t=>{
- const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,status===422?1:2);if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
+ const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,2, 'refreshes the authorized list without repeating the write');if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
 });
 
 test('late refresh from previous workspace and user does not replace current data',async t=>{
@@ -277,4 +299,52 @@ for (const status of [500, 502, 504] as const) test(`save HTTP ${status} stays l
  assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,true);assert.match(h.doc.body.textContent!,/outcome is unknown/);
  const refresh=h.button('Refresh saved enquiries');assert.equal(refresh.type,'button');assert.equal(refresh.closest('form'),null);assert.equal(refresh.tabIndex,0);assert.equal(refresh.disabled,false);refresh.focus();assert.equal(h.doc.activeElement,refresh);
  const before=h.gets;await h.click('Refresh saved enquiries');assert.equal(h.gets,before+1);assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,true);
+});
+
+
+test('authenticated enquiry badge follows saved inbox and hides on failed or unauthorized workspace loads', async t => {
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
+ const keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const key of keys) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value:key==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[key]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const key of keys){const d=saved.get(key);if(d)Object.defineProperty(globalThis,key,d);else delete (globalThis as any)[key];}});
+ let rows: Array<{id:string;customer_name:string;service:string;job_id:string|null}> = [];
+ let fail=false; let rejectWrite=false; let holdRead=false; let releaseRead: ((response:Response)=>void) | null=null;
+ const channels: Array<any> = [];
+ class FakeBroadcastChannel { onmessage: ((event:{data:unknown})=>void)|null=null; constructor(public name:string){channels.push(this);} postMessage(data:unknown){for(const channel of channels) if(channel!==this && channel.name===this.name) channel.onmessage?.({data});} close(){const i=channels.indexOf(this);if(i>=0)channels.splice(i,1);} }
+ Object.defineProperty(dom.window,'BroadcastChannel',{value:FakeBroadcastChannel,configurable:true});
+ mock.method(globalThis,'fetch',async (input:RequestInfo|URL,init?:RequestInit)=>{
+  const req=new Request(input,init), path=new URL(req.url).pathname;
+  if(path.includes('/cctv/')) return Response.json({detail:'Forbidden'},{status:403});
+  if(req.method==='GET') { if(holdRead){holdRead=false;return await new Promise<Response>(resolve=>{releaseRead=resolve;});} return fail ? Response.json({detail:'Unavailable'},{status:503}) : Response.json(rows); }
+  if(req.method==='POST' && path.endsWith('/enquiries')) {if(rejectWrite) return Response.json({detail:'Rejected'},{status:422});const body=await req.json() as {customer_name:string;service:string};rows.push({id:String(rows.length+1),...body,job_id:null});return Response.json({id:rows.length},{status:201});}
+  if(req.method==='POST' && path.endsWith('/conversion')) {const id=path.split('/').at(-2);rows=rows.map(row=>row.id===id?{...row,job_id:'job-'+id}:row);return Response.json({id:'job-'+id},{status:201});}
+  throw new Error('Unexpected request');
+ });
+ setApiBase('http://localhost');
+ const session:Session={profile:{user:{id:'test-user',email:'synthetic@example.invalid',display_name:'Demo'},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'},{workspace_id:'cctv',name:'CCTV',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=> 'token',login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const render=async(value:Session|null)=>act(async()=>{root.render(React.createElement(SessionContext.Provider,{value},React.createElement(CabmsProvider,null,value?.profile && React.createElement(Navigation),value?.profile && React.createElement(WebsiteInboxView))));await new Promise(r=>setTimeout(r,30));});
+ const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,30));});
+ const button=()=>Array.from(container.querySelectorAll('button')).find(x=>x.title==='Website Enquiries')!;
+ const badge=()=>button().querySelector('.cabms-nav-badge')?.textContent ?? null;
+ const change=(input:HTMLInputElement,value:string)=>{const key=Object.keys(input).find(k=>k.startsWith('__reactProps$'))!;(input as any)[key].onChange({target:{value}});};
+ await render(session); await flush(); assert.equal(badge(),null);
+ const add=async(name:string)=>{const inputs=container.querySelectorAll('input');await act(async()=>{change(inputs[0],name);change(inputs[1],'Synthetic service');});await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();};
+ await add('Synthetic one');assert.equal(badge(),'1');
+ await add('Synthetic two');assert.equal(badge(),'2');
+ const oldRows=structuredClone(rows); holdRead=true;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Refresh saved enquiries')!.click();await new Promise(r=>setTimeout(r,10));});
+ rows.push({id:'external',customer_name:'Other tab',service:'Synthetic',job_id:null});
+ await act(async()=>{const other=new dom.window.BroadcastChannel('cabms:enquiry-count-invalidated');other.postMessage({workspace:'solarcell',userId:'other-user',count:999});other.close();});await flush();assert.equal(badge(),'3');
+ assert.ok(releaseRead); await act(async()=>{(releaseRead as (response:Response)=>void)(Response.json(oldRows));});await flush();assert.equal(badge(),'3', 'an older inbox response cannot overwrite the newer authorized count');
+ rows=rows.filter(row=>row.id!=='external');await act(async()=>{dom.window.dispatchEvent(new dom.window.Event('focus'));});await flush();assert.equal(badge(),'2');
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Convert to job')!.click();});await flush();assert.equal(badge(),'1');
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Refresh saved enquiries')!.click();});await flush();assert.equal(badge(),'1');
+ rejectWrite=true;await add('Rejected synthetic');assert.equal(badge(),'1');rejectWrite=false;
+ fail=true;await act(async()=>{Array.from(container.querySelectorAll('button')).find(x=>x.textContent==='Refresh saved enquiries')!.click();});await flush();assert.equal(badge(),null);
+ fail=false;await render({...session,workspaceId:'cctv'});await flush();assert.equal(badge(),null);
+ await render(session);await flush();assert.equal(badge(),'1');
+ await render({...session,profile:null,workspaceId:null});await flush();assert.equal(container.querySelector('.cabms-nav-badge'),null);
+ await render(null); await act(async()=>root.unmount());
 });

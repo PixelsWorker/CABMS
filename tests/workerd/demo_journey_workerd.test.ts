@@ -214,6 +214,13 @@ describe('Disposable Workerd enquiry-to-job persistence proof', () => {
     assert.equal(before.filter(job => job.enquiry_id === id).length, 1);
     const jobId = before.find(job => job.enquiry_id === id)!.id;
 
+    const detail = await (await call('solarcell', `jobs/${jobId}`)).json() as {steps: Array<{id: string; state: string}>};
+    assert.equal(detail.steps[0].state, 'pending');
+    const stepId = encodeURIComponent(detail.steps[0].id);
+    assert.equal((await call('cctv', `jobs/${jobId}/steps/${stepId}`, 'PATCH', {state:'done'})).status, 403);
+    assert.equal((await call('solarcell', `jobs/${jobId}/steps/${stepId}`, 'PATCH', {state:'done'})).status, 200);
+
+
     // Terminate only the process tree spawned by this test and verify exit.
     if (!wranglerProc || !wranglerProc.pid || wranglerProc.exitCode !== null || wranglerProc.signalCode !== null) throw new Error(`Cannot verify worker ownership; preserve ${isolationReal}`);
     const old = wranglerProc;
@@ -259,6 +266,8 @@ describe('Disposable Workerd enquiry-to-job persistence proof', () => {
     assert.equal(enquiries.find(e => e.id === id)?.job_id, jobId);
     assert.equal(jobs.filter(job => job.enquiry_id === id).length, 1);
     assert.equal(jobs.find(job => job.enquiry_id === id)?.id, jobId);
+    const afterDetail = await (await call('solarcell', `jobs/${jobId}`)).json() as {steps: Array<{state: string}>};
+    assert.equal(afterDetail.steps[0].state, 'done');
     assert.equal((await call('cctv', 'jobs')).status, 403);
   });
 });

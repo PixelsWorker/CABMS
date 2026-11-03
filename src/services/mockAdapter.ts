@@ -575,6 +575,12 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job) throw new NotFoundError('Job', jobId);
 
+    // Editable preview content may be an unpublished draft; freeze the current
+    // published revision, matching the preview context's quote behavior.
+    const terms = this.templates.find(t => t.type === 'TERMS');
+    const publishedTerms = terms?.revisions.find(r => r.status === 'PUBLISHED' && r.version === terms.currentVersion);
+    if (!publishedTerms) throw new ValidationError('Cannot prepare quote: published terms are unavailable.');
+
     let issuedAt: string;
     let expiresAt: string;
     let dates: ReturnType<typeof calculateQuoteFollowUpDates>;
@@ -602,8 +608,8 @@ export class MockDataAdapter implements CabmsDataAdapter {
       gst,
       total,
       lineItems: structuredClone(lineItems),
-      termsVersion: 'v2026.1',
-      termsContentSnapshot: 'Standard commercial service terms.',
+      termsVersion: publishedTerms.version,
+      termsContentSnapshot: publishedTerms.content,
       frozenIssuerSnapshot: this.brands[job.brandId]?.legalIssuerName || '',
       acceptanceStatus: 'SENT',
       linkScenario: 'valid',

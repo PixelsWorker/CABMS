@@ -211,6 +211,24 @@ test('LAYER 6: PR16 context job guards preserve terminal jobs and allow only val
   });
 });
 
+test('LAYER 6: synthetic adapter quotes freeze published terms while draft content changes', async () => {
+  const adapter = new MockDataAdapter();
+  const terms = (await adapter.getTemplates()).find(t => t.type === 'TERMS')!;
+  const published = terms.revisions.find(r => r.status === 'PUBLISHED' && r.version === terms.currentVersion)!;
+  await adapter.createTemplateDraftRevision(terms.id, 'Synthetic unpublished draft');
+  const items = [{ id: '1', description: 'Synthetic scope', quantity: 1, unitPrice: 100, total: 100 }];
+  const issued = await adapter.prepareQuoteForJob('JOB-2026-103', 'Synthetic quote', items);
+  assert.equal(issued.termsVersion, published.version);
+  assert.equal(issued.termsContentSnapshot, published.content);
+  issued.lineItems[0].description = 'Altered returned copy';
+  await adapter.createTemplateDraftRevision(terms.id, 'Another synthetic draft');
+  await adapter.recordQuoteAcceptance('JOB-2026-103', 'valid');
+  const accepted = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+  assert.equal(accepted.acceptanceStatus, 'ACCEPTED');
+  assert.equal(accepted.termsContentSnapshot, published.content);
+  assert.equal(accepted.lineItems[0].description, 'Synthetic scope');
+});
+
 test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps use one injected clock read', async () => {
   let clock = '2027-12-24T09:00:00+10:00';
   let reads = 0;

@@ -229,6 +229,44 @@ test('LAYER 6: synthetic adapter quotes freeze published terms while draft conte
   assert.equal(accepted.lineItems[0].description, 'Synthetic scope');
 });
 
+test('LAYER 6: synthetic adapter rejects malformed quote inputs without changing job state', async () => {
+  const adapter = new MockDataAdapter();
+  const before = adapter.getInitialBaseline();
+  const validItem = { id: '1', description: 'Synthetic scope', quantity: 2, unitPrice: 50, total: 100 };
+  const invalidInputs: [string, typeof validItem[]][] = [
+    ['', [validItem]],
+    ['Quote', []],
+    ['Quote', [{ ...validItem, quantity: Number.NaN }]],
+    ['Quote', [{ ...validItem, unitPrice: Number.POSITIVE_INFINITY }]],
+    ['Quote', [{ ...validItem, total: 99 }]],
+    ['Quote', [{ ...validItem, description: '  ' }]],
+  ];
+
+  for (const [title, lineItems] of invalidInputs) {
+    await assert.rejects(adapter.prepareQuoteForJob('JOB-2026-103', title, lineItems), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+
+  const fractionalLine = { id: 'fractional', description: 'Synthetic half unit', quantity: 0.5, unitPrice: 2.01, total: 1.01 };
+  const fractionalQuote = await adapter.prepareQuoteForJob('JOB-2026-103', 'Fractional quote', [fractionalLine]);
+  assert.equal(fractionalQuote.lineItems[0].total, 1.01);
+  const largerFractional = { ...fractionalLine, unitPrice: 20.15, total: 10.08 };
+  const largerFractionalQuote = await adapter.prepareQuoteForJob('JOB-2026-103', 'Larger fractional quote', [largerFractional]);
+  assert.equal(largerFractionalQuote.lineItems[0].total, 10.08);
+  await assert.rejects(
+    new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Incorrect larger fractional quote', [{ ...largerFractional, total: 10.07 }]),
+    ValidationError,
+  );
+  await assert.rejects(
+    new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Fractional-cent quote', [{ ...fractionalLine, total: 1.005 }]),
+    ValidationError,
+  );
+  await assert.rejects(
+    new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Incorrect fractional quote', [{ ...fractionalLine, total: 1.00 }]),
+    ValidationError,
+  );
+});
+
 test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps use one injected clock read', async () => {
   let clock = '2027-12-24T09:00:00+10:00';
   let reads = 0;

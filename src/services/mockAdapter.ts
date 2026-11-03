@@ -50,6 +50,33 @@ import sampleAttachmentsFixture from '../data/fixtures/sampleAttachments.json';
 import complianceFormsFixture from '../data/fixtures/complianceForms.json';
 import tca2AuditsFixture from '../data/fixtures/tca2Audits.json';
 
+function roundedLineTotalCents(quantity: number, unitPrice: number): bigint {
+  const asFraction = (value: number): [bigint, bigint] => {
+    const [coefficient, exponentText] = value.toString().toLowerCase().split('e');
+    const [whole, fraction = ''] = coefficient.split('.');
+    const exponent = Number(exponentText || 0) - fraction.length;
+    const numerator = BigInt(`${whole}${fraction}`);
+    return exponent >= 0
+      ? [numerator * 10n ** BigInt(exponent), 1n]
+      : [numerator, 10n ** BigInt(-exponent)];
+  };
+  const [quantityNumerator, quantityDenominator] = asFraction(quantity);
+  const [priceNumerator, priceDenominator] = asFraction(unitPrice);
+  const numerator = quantityNumerator * priceNumerator * 100n;
+  const denominator = quantityDenominator * priceDenominator;
+  return (numerator * 2n + denominator) / (denominator * 2n);
+}
+
+function amountInCents(amount: number): bigint {
+  const [coefficient, exponentText] = amount.toString().toLowerCase().split('e');
+  const [whole, fraction = ''] = coefficient.split('.');
+  const exponent = Number(exponentText || 0) - fraction.length + 2;
+  const numerator = BigInt(`${whole}${fraction}`);
+  return exponent >= 0
+    ? numerator * 10n ** BigInt(exponent)
+    : (numerator * 2n + 10n ** BigInt(-exponent)) / (2n * 10n ** BigInt(-exponent));
+}
+
 interface ComplianceStore {
   jsa: Record<string, JsaFormData>;
   smokeAlarm: Record<string, SmokeAlarmCertData>;
@@ -574,6 +601,21 @@ export class MockDataAdapter implements CabmsDataAdapter {
   async prepareQuoteForJob(jobId: string, title: string, lineItems: Quote['lineItems']): Promise<Quote> {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job) throw new NotFoundError('Job', jobId);
+
+    if (typeof title !== 'string' || !title.trim()) {
+      throw new ValidationError('Cannot prepare quote: title is required.');
+    }
+    if (!Array.isArray(lineItems) || lineItems.length === 0 || lineItems.some(item =>
+      !item || typeof item.id !== 'string' || !item.id.trim() ||
+      typeof item.description !== 'string' || !item.description.trim() ||
+      !Number.isFinite(item.quantity) || item.quantity <= 0 ||
+      !Number.isFinite(item.unitPrice) || item.unitPrice < 0 ||
+      !Number.isFinite(item.total) || item.total < 0 ||
+      Number(amountInCents(item.total)) / 100 !== item.total ||
+      roundedLineTotalCents(item.quantity, item.unitPrice) !== amountInCents(item.total)
+    )) {
+      throw new ValidationError('Cannot prepare quote: line items must have valid values and totals.');
+    }
 
     // Editable preview content may be an unpublished draft; freeze the current
     // published revision, matching the preview context's quote behavior.

@@ -2961,7 +2961,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Reviews Deduplication & Full Workflow (G00-021: PENDING -> SENT / FAILED / UNCERTAIN)
   const triggerReviewRequest = (jobId: string, simulateOutcome?: 'FAIL' | 'UNCERTAIN') => {
-    if (!canManageReviews()) {
+    if (!authoritativeSessionRef.current || (!session && !canManageReviews())) {
       showDemoNotification('DENIED: An active authorized session is required to dispatch review invitations.', 'error');
       return { success: false, message: 'An active authorized session is required for review dispatch.' };
     }
@@ -3018,7 +3018,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const resolvePendingReview = (jobId: string, forcedOutcome?: 'SENT' | 'FAIL' | 'UNCERTAIN'): { success: boolean; message?: string } => {
-    if (!canManageReviews()) {
+    if (!authoritativeSessionRef.current || (!session && !canManageReviews())) {
       showDemoNotification('DENIED: An active authorized session is required to resolve review invitations.', 'error');
       return { success: false, message: 'An active authorized session is required for review resolution.' };
     }
@@ -3064,7 +3064,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const resolveAllPendingReviews = () => {
-    if (!canManageReviews()) {
+    if (!authoritativeSessionRef.current || (!session && !canManageReviews())) {
       showDemoNotification('DENIED: An active authorized session is required to dispatch review invitations.', 'error');
       return;
     }
@@ -3083,7 +3083,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ).length;
 
   const reconcileReviewRequest = (jobId: string, resolution: 'SENT' | 'FAILED' = 'SENT') => {
-    if (!canManageReviews()) {
+    if (!authoritativeSessionRef.current || (!session && !canManageReviews())) {
       showDemoNotification('DENIED: An active authorized session is required to reconcile review requests.', 'error');
       return;
     }
@@ -3130,7 +3130,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const retryReviewRequest = (jobId: string) => {
-    if (!canManageReviews()) {
+    if (!authoritativeSessionRef.current || (!session && !canManageReviews())) {
       showDemoNotification('DENIED: An active authorized session is required to retry review requests.', 'error');
       return { success: false, message: 'An active authorized session is required.' };
     }

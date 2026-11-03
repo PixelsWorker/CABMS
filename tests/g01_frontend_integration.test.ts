@@ -389,6 +389,49 @@ test('G01 mounted dashboard for Smart-Home-only member renders without crash and
   }
 });
 
+test('G01 review actions use the job workspace role rather than the active workspace role', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
+  const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const previous = new Map(globals.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of globals) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  try {
+    let ctx!: ReturnType<typeof useCabms>;
+    function Capture() { ctx = useCabms(); return null; }
+    const session: Session = {
+      profile: { user: { id: 'u', email: 'u@example.invalid', display_name: 'User' }, memberships: [
+        { workspace_id: 'solarcell', name: 'Solarcell', role: 'technician' },
+        { workspace_id: 'smart_home', name: 'Smart Home', role: 'owner_admin' },
+      ] },
+      workspaceId: 'solarcell', selectWorkspace: () => {}, token: async () => 'token',
+      login: async () => {}, logout: async () => {}, invalidate: () => {}, loading: false, error: '',
+    };
+    await act(async () => root.render(React.createElement(SessionContext.Provider, { value: session }, React.createElement(CabmsProvider, null, React.createElement(Capture)))));
+    assert.equal(ctx.persona, 'technician');
+    await act(async () => {
+      assert.equal(ctx.triggerReviewRequest('JOB-2026-101').success, false);
+      assert.equal(ctx.triggerReviewRequest('JOB-2026-104').success, false);
+      assert.equal(ctx.triggerReviewRequest('JOB-2026-102', 'FAIL').success, true);
+      assert.equal(ctx.resolvePendingReview('JOB-2026-102').success, true);
+      assert.equal(ctx.retryReviewRequest('JOB-2026-102').success, true);
+      assert.equal(ctx.triggerReviewRequest('JOB-2026-105', 'UNCERTAIN').success, true);
+      ctx.resolveAllPendingReviews();
+      ctx.reconcileReviewRequest('JOB-2026-105', 'FAILED');
+      assert.equal(ctx.retryReviewRequest('JOB-2026-105').success, true);
+      assert.equal(ctx.triggerReviewRequest('JOB-2026-105').success, false);
+    });
+    assert.equal(ctx.jobs.find(j => j.id === 'JOB-2026-102')?.reviewRequest.status, 'SENT');
+    assert.equal(ctx.jobs.find(j => j.id === 'JOB-2026-105')?.reviewRequest.status, 'SENT');
+    await act(async () => root.unmount());
+  } finally {
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as any)[key];
+    }
+    dom.window.close();
+  }
+});
+
 test('G01 multi-workspace selected job scopes to active workspace and cannot disguise out-of-scope work', async () => {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost:3000' });
   const globals = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];

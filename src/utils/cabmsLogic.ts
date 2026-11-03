@@ -823,6 +823,12 @@ export function validateSignedSnapshot(
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot contains invalid alarm test results.' };
     }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      ['id', 'roomLocation', 'alarmBrandModel', 'standardMarkingPlaceholder', 'manufactureDateOrExpiry', 'powerSource', 'complianceStatusProvisional']
+        .some(field => typeof alarm[field] !== 'string')
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains invalid alarm schedule fields.' };
+    }
     return { valid: true, parsedSnapshot: parsed };
   } catch (e: any) {
     return { valid: false, error: `Snapshot JSON syntax error: ${e.message}` };

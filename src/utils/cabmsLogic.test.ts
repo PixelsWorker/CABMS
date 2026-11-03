@@ -61,6 +61,16 @@ test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results'
   }
 });
 
+test('validateSignedSnapshot rejects malformed synthetic smoke alarm schedule field types', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  const invalid = structuredClone(valid);
+  invalid.alarmSchedule[0].roomLocation = { value: 'Hallway' };
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
+});
+
 test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {
   const validElectrical = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
   const invalidCases: [string | undefined, string, string, string][] = [

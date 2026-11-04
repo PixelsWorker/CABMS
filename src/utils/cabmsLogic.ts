@@ -918,6 +918,13 @@ export function calculateQuoteTotals(lineItems: Array<{ total: number }>): {
   if (!Number.isFinite(subtotal) || !Number.isFinite(gst) || !Number.isFinite(total)) {
     throw new RangeError('Cannot calculate quote totals: amounts exceed maximum representable currency range.');
   }
+  if (
+    amountInCents(subtotal) !== subtotalCents ||
+    amountInCents(gst) !== gstCents ||
+    amountInCents(total) !== totalCents
+  ) {
+    throw new RangeError('Cannot calculate quote totals: amounts exceed maximum representable currency range.');
+  }
   return {
     subtotal,
     gst,

@@ -729,6 +729,14 @@ test('validateQuoteInput: validates quote title, line items, and rejects invalid
   ]).valid, false);
   assert.throws(() => calculateQuoteTotals([{ total: 1e306 }, { total: 1e306 }]), RangeError);
   assert.throws(() => calculateQuoteTotals([{ total: Number.MAX_SAFE_INTEGER }]), RangeError);
+
+  // Line items totaling amounts that lose cent precision in double float conversion
+  const precisionLossItems = [
+    { id: '1', description: 'Item 1', quantity: 1, unitPrice: 40000000000000.00, total: 40000000000000.00 },
+    { id: '2', description: 'Item 2', quantity: 1, unitPrice: 40000000000000.01, total: 40000000000000.01 },
+  ];
+  assert.equal(validateQuoteInput('Quote', precisionLossItems).valid, false);
+  assert.throws(() => calculateQuoteTotals(precisionLossItems), RangeError);
 });
 
 test('validateJobCompletion: blocks completion if job requires forms but forms are unsigned', () => {

@@ -842,6 +842,12 @@ export function validateSignedSnapshot(
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported compliance status.' };
     }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      (alarm.passFail === 'Pass' || alarm.complianceStatusProvisional === 'Pass') &&
+      (alarm.buttonTestPass === false || alarm.interconnectionPass === false || alarm.passFail === 'Fail')
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot cannot record Pass status when recorded tests failed.' };
+    }
     if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
       ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
         .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||
@@ -855,6 +861,11 @@ export function validateSignedSnapshot(
       !['Pass', 'Fail'].includes(item.workResult as string)
     )) {
       return { valid: false, error: 'ELECTRICAL snapshot contains an unsupported test result value.' };
+    }
+    if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
+      item.workResult === 'Pass' && (item.polarityTest === 'Fail' || item.earthContinuity === 'Fail')
+    )) {
+      return { valid: false, error: 'ELECTRICAL snapshot cannot record Pass workResult when polarity or earth continuity failed.' };
     }
     if (formType === 'JSA') {
       if (typeof parsed.overallRiskLevel !== 'string' || !['L', 'M', 'H', 'E'].includes(parsed.overallRiskLevel)) {

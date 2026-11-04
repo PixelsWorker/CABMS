@@ -64,12 +64,47 @@ test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results'
     validOutcome.alarmSchedule[0].passFail = outcome;
     validOutcome.alarmSchedule[0].buttonTestPass = outcome === 'Pass';
     validOutcome.alarmSchedule[0].interconnectionPass = outcome === 'Pass';
+    validOutcome.alarmSchedule[0].complianceStatusProvisional = outcome;
     assert.equal(
       validateSignedSnapshot(JSON.stringify(validOutcome), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
       true,
       `${outcome} is a valid recorded test outcome`,
     );
   }
+});
+
+test('validateSignedSnapshot rejects contradictory smoke alarm test results', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+
+  const failedButton = structuredClone(valid);
+  failedButton.alarmSchedule[0].passFail = 'Pass';
+  failedButton.alarmSchedule[0].buttonTestPass = false;
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedButton), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+
+  const failedInterconnection = structuredClone(valid);
+  failedInterconnection.alarmSchedule[0].passFail = 'Pass';
+  failedInterconnection.alarmSchedule[0].interconnectionPass = false;
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedInterconnection), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+
+  const failedCompliancePass = structuredClone(valid);
+  failedCompliancePass.alarmSchedule[0].passFail = 'Fail';
+  failedCompliancePass.alarmSchedule[0].buttonTestPass = false;
+  failedCompliancePass.alarmSchedule[0].complianceStatusProvisional = 'Pass';
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedCompliancePass), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+});
+
+test('validateSignedSnapshot rejects contradictory electrical work results when tests failed', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+
+  const failedPolarity = structuredClone(valid);
+  failedPolarity.testedWorkItems[0].polarityTest = 'Fail';
+  failedPolarity.testedWorkItems[0].workResult = 'Pass';
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedPolarity), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
+
+  const failedEarth = structuredClone(valid);
+  failedEarth.testedWorkItems[0].earthContinuity = 'Fail';
+  failedEarth.testedWorkItems[0].workResult = 'Pass';
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedEarth), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
 });
 
 test('validateSignedSnapshot rejects unsupported synthetic smoke alarm power sources', () => {

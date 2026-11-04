@@ -446,6 +446,9 @@ test('disabled-environment state persists across same-workspace profile and role
     return Response.json({detail:'Internal Server Outage'},{status:500});
    }
   }
+  if(request.method==='GET' && new URL(request.url).pathname.includes('/jobs')){
+   return Response.json([{id:'JOB-RECOVERED-01',title:'Recovered Solar Job'}]);
+  }
   return worker.fetch(request,env);
  });setApiBase('http://localhost');
 
@@ -473,14 +476,171 @@ test('disabled-environment state persists across same-workspace profile and role
  // Environment recovery: subsequent read succeeds with 200
  failWith500=false;
  recoverWith200=true;
+
+ // Assert probe button is available and mutation form remains suppressed before probe
+ const probeBtn=Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Check availability');
+ assert.ok(probeBtn,'availability probe button is reachable while environment is disabled');
+ assert.equal(container.querySelector('form'),null,'mutation controls remain suppressed before retry succeeds');
+
  await act(async()=>{
-  const btn=Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Refresh appointments');
-  if(btn) btn.click();
-  else {
-   // Re-render to trigger refresh if controls were hidden
-   root.render(React.createElement(SessionContext.Provider,{value:{...updatedSession}},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));
-  }
+  probeBtn!.click();
  });await flush();
 
+ // Assert that a successful API response clears the disabled state and restores the expected controls
+ assert.doesNotMatch(container.textContent!,/Synthetic scheduling is disabled in this environment/,'disabled message cleared on recovery');
+ assert.notEqual(container.querySelector('form'),null,'creation form is restored after recovery');
+ assert.notEqual(container.querySelector('input'),null,'UTC inputs are restored after recovery');
+ assert.equal(Array.from(container.querySelectorAll('button')).some(b=>b.textContent==='Refresh appointments'),true,'Refresh appointments button restored');
+ assert.doesNotMatch(container.textContent!,/Field Service Dispatch & Calendar Scheduling/,'fallback simulated calendar is unmounted once live controls recover');
+
  await act(async()=>root.unmount());
+});
+
+test('confirmed appointment save is preserved in UI when same-user role refresh occurs while save is in flight',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport));
+ const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'},actor=G01_TEST_AUTH.officeStaff;
+ const token=await fixture.token(actor.uid,actor.email);
+ const direct=(path:string,body:unknown)=>worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)}),env);
+ const e=await (await direct('enquiries',{customer_name:'Synthetic Staff',service:'Solar Inverter'})).json() as {id:string};
+ const job=await (await direct(`enquiries/${e.id}/conversion`,{})).json() as {id:string};
+
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'}),keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ for(const k of keys)Object.defineProperty(globalThis,k,{configurable:true,writable:true,value:k==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[k]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const k of keys){const d=saved.get(k);if(d)Object.defineProperty(globalThis,k,d);else delete (globalThis as any)[k];}});
+
+ let interceptPost=false;
+ let failSubsequentGet=false;
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const updatedSession:Session={...session,profile:{...session.profile!,memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'owner_admin'}]}};
+ mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const request=new Request(input,init);
+  if(interceptPost && request.method==='POST' && new URL(request.url).pathname.endsWith('/demo-appointments')){
+   interceptPost=false;
+   // Execute backend write to D1
+   const res=await worker.fetch(request,env);
+   // Simulate a same-user profile and role refresh occurring in the UI before the write response resolves
+   await act(async()=>{
+    root.render(React.createElement(SessionContext.Provider,{value:updatedSession},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));
+   });
+   failSubsequentGet=true;
+   return res;
+  }
+  if(failSubsequentGet && request.method==='GET' && new URL(request.url).pathname.endsWith('/demo-appointments')){
+   return new Response(JSON.stringify({error:'transient_refresh_failure'}),{status:500,headers:{'Content-Type':'application/json'}});
+  }
+  return worker.fetch(request,env);
+ });setApiBase('http://localhost');
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,40));});
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ for(let i=0;i<50 && !container.querySelector(`select option[value="${job.id}"]`);i++){
+  await flush();
+ }
+
+ const select=container.querySelector('select')!; const k=Object.keys(select).find(key=>key.startsWith('__reactProps$'))!;
+ await act(async()=>{(select as any)[k].onChange({target:{value:job.id}});});
+
+ // Trigger appointment creation with in-flight role refresh simulation
+ interceptPost=true;
+ await act(async()=>{
+  container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));
+ });await flush();
+
+ for(let i=0;i<50 && container.querySelectorAll('li').length===0;i++){
+  await flush();
+ }
+
+ // Confirmed write is recorded in state and visible in UI, NOT discarded
+ assert.equal(container.querySelectorAll('li').length,1,'confirmed saved appointment is preserved in appointments list');
+ assert.match(container.textContent!,new RegExp(job.id),'job ID is present in confirmed appointment list');
+ assert.match(container.textContent!,/Saved\. \(List refresh failed; displaying confirmed save\.\)/,'explicit saved-but-refresh-failed status is displayed');
+ assert.doesNotMatch(container.textContent!,/Changes are locked/,'UI is not locked as uncertain on confirmed save');
+
+ await act(async()=>root.unmount());
+});
+
+test('pending appointment read resolving after mutation authorization failure cannot repopulate cleared appointments', async t => {
+  const db = createLocalD1Database() as LocalD1Database; t.after(() => db.getSqliteHandle().close());
+  await runLocalMigrations(db, { disposableTest: true }); await installG01TestAuthFixtures(db);
+  const fixture = await createFirebaseFixture(), worker = createWorker(createAuthenticationService(fixture.transport));
+  const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }, actor = G01_TEST_AUTH.officeStaff;
+  const token = await fixture.token(actor.uid, actor.email);
+  const direct = (path: string, body: unknown) => worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env);
+  const e = await (await direct('enquiries', { customer_name: 'Race Staff', service: 'Solar Inverter' })).json() as { id: string };
+  const job = await (await direct(`enquiries/${e.id}/conversion`, {})).json() as { id: string };
+  await direct('demo-appointments', { job_id: job.id, starts_at: '2026-11-05T01:00:00.000Z', ends_at: '2026-11-05T02:00:00.000Z' });
+
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' }), keys = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const saved = new Map(keys.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of keys) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  t.after(() => { mock.restoreAll(); resetApiBase(); dom.window.close(); for (const k of keys) { const d = saved.get(k); if (d) Object.defineProperty(globalThis, k, d); else delete (globalThis as any)[k]; } });
+
+  let resolveHoldGet: ((res: Response) => void) | null = null;
+  let interceptGet = false;
+  let mutateStatus: number | null = null;
+
+  const session: Session = { profile: { user: { id: actor.userId, email: actor.email, display_name: actor.name }, memberships: [{ workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' }] }, workspaceId: 'solarcell', selectWorkspace: () => {}, token: async () => token, login: async () => {}, logout: async () => {}, invalidate: () => {}, loading: false, error: '' };
+
+  mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (interceptGet && request.method === 'GET' && url.pathname.endsWith('/demo-appointments')) {
+      interceptGet = false;
+      return new Promise<Response>(resolve => {
+        resolveHoldGet = resolve;
+      });
+    }
+    if (mutateStatus && request.method === 'PATCH' && url.pathname.includes('/demo-appointments/')) {
+      const status = mutateStatus;
+      mutateStatus = null;
+      return new Response(JSON.stringify({ error: 'access_denied', code: 'ACCESS_DENIED', message: 'User membership was revoked.' }), { status, headers: { 'Content-Type': 'application/json' } });
+    }
+    return worker.fetch(request, env);
+  });
+  setApiBase('http://localhost');
+  const container = dom.window.document.getElementById('root')!, root = createRoot(container);
+  const flush = async () => act(async () => { await new Promise(r => setTimeout(r, 40)); });
+
+  // Initial render: loads existing appointment
+  await act(async () => { root.render(React.createElement(SessionContext.Provider, { value: session }, React.createElement(CabmsProvider, null, React.createElement(ScheduleView)))); });
+  await flush();
+
+  assert.equal(container.querySelectorAll('li').length, 1, 'initial appointment is rendered');
+  assert.match(container.textContent!, new RegExp(job.id));
+
+  // Arm interceptor to hold the next GET pending
+  interceptGet = true;
+  const refreshBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Refresh appointments');
+  assert.ok(refreshBtn, 'refresh button exists');
+  await act(async () => { refreshBtn!.click(); });
+  await flush();
+
+  // The GET is now held pending in-flight. Trigger a mutation that fails with 403 ACCESS_DENIED
+  mutateStatus = 403;
+  const cancelBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Cancel appointment');
+  assert.ok(cancelBtn, 'cancel appointment button exists');
+  await act(async () => { cancelBtn!.click(); });
+  await flush();
+
+  // Mutation returned 403: appointment rows cleared and permission denied message shown
+  assert.equal(container.querySelectorAll('li').length, 0, 'appointments list cleared on mutation authorization rejection');
+  assert.match(container.textContent!, /Save rejected: permission denied/, 'permission denied message is displayed');
+
+  // Allow the old held GET request to finally resolve with 200 and appointment data
+  assert.ok(resolveHoldGet, 'resolveHoldGet callback was registered');
+  const oldGetResponse = await worker.fetch(new Request('http://localhost/api/v1/workspaces/solarcell/demo-appointments', { headers: { Authorization: `Bearer ${token}` } }), env);
+  await act(async () => {
+    resolveHoldGet!(oldGetResponse);
+  });
+  await flush();
+
+  // Assert that authEpoch / epoch invalidation prevented the stale GET from restoring appointments
+  assert.equal(container.querySelectorAll('li').length, 0, 'stale GET response cannot repopulate appointments list after authorization failure');
+  assert.match(container.textContent!, /Save rejected: permission denied/, 'permission denied message remains preserved');
+
+  await act(async () => root.unmount());
 });

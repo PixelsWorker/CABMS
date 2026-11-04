@@ -34,22 +34,29 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
   const [start,setStart]=React.useState('2026-11-05T01:00:00.000Z'),[end,setEnd]=React.useState('2026-11-05T02:00:00.000Z');
   const [message,setMessage]=React.useState('Loading synthetic appointments...'),[busy,setBusy]=React.useState(false),[locked,setLocked]=React.useState(false);
   const [isEnvironmentDisabled,setIsEnvironmentDisabled]=React.useState(false);
-  const epoch=React.useRef(0), inFlight=React.useRef(false), environmentDisabledRef=React.useRef(false);
+  const epoch=React.useRef(0), viewEpoch=React.useRef(0), authEpoch=React.useRef(0), inFlight=React.useRef(false), environmentDisabledRef=React.useRef(false);
+
+  React.useEffect(()=>{
+    return()=>{viewEpoch.current++;};
+  },[workspace, session.profile?.user?.id, eligible]);
 
   const refresh=React.useCallback(async()=>{
     if(!workspace || !eligible)return;
+    const activeWorkspace=workspace;
+    const currentViewEpoch=viewEpoch.current;
+    const currentAuthEpoch=authEpoch.current;
     const n=++epoch.current;
     try {
       const token=await session.token();
-      const rows=await request<DemoAppointment[]>(workspace,token,'');
-      if(n===epoch.current){
+      const rows=await request<DemoAppointment[]>(activeWorkspace,token,'');
+      if(n===epoch.current && viewEpoch.current===currentViewEpoch && session.workspaceId===activeWorkspace && authEpoch.current===currentAuthEpoch){
         environmentDisabledRef.current=false;
         setIsEnvironmentDisabled(false);
         setAppointments(rows);
         setMessage('');
       }
     } catch (error: unknown) {
-      if(n===epoch.current){
+      if(n===epoch.current && viewEpoch.current===currentViewEpoch && session.workspaceId===activeWorkspace && authEpoch.current===currentAuthEpoch){
         if (error instanceof AppointmentApiError && error.status === 404) {
           setAppointments([]);
           environmentDisabledRef.current=true;
@@ -60,6 +67,8 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
           setIsEnvironmentDisabled(true);
           setMessage('Synthetic scheduling is disabled in this environment.');
         } else if (error instanceof AppointmentApiError && (error.status === 401 || error.status === 403)) {
+          authEpoch.current++;
+          epoch.current++;
           setAppointments([]);
           setMessage('Access denied. Synthetic appointments are unavailable.');
         } else {
@@ -67,27 +76,39 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
         }
       }
     }
-  },[workspace,session.profile?.user.id,role]);
+  },[workspace,session.profile?.user?.id,role]);
 
   React.useEffect(()=>{
     setAppointments([]);
+  },[workspace]);
+
+  React.useEffect(()=>{
+    if(!eligible){
+      authEpoch.current++;
+      epoch.current++;
+      setAppointments([]);
+      setMessage('');
+    }
+  },[eligible]);
+
+  React.useEffect(()=>{
     if(eligible)void refresh();
-    else setMessage('');
-    return()=>{epoch.current++;};
   },[refresh,eligible]);
 
   const mutate=async(path:string,method:string,body:unknown)=>{
     if(!workspace || inFlight.current || locked)return;
     if (body && typeof body === 'object' && 'starts_at' in body && 'ends_at' in body && !validDemoAppointmentRange(body.starts_at,body.ends_at)) {setMessage('Enter valid UTC start and end times, with the end after the start.');return;}
     const activeWorkspace=workspace;
+    const mutationViewEpoch=viewEpoch.current;
+    const mutationAuthEpoch=authEpoch.current;
     const mutationEpoch=++epoch.current;
     inFlight.current=true;setBusy(true);setMessage('Saving synthetic appointment...');
     let token:string;
     try {token=await session.token();}
-    catch {setAppointments([]);setMessage('Session could not be verified; no change was sent.');inFlight.current=false;setBusy(false);return;}
+    catch {authEpoch.current++;epoch.current++;setAppointments([]);setMessage('Session could not be verified; no change was sent.');inFlight.current=false;setBusy(false);return;}
     try {
       const saved=await request<DemoAppointment>(activeWorkspace,token,path,method,body);
-      if(mutationEpoch!==epoch.current || session.workspaceId!==activeWorkspace)return;
+      if(mutationViewEpoch!==viewEpoch.current || session.workspaceId!==activeWorkspace || mutationAuthEpoch!==authEpoch.current)return;
       setAppointments(prev=>{
         const remaining=prev.filter(a=>a.id!==saved.id);
         return [...remaining,saved].sort((a,b)=>a.starts_at.localeCompare(b.starts_at)||a.id.localeCompare(b.id));
@@ -96,14 +117,14 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
       const n=++epoch.current;
       try {
         const rows=await request<DemoAppointment[]>(activeWorkspace,token,'');
-        if(n===epoch.current && session.workspaceId===activeWorkspace){
+        if(n===epoch.current && session.workspaceId===activeWorkspace && mutationViewEpoch===viewEpoch.current && mutationAuthEpoch===authEpoch.current){
           environmentDisabledRef.current=false;
           setIsEnvironmentDisabled(false);
           setAppointments(rows);
           setMessage('');
         }
       } catch (refreshError: unknown) {
-        if(n===epoch.current && session.workspaceId===activeWorkspace){
+        if(n===epoch.current && session.workspaceId===activeWorkspace && mutationViewEpoch===viewEpoch.current){
           if(refreshError instanceof AppointmentApiError && refreshError.status===404){
             setAppointments([]);
             environmentDisabledRef.current=true;
@@ -114,6 +135,8 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
             setIsEnvironmentDisabled(true);
             setMessage('Synthetic scheduling is disabled in this environment.');
           } else if (refreshError instanceof AppointmentApiError && (refreshError.status === 401 || refreshError.status === 403)) {
+            authEpoch.current++;
+            epoch.current++;
             setAppointments([]);
             setMessage('Saved, but subsequent access was denied. Cleared synthetic appointments.');
           } else {
@@ -122,7 +145,17 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
         }
       }
     } catch (error: unknown) {
-      if(mutationEpoch!==epoch.current || session.workspaceId!==activeWorkspace)return;
+      if(mutationViewEpoch!==viewEpoch.current || session.workspaceId!==activeWorkspace)return;
+      if(mutationEpoch!==epoch.current){
+        const definite=error instanceof AppointmentApiError && (
+          [400,401,404,409,422].includes(error.status) ||
+          (error.status===403 && error.code==='ACCESS_DENIED'));
+        if(!definite){
+          setLocked(true);
+          setMessage('Save outcome is unknown. Do not retry until the outcome is independently verified; refresh alone may not establish it.');
+          return;
+        }
+      }
       if (error instanceof AppointmentApiError) {
         if (error.status === 409) {
           setMessage(`Save rejected: conflict or stale appointment version. (${error.message})`);
@@ -133,11 +166,15 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
           return;
         }
         if (error.status === 401) {
+          authEpoch.current++;
+          epoch.current++;
           setAppointments([]);
           setMessage('Session could not be verified; sign in again.');
           return;
         }
         if (error.status === 403) {
+          authEpoch.current++;
+          epoch.current++;
           setAppointments([]);
           if (error.code === 'ACCESS_DENIED') {
             setMessage(`Save rejected: permission denied. (${error.message})`);
@@ -180,6 +217,7 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
           <button type="submit" disabled={busy||locked}>Create synthetic appointment</button>
         </form>}
         {!isEnvironmentDisabled && eligible && <button type="button" disabled={busy} onClick={()=>void refresh()}>Refresh appointments</button>}
+        {isEnvironmentDisabled && eligible && <button type="button" disabled={busy} onClick={()=>void refresh()}>Check availability</button>}
         {!isEnvironmentDisabled && eligible && <ul>{appointments.map(a=><li key={a.id}>{a.job_id} - {a.starts_at} to {a.ends_at} - {a.status} - version {a.version}
           {a.status==='scheduled' && <><button type="button" disabled={busy||locked} onClick={()=>void mutate('/'+encodeURIComponent(a.id),'PATCH',{version:a.version,starts_at:start,ends_at:end})}>Reschedule using UTC fields</button><button type="button" disabled={busy||locked} onClick={()=>void mutate('/'+encodeURIComponent(a.id),'PATCH',{version:a.version,status:'cancelled'})}>Cancel appointment</button></>}
         </li>)}</ul>}

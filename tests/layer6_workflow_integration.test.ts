@@ -211,6 +211,142 @@ test('LAYER 6: PR16 context job guards preserve terminal jobs and allow only val
   });
 });
 
+test('LAYER 6: synthetic adapter quotes freeze published terms while draft content changes', async () => {
+  const adapter = new MockDataAdapter();
+  const terms = (await adapter.getTemplates()).find(t => t.type === 'TERMS')!;
+  const published = terms.revisions.find(r => r.status === 'PUBLISHED' && r.version === terms.currentVersion)!;
+  await adapter.createTemplateDraftRevision(terms.id, 'Synthetic unpublished draft');
+  const items = [{ id: '1', description: 'Synthetic scope', quantity: 1, unitPrice: 100, total: 100 }];
+  const issued = await adapter.prepareQuoteForJob('JOB-2026-103', 'Synthetic quote', items);
+  assert.equal(issued.termsVersion, published.version);
+  assert.equal(issued.termsContentSnapshot, published.content);
+  issued.lineItems[0].description = 'Altered returned copy';
+  items[0].description = 'Caller changed after issuance';
+  await adapter.createTemplateDraftRevision(terms.id, 'Another synthetic draft');
+  await adapter.recordQuoteAcceptance('JOB-2026-103', 'valid');
+  const accepted = (await adapter.getQuoteForJob('JOB-2026-103'))!;
+  assert.equal(accepted.acceptanceStatus, 'ACCEPTED');
+  assert.equal(accepted.termsContentSnapshot, published.content);
+  assert.equal(accepted.lineItems[0].description, 'Synthetic scope');
+});
+
+test('LAYER 6: synthetic adapter maintains published TERMS revision lifecycle across quotes and drafts', async () => {
+  const adapter = new MockDataAdapter();
+  const templates = await adapter.getTemplates();
+  const terms = templates.find(t => t.type === 'TERMS')!;
+  const originalVersion = terms.currentVersion;
+  const originalPublishedRev = terms.revisions.find(r => r.status === 'PUBLISHED' && r.version === originalVersion)!;
+
+  // 1. Issue Quote 1 on JOB-2026-101 using initial published terms v1.0
+  const items = [{ id: '1', description: 'Item 1', quantity: 1, unitPrice: 100, total: 100 }];
+  const quote1 = await adapter.prepareQuoteForJob('JOB-2026-101', 'Initial Quote', items);
+  assert.equal(quote1.termsVersion, originalVersion);
+  assert.equal(quote1.termsContentSnapshot, originalPublishedRev.content);
+
+  // Submitting for review when no draft exists must be rejected
+  await assert.rejects(
+    () => adapter.submitTemplateForReview(terms.id),
+    (err: any) => err.code === 'VALIDATION_FAILED'
+  );
+
+  // 2. Create draft on TERMS
+  await adapter.createTemplateDraftRevision(terms.id, 'Terms Revision v1.1 text');
+  const inDraftTemplates = await adapter.getTemplates();
+  const inDraftTerms = inDraftTemplates.find(t => t.id === terms.id)!;
+  assert.equal(inDraftTerms.activeStatus, 'DRAFT');
+
+  // Unpublished draft cannot be published directly without review
+  await assert.rejects(
+    () => adapter.publishTemplateVersion(terms.id),
+    (err: any) => err.code === 'VALIDATION_FAILED'
+  );
+
+  // Subsequent quote during draft still snapshots original published version
+  const quote2 = await adapter.prepareQuoteForJob('JOB-2026-102', 'Quote during draft', items);
+  assert.equal(quote2.termsVersion, originalVersion);
+  assert.equal(quote2.termsContentSnapshot, originalPublishedRev.content);
+
+  // 3. Submit draft for review
+  await adapter.submitTemplateForReview(terms.id);
+  const inReviewTemplates = await adapter.getTemplates();
+  const inReviewTerms = inReviewTemplates.find(t => t.id === terms.id)!;
+  assert.equal(inReviewTerms.activeStatus, 'REVIEW');
+
+  // Subsequent quote during review still snapshots original published version
+  const quote3 = await adapter.prepareQuoteForJob('JOB-2026-103', 'Quote during review', items);
+  assert.equal(quote3.termsVersion, originalVersion);
+  assert.equal(quote3.termsContentSnapshot, originalPublishedRev.content);
+
+  // 4. Publish reviewed version
+  const publishedTpl = await adapter.publishTemplateVersion(terms.id);
+  assert.equal(publishedTpl.activeStatus, 'PUBLISHED');
+  assert.notEqual(publishedTpl.currentVersion, originalVersion);
+  assert.equal(publishedTpl.currentVersion, 'v2.5');
+
+  // Verify published revision is present in revisions
+  const newPublishedRev = publishedTpl.revisions.find(r => r.status === 'PUBLISHED' && r.version === publishedTpl.currentVersion)!;
+  assert.ok(newPublishedRev);
+  assert.equal(newPublishedRev.content, 'Terms Revision v1.1 text');
+
+  // 5. Subsequent quote snapshots the newly published revision v1.1
+  const quote4 = await adapter.prepareQuoteForJob('JOB-2026-104', 'Quote after v1.1 publish', items);
+  assert.equal(quote4.termsVersion, 'v2.5');
+  assert.equal(quote4.termsContentSnapshot, 'Terms Revision v1.1 text');
+
+  // 6. Existing quotes 1, 2, 3 remain strictly stable with original terms and pricing
+  const stored1 = (await adapter.getQuoteForJob('JOB-2026-101'))!;
+  assert.equal(stored1.termsVersion, originalVersion);
+  assert.equal(stored1.termsContentSnapshot, originalPublishedRev.content);
+  assert.equal(stored1.total, 110); // 100 + 10% GST
+
+  const stored2 = (await adapter.getQuoteForJob('JOB-2026-102'))!;
+  assert.equal(stored2.termsVersion, originalVersion);
+
+  // 7. Further draft edits do not alter quote 4 or quote 1
+  await adapter.createTemplateDraftRevision(terms.id, 'Draft v1.2 in progress');
+  const stored4 = (await adapter.getQuoteForJob('JOB-2026-104'))!;
+  assert.equal(stored4.termsVersion, 'v2.5');
+  assert.equal(stored4.termsContentSnapshot, 'Terms Revision v1.1 text');
+});
+
+test('LAYER 6: synthetic adapter rejects malformed quote inputs without changing job state', async () => {
+  const adapter = new MockDataAdapter();
+  const before = adapter.getInitialBaseline();
+  const validItem = { id: '1', description: 'Synthetic scope', quantity: 2, unitPrice: 50, total: 100 };
+  const invalidInputs: [string, typeof validItem[]][] = [
+    ['', [validItem]],
+    ['Quote', []],
+    ['Quote', [{ ...validItem, quantity: Number.NaN }]],
+    ['Quote', [{ ...validItem, unitPrice: Number.POSITIVE_INFINITY }]],
+    ['Quote', [{ ...validItem, total: 99 }]],
+    ['Quote', [{ ...validItem, description: '  ' }]],
+  ];
+
+  for (const [title, lineItems] of invalidInputs) {
+    await assert.rejects(adapter.prepareQuoteForJob('JOB-2026-103', title, lineItems), ValidationError);
+    assert.deepEqual(adapter.getInitialBaseline(), before);
+  }
+
+  const fractionalLine = { id: 'fractional', description: 'Synthetic half unit', quantity: 0.5, unitPrice: 2.01, total: 1.01 };
+  const fractionalQuote = await adapter.prepareQuoteForJob('JOB-2026-103', 'Fractional quote', [fractionalLine]);
+  assert.equal(fractionalQuote.lineItems[0].total, 1.01);
+  const largerFractional = { ...fractionalLine, unitPrice: 20.15, total: 10.08 };
+  const largerFractionalQuote = await adapter.prepareQuoteForJob('JOB-2026-103', 'Larger fractional quote', [largerFractional]);
+  assert.equal(largerFractionalQuote.lineItems[0].total, 10.08);
+  await assert.rejects(
+    new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Incorrect larger fractional quote', [{ ...largerFractional, total: 10.07 }]),
+    ValidationError,
+  );
+  await assert.rejects(
+    new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Fractional-cent quote', [{ ...fractionalLine, total: 1.005 }]),
+    ValidationError,
+  );
+  await assert.rejects(
+    new MockDataAdapter().prepareQuoteForJob('JOB-2026-103', 'Incorrect fractional quote', [{ ...fractionalLine, total: 1.00 }]),
+    ValidationError,
+  );
+});
+
 test('LAYER 6: PR16 adapter quote amounts, calendars and operation timestamps use one injected clock read', async () => {
   let clock = '2027-12-24T09:00:00+10:00';
   let reads = 0;
@@ -3777,5 +3913,192 @@ test('LAYER 6: MAN-SEC-01 — certificate dispatch and retry enforce session aut
     });
     const ownerDispatch = ctx.sendCertificateEmail(job.id, 'JSA');
     assert.equal(ownerDispatch.success, true, 'Owner Admin dispatch succeeds');
+  });
+});
+
+
+test('G03 preview quote uses published terms while a later draft exists and detaches issued items', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const original = ctx.templates.find(t => t.type === 'TERMS')!;
+    const published = original.revisions.find(r => r.status === 'PUBLISHED' && r.version === original.currentVersion)!;
+    assert.ok(published);
+    await act(async () => { ctx.createTemplateDraftRevision(original.id, 'Unpublished synthetic draft terms'); });
+    assert.equal(ctx.templates.find(t => t.id === original.id)?.activeStatus, 'DRAFT');
+    const lines = [{ id: 'synthetic', description: 'Synthetic service', quantity: 1, unitPrice: 100, total: 100 }];
+    let result!: Quote;
+    await act(async () => { result = ctx.prepareQuoteForJob('JOB-2026-101', 'Synthetic quote', lines); });
+    assert.equal(result.termsVersion, published.version);
+    assert.equal(result.termsContentSnapshot, published.content);
+    lines[0].description = 'Caller changed';
+    result.lineItems[0].description = 'Returned object changed';
+    const stored = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote!;
+    assert.equal(stored.lineItems[0].description, 'Synthetic service');
+    assert.equal(stored.termsContentSnapshot, published.content);
+  });
+});
+
+
+test('G03 preview acceptance fails closed for unissued quotes and invalid expiry', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    await act(async () => { ctx.prepareQuoteForJob('JOB-2026-101', 'Synthetic quote', [{ id: '1', description: 'Synthetic', quantity: 1, unitPrice: 100, total: 100 }]); });
+    const job = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!;
+    job.quote!.acceptanceStatus = 'DRAFT';
+    let result!: {success: boolean; message: string};
+    await act(async () => { result = ctx.simulateQuoteAcceptance(job.id, 'valid'); });
+    assert.equal(result.success, false);
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === job.id)!.quote!.acceptanceStatus, 'DRAFT');
+    job.quote!.acceptanceStatus = 'SENT';
+    job.quote!.expiresAt = 'invalid';
+    await act(async () => { result = ctx.simulateQuoteAcceptance(job.id, 'valid'); });
+    assert.equal(result.success, false);
+    assert.match(result.message, /could not be verified/);
+    assert.equal(ctx.getAuthoritativeState().jobs.find(j => j.id === job.id)!.quote!.acceptanceStatus, 'SENT');
+  });
+});
+
+
+test('G03 preview refuses issuance when the published terms revision is missing', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const terms = ctx.templates.find(t => t.type === 'TERMS')!;
+    const originalRevisions = terms.revisions;
+    try {
+      terms.revisions = terms.revisions.filter(r => r.version !== terms.currentVersion);
+      const before = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote);
+      await act(async () => {
+        assert.throws(() => ctx.prepareQuoteForJob('JOB-2026-101', 'Synthetic quote', [{ id: '1', description: 'Synthetic', quantity: 1, unitPrice: 100, total: 100 }]), /published terms are unavailable/);
+      });
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote, before);
+    } finally {
+      terms.revisions = originalRevisions;
+    }
+  });
+});
+
+test('G03 context path prepareQuoteForJob rejects invalid inputs without changing job quote state or counters', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const beforeState = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote);
+    const validItem = { id: 'item-1', description: 'Synthetic item', quantity: 2, unitPrice: 50, total: 100 };
+
+    const invalidInputs: [string, typeof validItem[], RegExp][] = [
+      ['', [validItem], /title is required/],
+      ['   ', [validItem], /title is required/],
+      ['Quote', [], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, id: '' }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, description: '' }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, quantity: 0 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, quantity: -1 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, unitPrice: -10 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, total: -100 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, total: 99.99 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, total: 100.005 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, unitPrice: 0.001, quantity: 10, total: 0.01 }], /line items must have valid values and totals/],
+    ];
+
+    for (const [title, lineItems, expectedErr] of invalidInputs) {
+      await act(async () => {
+        assert.throws(
+          () => ctx.prepareQuoteForJob('JOB-2026-101', title, lineItems),
+          expectedErr,
+        );
+      });
+      // Assert job quote state was NOT changed
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote, beforeState);
+    }
+
+    // Now issue a valid quote with $0.35 subtotal to prove P2-2 GST rounding on context path
+    let issued!: Quote;
+    await act(async () => {
+      issued = ctx.prepareQuoteForJob('JOB-2026-101', 'P2-2 Half Up Quote', [
+        { id: 'item-sub35', description: 'Small Part', quantity: 1, unitPrice: 0.35, total: 0.35 },
+      ]);
+    });
+    assert.equal(issued.subtotal, 0.35);
+    assert.equal(issued.gst, 0.04);
+    assert.equal(issued.total, 0.39);
+    assert.equal(issued.id, 'QUOTE-2026-51', 'quote counter was not incremented during failed attempts');
+    const stored = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote!;
+    assert.equal(stored.subtotal, 0.35);
+    assert.equal(stored.gst, 0.04);
+    assert.equal(stored.total, 0.39);
+  });
+});
+test('G03 quote issuance selects a newly published TERMS revision on the context path', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const originalTerms = ctx.templates.find(t => t.type === 'TERMS')!;
+    await act(async () => { ctx.createTemplateDraftRevision(originalTerms.id, 'Updated published terms v2'); });
+    await act(async () => { ctx.submitTemplateForReview(originalTerms.id); });
+    await act(async () => { ctx.publishTemplateVersion(originalTerms.id); });
+    const updatedTerms = ctx.templates.find(t => t.id === originalTerms.id)!;
+    assert.equal(updatedTerms.activeStatus, 'PUBLISHED');
+    assert.notEqual(updatedTerms.currentVersion, originalTerms.currentVersion);
+
+    let issued!: Quote;
+    await act(async () => {
+      issued = ctx.prepareQuoteForJob('JOB-2026-101', 'Quote with v2 terms', [
+        { id: 'item-1', description: 'Item 1', quantity: 1, unitPrice: 100, total: 100 }
+      ]);
+    });
+    assert.equal(issued.termsVersion, updatedTerms.currentVersion);
+    assert.equal(issued.termsContentSnapshot, 'Updated published terms v2');
+  });
+});
+
+test('G03 mock adapter: clock failure before review mutation leaves template and revisions unchanged', async () => {
+  let shouldFail = false;
+  const adapter = new MockDataAdapter(() => {
+    if (shouldFail) throw new Error('Simulated clock hardware error');
+    return INITIAL_BUSINESS_CLOCK;
+  });
+  await adapter.resetToBaseline();
+  const terms = (await adapter.getTemplates()).find(t => t.type === 'TERMS')!;
+  await adapter.createTemplateDraftRevision(terms.id, 'Draft for review');
+  const templateBefore = structuredClone((await adapter.getTemplates()).find(t => t.id === terms.id)!);
+  assert.equal(templateBefore.activeStatus, 'DRAFT');
+  assert.equal(templateBefore.revisions[0].status, 'DRAFT');
+
+  // Trigger failing clock
+  shouldFail = true;
+
+  await assert.rejects(
+    async () => { await adapter.submitTemplateForReview(terms.id); },
+    /Simulated clock hardware error/
+  );
+
+  const templateAfter = (await adapter.getTemplates()).find(t => t.id === terms.id)!;
+  assert.deepEqual(templateAfter, templateBefore, 'template and its revisions remained completely untouched');
+});
+
+test('G03 context path: submitTemplateForReview rejects submission without draft and preserves published terms', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const termsBefore = structuredClone(ctx.templates.find(t => t.type === 'TERMS')!);
+    assert.equal(termsBefore.activeStatus, 'PUBLISHED');
+    assert.equal(termsBefore.revisions[0].status, 'PUBLISHED');
+
+    // Attempt to submit published terms for review without creating a draft
+    await act(async () => {
+      ctx.submitTemplateForReview(termsBefore.id);
+    });
+
+    // Verify template was not modified
+    const termsAfter = ctx.templates.find(t => t.id === termsBefore.id)!;
+    assert.equal(termsAfter.activeStatus, 'PUBLISHED', 'activeStatus must not be mutated to REVIEW');
+    assert.equal(termsAfter.revisions[0].status, 'PUBLISHED', 'revision status must not be mutated to REVIEW');
+    assert.deepEqual(termsAfter, termsBefore, 'template remains identical');
+
+    // Verify quote preparation still succeeds and snapshots published terms
+    let issued!: Quote;
+    await act(async () => {
+      issued = ctx.prepareQuoteForJob('JOB-2026-101', 'Subsequent quote after denied review submission', [
+        { id: 'item-1', description: 'Item 1', quantity: 1, unitPrice: 200, total: 200 },
+      ]);
+    });
+    assert.equal(issued.termsVersion, termsBefore.currentVersion);
+    assert.equal(issued.termsContentSnapshot, termsBefore.content);
   });
 });

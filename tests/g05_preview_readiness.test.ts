@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../src/utils/g05PreviewReadiness.ts';
-import { INITIAL_ELECTRICAL_CERT, INITIAL_JSA_FORM } from '../src/data/seedData.ts';
+import { INITIAL_ELECTRICAL_CERT, INITIAL_JSA_FORM, INITIAL_SMOKE_ALARM_CERT } from '../src/data/seedData.ts';
 
 test('preview reports only required forms without inventing requirements', () => {
   assert.deepEqual(getPendingPreviewForms([], {}), []);
@@ -68,4 +68,46 @@ test('preview readiness rejects JSA snapshots with empty steps or unconfirmed in
   const validCompetency = isValidPreviewSignOff('JSA', 'JOB-2026-101', true, JSON.stringify(unconfirmedCompetency));
   assert.equal(validCompetency, false);
   assert.deepEqual(getInvalidPreviewForms(['JSA'], { JSA: true }, { JSA: validCompetency }), ['JSA']);
+});
+test('preview readiness validates signed snapshots recording legitimate failed inspection outcomes', () => {
+  const baseSmoke = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  baseSmoke.alarmSchedule[0].passFail = 'Fail';
+  baseSmoke.alarmSchedule[0].buttonTestPass = false;
+  baseSmoke.alarmSchedule[0].interconnectionPass = false;
+  baseSmoke.alarmSchedule[0].complianceStatusProvisional = 'Fail';
+  const smokeSnapshot = JSON.stringify(baseSmoke);
+
+  const smokeValid = isValidPreviewSignOff('SMOKE_ALARM', INITIAL_SMOKE_ALARM_CERT.jobReference, true, smokeSnapshot);
+  assert.equal(smokeValid, true, 'Failed smoke alarm inspection snapshot is valid preview sign-off');
+  assert.deepEqual(getInvalidPreviewForms(['SMOKE_ALARM'], { SMOKE_ALARM: true }, { SMOKE_ALARM: smokeValid }), []);
+
+  const baseElec = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  baseElec.testedWorkItems[0].polarityTest = 'Fail';
+  baseElec.testedWorkItems[0].workResult = 'Fail';
+  const elecSnapshot = JSON.stringify(baseElec);
+
+  const elecValid = isValidPreviewSignOff('ELECTRICAL', INITIAL_ELECTRICAL_CERT.jobReference, true, elecSnapshot);
+  assert.equal(elecValid, true, 'Failed electrical inspection snapshot is valid preview sign-off');
+  assert.deepEqual(getInvalidPreviewForms(['ELECTRICAL'], { ELECTRICAL: true }, { ELECTRICAL: elecValid }), []);
+});
+
+test('mock adapter smoke alarm sign-off updates limitations notice on failure and preserves non-compliance evidence', async () => {
+  const { MockDataAdapter } = await import('../src/services/mockAdapter.ts');
+  const adapter = new MockDataAdapter();
+  await adapter.resetToBaseline();
+  const form = structuredClone(INITIAL_SMOKE_ALARM_CERT);
+  form.jobReference = 'JOB-2026-102';
+  form.signedOff = false;
+  form.signedByTechName = undefined;
+  form.signedTimestamp = undefined;
+  form.fullSnapshot = undefined;
+  form.alarmSchedule[0].passFail = 'Fail';
+  await adapter.saveSmokeAlarmForm('JOB-2026-102', form);
+  const signed = await adapter.signOffSmokeAlarmForm('JOB-2026-102', {
+    signed_by_name: 'Dave Miller',
+    signer_role: 'technician',
+    signed_timestamp: '2026-11-04T10:00:00.000Z',
+  });
+  assert.equal(signed.alarmSchedule[0].complianceStatusProvisional, 'Fail');
+  assert.match(signed.limitationsAndRentalNotes, /NON-COMPLIANCE NOTICE/);
 });

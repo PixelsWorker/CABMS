@@ -85,6 +85,11 @@ export function validateJobCompletion(
           missingRequirements.push('Electrical Certificate record not started');
         } else if (!elec.signedOff) {
           missingRequirements.push('Electrical Certificate requires technician Preview sign-off');
+        } else {
+          const failingItems = (elec.testedWorkItems || []).filter(w => w.workResult === 'Fail' || w.polarityTest === 'Fail' || w.earthContinuity === 'Fail');
+          if (failingItems.length > 0) {
+            warnings.push(`Warning: ${failingItems.length} electrical test item(s) marked Fail. Rectification required.`);
+          }
         }
         // Always preserve unresolved Part B warning
         warnings.push('NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred.');

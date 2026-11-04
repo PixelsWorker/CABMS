@@ -445,6 +445,10 @@ export class MockDataAdapter implements CabmsDataAdapter {
       throw new ForbiddenError('Electrical Certificate is already signed off. Snapshot is immutable.');
     }
 
+    existing.testedWorkItems = (existing.testedWorkItems || []).map(item => ({
+      ...item,
+      workResult: (item.polarityTest === 'Fail' || item.earthContinuity === 'Fail') ? 'Fail' : item.workResult,
+    }));
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
     existing.signedTimestamp = signer.signed_timestamp;
@@ -473,6 +477,16 @@ export class MockDataAdapter implements CabmsDataAdapter {
       throw new ForbiddenError('Smoke Alarm Certificate is already signed off. Snapshot is immutable.');
     }
 
+    existing.alarmSchedule = (existing.alarmSchedule || []).map(alarm => ({
+      ...alarm,
+      complianceStatusProvisional: (alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false)
+        ? 'Fail'
+        : alarm.complianceStatusProvisional,
+    }));
+    const hasFailedAlarm = existing.alarmSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
+    if (hasFailedAlarm) {
+      existing.limitationsAndRentalNotes = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    }
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
     existing.signedTimestamp = signer.signed_timestamp;

@@ -805,7 +805,15 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentElec.signedOff}
                           value={item.polarityTest}
                           onChange={e => {
-                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, polarityTest: e.target.value as any } : row);
+                            const newPolarity = e.target.value as 'Pass' | 'Fail';
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
+                              if (rowIndex === idx) {
+                                const isFailing = newPolarity === 'Fail' || row.earthContinuity === 'Fail';
+                                const newWorkResult: 'Pass' | 'Fail' = isFailing ? 'Fail' : (row.workResult || 'Pass');
+                                return { ...row, polarityTest: newPolarity, workResult: newWorkResult };
+                              }
+                              return row;
+                            });
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="cabms-input rounded px-2 py-1 text-(--cabms-text-primary) w-full"
@@ -821,10 +829,41 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentElec.signedOff}
                           value={item.earthContinuity}
                           onChange={e => {
-                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, earthContinuity: e.target.value as any } : row);
+                            const newEarth = e.target.value as 'Pass' | 'Fail';
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
+                              if (rowIndex === idx) {
+                                const isFailing = row.polarityTest === 'Fail' || newEarth === 'Fail';
+                                const newWorkResult: 'Pass' | 'Fail' = isFailing ? 'Fail' : (row.workResult || 'Pass');
+                                return { ...row, earthContinuity: newEarth, workResult: newWorkResult };
+                              }
+                              return row;
+                            });
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="cabms-input rounded px-2 py-1 text-(--cabms-text-primary) w-full"
+                        >
+                          <option value="Pass">Pass</option>
+                          <option value="Fail">Fail</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-(--cabms-text-secondary) block mb-0.5">Work Result</label>
+                        <select
+                          disabled={currentElec.signedOff}
+                          value={item.workResult || 'Pass'}
+                          onChange={e => {
+                            const val = e.target.value as 'Pass' | 'Fail';
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
+                              if (rowIndex === idx) {
+                                const forcedFail = row.polarityTest === 'Fail' || row.earthContinuity === 'Fail';
+                                return { ...row, workResult: forcedFail ? 'Fail' : val };
+                              }
+                              return row;
+                            });
+                            updateElectricalForm(currentJob.id, { testedWorkItems: updated });
+                          }}
+                          className={`cabms-input rounded px-2 py-1 text-xs font-bold w-full ${item.workResult === 'Pass' ? 'text-emerald-400' : 'text-red-400'}`}
                         >
                           <option value="Pass">Pass</option>
                           <option value="Fail">Fail</option>
@@ -940,7 +979,16 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentSmoke.signedOff}
                             type="button"
                             onClick={() => {
-                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, interconnectionPass: !row.interconnectionPass } : row);
+                              const newInterconn = !alarm.interconnectionPass;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => {
+                                if (rowIndex === idx) {
+                                  const willPass = newInterconn && row.buttonTestPass;
+                                  const newPassFail = willPass ? row.passFail : 'Fail';
+                                  const newCompliance: 'Pass' | 'Fail' | 'Provisional' = willPass ? row.complianceStatusProvisional : 'Fail';
+                                  return { ...row, interconnectionPass: newInterconn, passFail: newPassFail, complianceStatusProvisional: newCompliance };
+                                }
+                                return row;
+                              });
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -969,7 +1017,14 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentSmoke.signedOff}
                             value={alarm.passFail}
                             onChange={e => {
-                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, passFail: e.target.value as any } : row);
+                              const newPassFail = e.target.value as 'Pass' | 'Fail';
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => {
+                                if (rowIndex === idx) {
+                                  const newCompliance: 'Pass' | 'Fail' | 'Provisional' = newPassFail === 'Fail' ? 'Fail' : ((row.buttonTestPass && row.interconnectionPass) ? 'Pass' : 'Fail');
+                                  return { ...row, passFail: newPassFail, complianceStatusProvisional: newCompliance };
+                                }
+                                return row;
+                              });
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -1589,10 +1644,10 @@ export const ComplianceFormsView: React.FC = () => {
                                 <td className="p-1.5 font-semibold text-slate-900">{w.description}</td>
                                 <td className="p-1.5">{w.circuitsTested}</td>
                                 <td className="p-1.5 font-mono">{w.insulationResistanceResult}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{w.polarityTest}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{w.earthContinuity}</td>
+                                <td className={`p-1.5 text-center font-bold ${w.polarityTest === 'Pass' ? 'text-emerald-700' : 'text-red-700'}`}>{w.polarityTest}</td>
+                                <td className={`p-1.5 text-center font-bold ${w.earthContinuity === 'Pass' ? 'text-emerald-700' : 'text-red-700'}`}>{w.earthContinuity}</td>
                                 <td className="p-1.5 font-mono">{w.rcdTripTimeMs}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-800">{w.workResult}</td>
+                                <td className={`p-1.5 text-center font-bold ${w.workResult === 'Pass' ? 'text-emerald-800' : 'text-red-800'}`}>{w.workResult}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1638,9 +1693,9 @@ export const ComplianceFormsView: React.FC = () => {
                                 <td className="p-1.5">{a.alarmBrandModel}</td>
                                 <td className="p-1.5 font-mono">{a.standardMarkingPlaceholder}</td>
                                 <td className="p-1.5 text-[10px]">{a.powerSource}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-800">{a.passFail}</td>
+                                <td className={`p-1.5 text-center font-bold ${a.buttonTestPass ? 'text-emerald-700' : 'text-red-700'}`}>{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
+                                <td className={`p-1.5 text-center font-bold ${a.interconnectionPass ? 'text-emerald-700' : 'text-red-700'}`}>{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
+                                <td className={`p-1.5 text-center font-bold ${a.passFail === 'Pass' ? 'text-emerald-800' : 'text-red-800'}`}>{a.passFail}</td>
                               </tr>
                             ))}
                           </tbody>

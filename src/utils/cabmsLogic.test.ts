@@ -14,13 +14,14 @@ import {
   processReviewDispatch,
   validateSignedSnapshot,
 } from './cabmsLogic.ts';
-import { Job, Customer, TemplateSetting } from '../types/cabms.ts';
+import { Job, Customer, TemplateSetting, SmokeAlarmCertData, ElectricalCertData } from '../types/cabms.ts';
 import {
   INITIAL_ELECTRICAL_CERT,
   INITIAL_JSA_FORM,
   INITIAL_SMOKE_ALARM_CERT,
   INITIAL_TCA1_CERT,
   INITIAL_TCA2_CERT,
+  INITIAL_JOBS,
 } from '../data/seedData.ts';
 
 test('validateSignedSnapshot accepts all five CABMS signed form schemas', () => {
@@ -105,6 +106,131 @@ test('validateSignedSnapshot rejects contradictory electrical work results when 
   failedEarth.testedWorkItems[0].earthContinuity = 'Fail';
   failedEarth.testedWorkItems[0].workResult = 'Pass';
   assert.equal(validateSignedSnapshot(JSON.stringify(failedEarth), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
+});
+
+test('validateSignedSnapshot accepts genuine failed smoke alarm inspection and mixed results without false positives', () => {
+  const base = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+
+  // Legitimate failed alarm: failure evidence preserved and consistent
+  const failedAlarm = structuredClone(base);
+  failedAlarm.alarmSchedule[0].passFail = 'Fail';
+  failedAlarm.alarmSchedule[0].buttonTestPass = false;
+  failedAlarm.alarmSchedule[0].interconnectionPass = false;
+  failedAlarm.alarmSchedule[0].complianceStatusProvisional = 'Fail';
+  const failedResult = validateSignedSnapshot(JSON.stringify(failedAlarm), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+  assert.equal(failedResult.valid, true, 'Genuine failed alarm inspection is valid to sign off');
+
+  // Mixed schedule: ALM-1 Fail, ALM-2 Pass, ALM-3 Pass, ALM-4 Pass
+  const mixedAlarm = structuredClone(base);
+  mixedAlarm.alarmSchedule[0].passFail = 'Fail';
+  mixedAlarm.alarmSchedule[0].buttonTestPass = false;
+  mixedAlarm.alarmSchedule[0].complianceStatusProvisional = 'Fail';
+  // ALM-2 is Pass
+  mixedAlarm.alarmSchedule[1].passFail = 'Pass';
+  mixedAlarm.alarmSchedule[1].buttonTestPass = true;
+  mixedAlarm.alarmSchedule[1].interconnectionPass = true;
+  mixedAlarm.alarmSchedule[1].complianceStatusProvisional = 'Pass';
+  const mixedResult = validateSignedSnapshot(JSON.stringify(mixedAlarm), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+  assert.equal(mixedResult.valid, true, 'Mixed pass/fail smoke alarm inspection is valid to sign off');
+
+  // Confirm false-positive certificate result is rejected
+  const falsePositive = structuredClone(base);
+  falsePositive.alarmSchedule[0].passFail = 'Pass'; // Claims Pass despite failed button test
+  falsePositive.alarmSchedule[0].buttonTestPass = false;
+  assert.equal(validateSignedSnapshot(JSON.stringify(falsePositive), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+});
+
+test('validateSignedSnapshot accepts genuine failed electrical tests and mixed results without false positives', () => {
+  const base = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+
+  // Legitimate failed polarity test
+  const failedPolarity = structuredClone(base);
+  failedPolarity.testedWorkItems[0].polarityTest = 'Fail';
+  failedPolarity.testedWorkItems[0].workResult = 'Fail';
+  const polarityResult = validateSignedSnapshot(JSON.stringify(failedPolarity), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+  assert.equal(polarityResult.valid, true, 'Genuine polarity failure with Fail workResult is valid to sign off');
+
+  // Legitimate failed earth continuity test
+  const failedEarth = structuredClone(base);
+  failedEarth.testedWorkItems[0].earthContinuity = 'Fail';
+  failedEarth.testedWorkItems[0].workResult = 'Fail';
+  const earthResult = validateSignedSnapshot(JSON.stringify(failedEarth), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+  assert.equal(earthResult.valid, true, 'Genuine earth continuity failure with Fail workResult is valid to sign off');
+
+  // Mixed items: WORK-1 Fail, WORK-2 Pass
+  const mixedElec = structuredClone(base);
+  mixedElec.testedWorkItems[0].polarityTest = 'Fail';
+  mixedElec.testedWorkItems[0].workResult = 'Fail';
+  mixedElec.testedWorkItems[1].polarityTest = 'Pass';
+  mixedElec.testedWorkItems[1].earthContinuity = 'Pass';
+  mixedElec.testedWorkItems[1].workResult = 'Pass';
+  const mixedElecResult = validateSignedSnapshot(JSON.stringify(mixedElec), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+  assert.equal(mixedElecResult.valid, true, 'Mixed pass/fail electrical inspection is valid to sign off');
+
+  // Confirm false-positive certificate result is rejected
+  const falsePositiveElec = structuredClone(base);
+  falsePositiveElec.testedWorkItems[0].polarityTest = 'Fail';
+  falsePositiveElec.testedWorkItems[0].workResult = 'Pass'; // Falsely claims Pass
+  assert.equal(validateSignedSnapshot(JSON.stringify(falsePositiveElec), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
+});
+
+test('validateJobCompletion enforces remediation restrictions on genuine failed electrical and smoke alarm certificates', () => {
+  const testJob: Job = {
+    ...structuredClone(INITIAL_JOBS[0]),
+    id: 'JOB-2026-TEST',
+    status: 'IN_PROGRESS',
+    isDirectToInvoice: false,
+    formsRequired: ['ELECTRICAL', 'SMOKE_ALARM'],
+  };
+
+  const failedSmoke: SmokeAlarmCertData = {
+    ...INITIAL_SMOKE_ALARM_CERT,
+    jobReference: 'JOB-2026-TEST',
+    signedOff: true,
+    alarmSchedule: [
+      {
+        id: 'ALM-1',
+        roomLocation: 'Hallway',
+        alarmBrandModel: 'Clipsal 755PSMA4',
+        standardMarkingPlaceholder: 'AS 3786:2014',
+        manufactureDateOrExpiry: 'Exp 2030',
+        powerSource: '240V Hardwired with Battery Backup',
+        passFail: 'Fail',
+        buttonTestPass: false,
+        interconnectionPass: false,
+        complianceStatusProvisional: 'Fail',
+      },
+    ],
+  };
+
+  const failedElec: ElectricalCertData = {
+    ...INITIAL_ELECTRICAL_CERT,
+    jobReference: 'JOB-2026-TEST',
+    signedOff: true,
+    testedWorkItems: [
+      {
+        id: 'WORK-1',
+        description: 'Inverter AC Feed',
+        circuitsTested: 'Sub-board 1',
+        insulationResistanceResult: '> 200 Megohms',
+        polarityTest: 'Fail',
+        earthContinuity: 'Pass',
+        rcdTripTimeMs: '18ms',
+        workResult: 'Fail',
+      },
+    ],
+  };
+
+  const completion = validateJobCompletion(testJob, { electrical: failedElec, smokeAlarm: failedSmoke });
+  assert.equal(completion.canComplete, true, 'Job can complete operationally when signed documentation is present');
+  assert.ok(completion.warnings.some(w => w.includes('smoke alarm(s) marked Fail in schedule. Remediation required.')));
+  assert.ok(completion.warnings.some(w => w.includes('electrical test item(s) marked Fail. Rectification required.')));
+
+  // If unsigned, completion is strictly blocked
+  const unsignedElec = { ...failedElec, signedOff: false };
+  const blocked = validateJobCompletion(testJob, { electrical: unsignedElec, smokeAlarm: failedSmoke });
+  assert.equal(blocked.canComplete, false);
+  assert.ok(blocked.missingRequirements.some(m => m.includes('Electrical Certificate requires technician Preview sign-off')));
 });
 
 test('validateSignedSnapshot rejects unsupported synthetic smoke alarm power sources', () => {

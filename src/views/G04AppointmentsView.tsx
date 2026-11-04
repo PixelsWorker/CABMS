@@ -46,8 +46,19 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
     const currentViewEpoch=viewEpoch.current;
     const currentAuthEpoch=authEpoch.current;
     const n=++epoch.current;
+    let token:string;
     try {
-      const token=await session.token();
+      token=await session.token();
+    } catch {
+      if(n===epoch.current && viewEpoch.current===currentViewEpoch && session.workspaceId===activeWorkspace){
+        authEpoch.current++;
+        epoch.current++;
+        setAppointments([]);
+        setMessage('Session could not be verified; sign in again.');
+      }
+      return;
+    }
+    try {
       const rows=await request<DemoAppointment[]>(activeWorkspace,token,'');
       if(n===epoch.current && viewEpoch.current===currentViewEpoch && session.workspaceId===activeWorkspace && authEpoch.current===currentAuthEpoch){
         environmentDisabledRef.current=false;
@@ -146,25 +157,7 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
       }
     } catch (error: unknown) {
       if(mutationViewEpoch!==viewEpoch.current || session.workspaceId!==activeWorkspace)return;
-      if(mutationEpoch!==epoch.current){
-        const definite=error instanceof AppointmentApiError && (
-          [400,401,404,409,422].includes(error.status) ||
-          (error.status===403 && error.code==='ACCESS_DENIED'));
-        if(!definite){
-          setLocked(true);
-          setMessage('Save outcome is unknown. Do not retry until the outcome is independently verified; refresh alone may not establish it.');
-          return;
-        }
-      }
       if (error instanceof AppointmentApiError) {
-        if (error.status === 409) {
-          setMessage(`Save rejected: conflict or stale appointment version. (${error.message})`);
-          return;
-        }
-        if (error.status === 422 || error.status === 400) {
-          setMessage(`Save rejected: invalid appointment parameters. (${error.message})`);
-          return;
-        }
         if (error.status === 401) {
           authEpoch.current++;
           epoch.current++;
@@ -189,6 +182,24 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
           environmentDisabledRef.current=true;
           setIsEnvironmentDisabled(true);
           setMessage('Synthetic scheduling is disabled in this environment.');
+          return;
+        }
+      }
+      if(mutationEpoch!==epoch.current){
+        const definite=error instanceof AppointmentApiError && [400,409,422].includes(error.status);
+        if(!definite){
+          setLocked(true);
+          setMessage('Save outcome is unknown. Do not retry until the outcome is independently verified; refresh alone may not establish it.');
+          return;
+        }
+      }
+      if (error instanceof AppointmentApiError) {
+        if (error.status === 409) {
+          setMessage(`Save rejected: conflict or stale appointment version. (${error.message})`);
+          return;
+        }
+        if (error.status === 422 || error.status === 400) {
+          setMessage(`Save rejected: invalid appointment parameters. (${error.message})`);
           return;
         }
       }

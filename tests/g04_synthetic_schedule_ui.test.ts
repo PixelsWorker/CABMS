@@ -644,3 +644,128 @@ test('pending appointment read resolving after mutation authorization failure ca
 
   await act(async () => root.unmount());
 });
+
+test('cached appointments are cleared and authorization invalidated when refresh-token acquisition fails', async t => {
+  const db = createLocalD1Database() as LocalD1Database; t.after(() => db.getSqliteHandle().close());
+  await runLocalMigrations(db, { disposableTest: true }); await installG01TestAuthFixtures(db);
+  const fixture = await createFirebaseFixture(), worker = createWorker(createAuthenticationService(fixture.transport));
+  const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }, actor = G01_TEST_AUTH.officeStaff;
+  const token = await fixture.token(actor.uid, actor.email);
+  const direct = (path: string, body: unknown) => worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env);
+  const e = await (await direct('enquiries', { customer_name: 'Token Fail Staff', service: 'Solar Inverter' })).json() as { id: string };
+  const job = await (await direct(`enquiries/${e.id}/conversion`, {})).json() as { id: string };
+  await direct('demo-appointments', { job_id: job.id, starts_at: '2026-11-05T01:00:00.000Z', ends_at: '2026-11-05T02:00:00.000Z' });
+
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' }), keys = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const saved = new Map(keys.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of keys) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  t.after(() => { mock.restoreAll(); resetApiBase(); dom.window.close(); for (const k of keys) { const d = saved.get(k); if (d) Object.defineProperty(globalThis, k, d); else delete (globalThis as any)[k]; } });
+
+  let tokenFails = false;
+  const session: Session = {
+    profile: { user: { id: actor.userId, email: actor.email, display_name: actor.name }, memberships: [{ workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' }] },
+    workspaceId: 'solarcell',
+    selectWorkspace: () => {},
+    token: async () => {
+      if (tokenFails) throw new Error('Token verification failed: session expired');
+      return token;
+    },
+    login: async () => {}, logout: async () => {}, invalidate: () => {}, loading: false, error: ''
+  };
+
+  mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    return worker.fetch(new Request(input, init), env);
+  });
+  setApiBase('http://localhost');
+  const container = dom.window.document.getElementById('root')!, root = createRoot(container);
+  const flush = async () => act(async () => { await new Promise(r => setTimeout(r, 40)); });
+
+  // Initial render: appointment loads and is displayed
+  await act(async () => { root.render(React.createElement(SessionContext.Provider, { value: session }, React.createElement(CabmsProvider, null, React.createElement(ScheduleView)))); });
+  await flush();
+
+  assert.equal(container.querySelectorAll('li').length, 1, 'initial appointment is rendered');
+
+  // Trigger token failure on refresh
+  tokenFails = true;
+  const refreshBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Refresh appointments');
+  assert.ok(refreshBtn, 'refresh button exists');
+  await act(async () => { refreshBtn!.click(); });
+  await flush();
+
+  // Cached rows are cleared and authorization failure is reported
+  assert.equal(container.querySelectorAll('li').length, 0, 'cached appointments are cleared when refresh token acquisition fails');
+  assert.match(container.textContent!, /Session could not be verified; sign in again\./, 'session expired / verification message is displayed');
+
+  await act(async () => root.unmount());
+});
+
+test('in-flight save returning 403 PERMISSION_CHANGED during role refresh clears appointments and locks the view as uncertain', async t => {
+  const db = createLocalD1Database() as LocalD1Database; t.after(() => db.getSqliteHandle().close());
+  await runLocalMigrations(db, { disposableTest: true }); await installG01TestAuthFixtures(db);
+  const fixture = await createFirebaseFixture(), worker = createWorker(createAuthenticationService(fixture.transport));
+  const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }, actor = G01_TEST_AUTH.officeStaff;
+  const token = await fixture.token(actor.uid, actor.email);
+  const direct = (path: string, body: unknown) => worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env);
+  const e = await (await direct('enquiries', { customer_name: 'Race Staff 2', service: 'Solar Inverter' })).json() as { id: string };
+  const job = await (await direct(`enquiries/${e.id}/conversion`, {})).json() as { id: string };
+  await direct('demo-appointments', { job_id: job.id, starts_at: '2026-11-05T01:00:00.000Z', ends_at: '2026-11-05T02:00:00.000Z' });
+
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' }), keys = ['window', 'document', 'navigator', 'HTMLElement', 'HTMLInputElement', 'IS_REACT_ACT_ENVIRONMENT'];
+  const saved = new Map(keys.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  for (const k of keys) Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as any)[k] });
+  t.after(() => { mock.restoreAll(); resetApiBase(); dom.window.close(); for (const k of keys) { const d = saved.get(k); if (d) Object.defineProperty(globalThis, k, d); else delete (globalThis as any)[k]; } });
+
+  let interceptPatch = false;
+  let resolvePatch: ((res: Response) => void) | null = null;
+  let observedGetAfterRoleUpdate = false;
+  const session: Session = { profile: { user: { id: actor.userId, email: actor.email, display_name: actor.name }, memberships: [{ workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' }] }, workspaceId: 'solarcell', selectWorkspace: () => {}, token: async () => token, login: async () => {}, logout: async () => {}, invalidate: () => {}, loading: false, error: '' };
+  const updatedSession: Session = { ...session, profile: { ...session.profile!, memberships: [{ workspace_id: 'solarcell', name: 'Solarcell', role: 'owner_admin' }] } };
+
+  mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (interceptPatch && request.method === 'PATCH' && url.pathname.includes('/demo-appointments/')) {
+      interceptPatch = false;
+      // Simulate same-user role update in the UI while PATCH is in flight
+      root.render(React.createElement(SessionContext.Provider, { value: updatedSession }, React.createElement(CabmsProvider, null, React.createElement(ScheduleView))));
+      // Hold the PATCH response until the GET caused by the role update is observed, ensuring epoch advances first
+      return new Promise<Response>(resolve => {
+        resolvePatch = resolve;
+      });
+    }
+    if (resolvePatch && request.method === 'GET' && url.pathname.endsWith('/demo-appointments')) {
+      observedGetAfterRoleUpdate = true;
+      const resolver = resolvePatch;
+      resolvePatch = null;
+      // Role-triggered refresh has advanced epoch; now release PATCH with 403 PERMISSION_CHANGED
+      resolver(new Response(JSON.stringify({ error: 'permission_changed', code: 'PERMISSION_CHANGED', message: 'Permission was revoked.' }), { status: 403, headers: { 'Content-Type': 'application/json' } }));
+    }
+    return worker.fetch(request, env);
+  });
+  setApiBase('http://localhost');
+  const container = dom.window.document.getElementById('root')!, root = createRoot(container);
+  const flush = async () => act(async () => { await new Promise(r => setTimeout(r, 40)); });
+
+  // Initial render: loads appointment
+  await act(async () => { root.render(React.createElement(SessionContext.Provider, { value: session }, React.createElement(CabmsProvider, null, React.createElement(ScheduleView)))); });
+  await flush();
+
+  assert.equal(container.querySelectorAll('li').length, 1, 'initial appointment is rendered');
+
+  // Trigger mutation with in-flight role update simulation
+  interceptPatch = true;
+  const cancelBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Cancel appointment');
+  assert.ok(cancelBtn, 'cancel appointment button exists');
+  await act(async () => { cancelBtn!.click(); });
+  await flush();
+
+  // Assert: role update triggered refresh before PATCH resolved
+  assert.ok(observedGetAfterRoleUpdate, 'observed GET initiated by role update before PATCH resolved');
+  // Assert: cached appointments are CLEARED (NOT left visible), and uncertain lock is engaged
+  assert.equal(container.querySelectorAll('li').length, 0, 'appointments list is cleared on 403 PERMISSION_CHANGED even when epoch was advanced');
+  assert.match(container.textContent!, /Save outcome is unknown/, 'uncertain outcome notice is displayed');
+  assert.match(container.textContent!, /Changes are locked/, 'uncertain outcome lock is engaged');
+
+  await act(async () => root.unmount());
+});

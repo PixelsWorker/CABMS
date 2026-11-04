@@ -59,6 +59,26 @@ test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results'
     invalid.alarmSchedule[0][field] = value;
     assert.equal(validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false, field);
   }
+  for (const outcome of ['Pass', 'Fail'] as const) {
+    const validOutcome = structuredClone(valid);
+    validOutcome.alarmSchedule[0].passFail = outcome;
+    validOutcome.alarmSchedule[0].buttonTestPass = outcome === 'Pass';
+    validOutcome.alarmSchedule[0].interconnectionPass = outcome === 'Pass';
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(validOutcome), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+      true,
+      `${outcome} is a valid recorded test outcome`,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects unsupported synthetic smoke alarm power sources', () => {
+  const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  invalid.alarmSchedule[0].powerSource = 'Unknown mains source';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
 });
 
 test('validateSignedSnapshot rejects malformed synthetic smoke alarm schedule field types', () => {

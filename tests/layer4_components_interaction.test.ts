@@ -204,19 +204,42 @@ test('LAYER 4: Components — JobsView renders work order list, filter controls,
   assert.ok(html.includes('JOB-2026-101'));
 });
 
-test('LAYER 4: Components — ComplianceFormsView renders JSA, Electrical, Smoke Alarm, TCA1, TCA2 tabs', () => {
-  const html = renderToString(
-    React.createElement(CabmsProvider, null, React.createElement(ComplianceFormsView))
-  );
-  assert.ok(html.includes('Simulation only.'));
-  assert.ok(html.includes('not legally signed certificates or persistent job evidence'));
-  assert.ok(html.includes('Required preview forms awaiting sign-off:'));
-  assert.ok(html.includes('Job Safety Analysis (JSA)'));
-  assert.ok(html.includes('TCA1 Cabling'));
-  assert.ok(html.includes('TCA2 Defect Notice'));
-  assert.ok(html.includes('Apply Technician Preview Sign-off') || html.includes('Preview Sign-off Applied'));
-  assert.ok(html.includes('Site Induction Completed'));
-  assert.ok(html.includes('Competencies Verified'));
+test('LAYER 4: Components — ComplianceFormsView lists only pending required preview forms', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container) => {
+    let id = '';
+    await act(async () => {
+      id = ctx.createJob({ brandId: 'solarcell', title: 'Synthetic pending form', jobType: 'JT-001', formsRequired: ['JSA'] }).id;
+      ctx.setSelectedJobId(id);
+    });
+    const html = container.textContent || '';
+    assert.ok(html.includes('Simulation only.'));
+    assert.ok(html.includes('not legally signed certificates or persistent job evidence'));
+    assert.ok(html.includes('Required preview forms awaiting sign-off: JSA'), 'explicit required form name is shown');
+    assert.ok(!html.includes('None listed as pending'));
+    assert.ok(!container.querySelector('[role="alert"]'), 'unsigned required form does not show an invalid-snapshot alert');
+    assert.ok(html.includes('Job Safety Analysis (JSA)'));
+    assert.ok(html.includes('TCA1 Cabling'));
+    assert.ok(html.includes('TCA2 Defect Notice'));
+    assert.ok(html.includes('Apply Technician Preview Sign-off') || html.includes('Preview Sign-off Applied'));
+    assert.ok(html.includes('Site Induction Completed'));
+    assert.ok(html.includes('Competencies Verified'));
+  });
+});
+
+test('LAYER 4: ComplianceFormsView alerts when a required signed preview snapshot is invalid', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+    const id = 'JOB-2026-101';
+    await act(async () => { ctx.signOffJsa(id); });
+    const signed = ctx.getOrCreateJsa(id);
+    assert.equal(signed.signedOff, true);
+    signed.fullSnapshot = '{ malformed preview snapshot';
+    await act(async () => {
+      const tab = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Electrical'))!;
+      tab.click();
+    });
+    const alert = container.querySelector('[role="alert"]');
+    assert.ok(alert?.textContent?.includes('JSA'), 'invalid signed snapshot is identified for review');
+  });
 });
 
 test('LAYER 4: Components — ComplianceFormsView renders hazard matrix and PPE checklist in JSA', () => {

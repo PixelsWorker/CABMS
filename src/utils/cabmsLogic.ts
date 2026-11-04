@@ -829,6 +829,11 @@ export function validateSignedSnapshot(
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot contains missing or invalid alarm schedule fields.' };
     }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      !['240V Hardwired with Battery Backup', '10-Year Sealed Lithium', 'Replaceable 9V Alkaline'].includes(alarm.powerSource as string)
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported alarm power source.' };
+    }
     if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
       ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
         .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||

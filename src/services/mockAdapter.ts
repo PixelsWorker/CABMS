@@ -747,11 +747,12 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
+    const timestamp = serializeBusinessInstant(this.clock());
     const draftRev: TemplateRevision = {
       version: `${tpl.currentVersion}-draft`,
       status: 'DRAFT',
       content: newContent,
-      updatedAt: serializeBusinessInstant(this.clock()),
+      updatedAt: timestamp,
       updatedBy: 'SUPER_ADMIN',
     };
     tpl.content = newContent;
@@ -768,9 +769,10 @@ export class MockDataAdapter implements CabmsDataAdapter {
       throw new ValidationError('Only a draft revision can be submitted for review.');
     }
 
+    const timestamp = serializeBusinessInstant(this.clock());
     tpl.activeStatus = 'REVIEW';
     tpl.revisions = tpl.revisions.map((r, idx) =>
-      idx === 0 ? { ...r, status: 'REVIEW', updatedAt: serializeBusinessInstant(this.clock()) } : r
+      idx === 0 ? { ...r, status: 'REVIEW', updatedAt: timestamp } : r
     );
     return structuredClone(tpl);
   }

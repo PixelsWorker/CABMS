@@ -3250,11 +3250,21 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
     }
+    const targetTemplate = templates.find(t => t.id === templateId);
+    if (!targetTemplate) {
+      showDemoNotification(`Template ${templateId} not found.`, 'error');
+      return;
+    }
+    if (targetTemplate.revisions[0]?.status !== 'DRAFT') {
+      showDemoNotification('DENIED: Only a draft revision can be submitted for review.', 'error');
+      return;
+    }
+    const timestamp = serializeBusinessInstant(demoClock);
     setTemplates(prev =>
       prev.map(t => {
         if (t.id === templateId) {
           const revs = t.revisions.map((r, idx) =>
-            idx === 0 ? { ...r, status: 'REVIEW' as const, updatedAt: serializeBusinessInstant(demoClock) } : r
+            idx === 0 ? { ...r, status: 'REVIEW' as const, updatedAt: timestamp } : r
           );
           return {
             ...t,

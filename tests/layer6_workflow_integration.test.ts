@@ -4047,3 +4047,58 @@ test('G03 quote issuance selects a newly published TERMS revision on the context
     assert.equal(issued.termsContentSnapshot, 'Updated published terms v2');
   });
 });
+
+test('G03 mock adapter: clock failure before review mutation leaves template and revisions unchanged', async () => {
+  let shouldFail = false;
+  const adapter = new MockDataAdapter(() => {
+    if (shouldFail) throw new Error('Simulated clock hardware error');
+    return INITIAL_BUSINESS_CLOCK;
+  });
+  await adapter.resetToBaseline();
+  const terms = (await adapter.getTemplates()).find(t => t.type === 'TERMS')!;
+  await adapter.createTemplateDraftRevision(terms.id, 'Draft for review');
+  const templateBefore = structuredClone((await adapter.getTemplates()).find(t => t.id === terms.id)!);
+  assert.equal(templateBefore.activeStatus, 'DRAFT');
+  assert.equal(templateBefore.revisions[0].status, 'DRAFT');
+
+  // Trigger failing clock
+  shouldFail = true;
+
+  await assert.rejects(
+    async () => { await adapter.submitTemplateForReview(terms.id); },
+    /Simulated clock hardware error/
+  );
+
+  const templateAfter = (await adapter.getTemplates()).find(t => t.id === terms.id)!;
+  assert.deepEqual(templateAfter, templateBefore, 'template and its revisions remained completely untouched');
+});
+
+test('G03 context path: submitTemplateForReview rejects submission without draft and preserves published terms', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const termsBefore = structuredClone(ctx.templates.find(t => t.type === 'TERMS')!);
+    assert.equal(termsBefore.activeStatus, 'PUBLISHED');
+    assert.equal(termsBefore.revisions[0].status, 'PUBLISHED');
+
+    // Attempt to submit published terms for review without creating a draft
+    await act(async () => {
+      ctx.submitTemplateForReview(termsBefore.id);
+    });
+
+    // Verify template was not modified
+    const termsAfter = ctx.templates.find(t => t.id === termsBefore.id)!;
+    assert.equal(termsAfter.activeStatus, 'PUBLISHED', 'activeStatus must not be mutated to REVIEW');
+    assert.equal(termsAfter.revisions[0].status, 'PUBLISHED', 'revision status must not be mutated to REVIEW');
+    assert.deepEqual(termsAfter, termsBefore, 'template remains identical');
+
+    // Verify quote preparation still succeeds and snapshots published terms
+    let issued!: Quote;
+    await act(async () => {
+      issued = ctx.prepareQuoteForJob('JOB-2026-101', 'Subsequent quote after denied review submission', [
+        { id: 'item-1', description: 'Item 1', quantity: 1, unitPrice: 200, total: 200 },
+      ]);
+    });
+    assert.equal(issued.termsVersion, termsBefore.currentVersion);
+    assert.equal(issued.termsContentSnapshot, termsBefore.content);
+  });
+});

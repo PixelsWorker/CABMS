@@ -290,6 +290,14 @@ test('validateSignedSnapshot rejects unsupported synthetic electrical test resul
   }
 });
 
+test('validateSignedSnapshot rejects electrical snapshot with empty testedWorkItems', () => {
+  const invalid = structuredClone(INITIAL_ELECTRICAL_CERT);
+  invalid.testedWorkItems = [];
+  const res = validateSignedSnapshot(JSON.stringify(invalid), invalid.jobReference, 'ELECTRICAL');
+  assert.equal(res.valid, false);
+  assert.equal(res.error, 'ELECTRICAL snapshot must contain at least one tested work item.');
+});
+
 test('validateSignedSnapshot rejects smoke alarm snapshot with empty alarmSchedule', () => {
   const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
   invalid.alarmSchedule = [];

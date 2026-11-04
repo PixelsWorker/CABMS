@@ -853,6 +853,9 @@ export function validateSignedSnapshot(
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot cannot record Pass status when recorded tests failed.' };
     }
+    if (formType === 'ELECTRICAL' && (!Array.isArray(parsed.testedWorkItems) || parsed.testedWorkItems.length === 0)) {
+      return { valid: false, error: 'ELECTRICAL snapshot must contain at least one tested work item.' };
+    }
     if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
       ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
         .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||

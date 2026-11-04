@@ -153,6 +153,16 @@ test('independent appointment loading renders appointments even when jobs list q
  assert.match(container.textContent!,/scheduled - version 1/);
  const actionButtons=Array.from(container.querySelectorAll('button')).filter(b=>b.textContent==='Reschedule using UTC fields' || b.textContent==='Cancel appointment');
  assert.equal(actionButtons.length,2,'reschedule and cancel actions remain available when jobs request fails');
+ const inputs=Array.from(container.querySelectorAll('input'));
+ assert.equal(inputs.length,2,'UTC start and end inputs remain available when jobs request fails');
+ assert.equal(container.querySelector('form'),null,'creation form remains hidden when jobs request fails');
+ const startProps=Object.keys(inputs[0]!).find(key=>key.startsWith('__reactProps'))!;
+ const endProps=Object.keys(inputs[1]!).find(key=>key.startsWith('__reactProps'))!;
+ await act(async()=>{(inputs[0] as any)[startProps].onChange({target:{value:'2026-11-06T05:00:00.000Z'}});});
+ await act(async()=>{(inputs[1] as any)[endProps].onChange({target:{value:'2026-11-06T06:00:00.000Z'}});});
+ await act(async()=>{actionButtons.find(b=>b.textContent==='Reschedule using UTC fields')!.click();});await flush();
+ assert.match(container.textContent!,/scheduled - version 2/);
+ assert.match(container.textContent!,/2026-11-06T05:00:00.000Z to 2026-11-06T06:00:00.000Z/);
  await act(async()=>root.unmount());
 });
 

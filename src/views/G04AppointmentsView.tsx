@@ -99,9 +99,11 @@ export function G04AppointmentsView() {
     <p>Local demo records only. Technician assignment, calendar sync and email are not connected. Times must be UTC, for example 2026-11-05T01:00:00.000Z.</p>
     {demoDataMessage(data) && <p role="alert">{demoDataMessage(data)}</p>}{message && <p role="status">{message}</p>}
     {locked && <p role="alert">Changes are locked in this view because the prior outcome may be uncertain. Navigating away clears this lock; do not retry until the outcome is verified.</p>}
+    {!isEnvironmentDisabled && eligible && <div className="space-y-2">
+      <label>UTC start <input value={start} required onChange={e=>setStart(e.target.value)} /></label><label>UTC end <input value={end} required onChange={e=>setEnd(e.target.value)} /></label>
+    </div>}
     {!isEnvironmentDisabled && allowed && <form onSubmit={e=>{e.preventDefault();void mutate('','POST',{job_id:jobId,starts_at:start,ends_at:end});}} className="space-y-2">
       <label>Saved synthetic job <select value={jobId} required onChange={e=>setJobId(e.target.value)}><option value="">Select job</option>{data.jobs.map(j=><option key={j.id} value={j.id}>{j.title} - {j.id}</option>)}</select></label>
-      <label>UTC start <input value={start} required onChange={e=>setStart(e.target.value)} /></label><label>UTC end <input value={end} required onChange={e=>setEnd(e.target.value)} /></label>
       <button type="submit" disabled={busy||locked}>Create synthetic appointment</button>
     </form>}
     {!isEnvironmentDisabled && eligible && <button type="button" disabled={busy} onClick={()=>void refresh()}>Refresh appointments</button>}

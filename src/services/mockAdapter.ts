@@ -477,12 +477,14 @@ export class MockDataAdapter implements CabmsDataAdapter {
       throw new ForbiddenError('Smoke Alarm Certificate is already signed off. Snapshot is immutable.');
     }
 
-    existing.alarmSchedule = (existing.alarmSchedule || []).map(alarm => ({
-      ...alarm,
-      complianceStatusProvisional: (alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false)
-        ? 'Fail'
-        : alarm.complianceStatusProvisional,
-    }));
+    existing.alarmSchedule = (existing.alarmSchedule || []).map(alarm => {
+      const testFailed = alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false;
+      return {
+        ...alarm,
+        passFail: testFailed ? 'Fail' : alarm.passFail,
+        complianceStatusProvisional: testFailed ? 'Fail' : alarm.complianceStatusProvisional,
+      };
+    });
     const hasFailedAlarm = existing.alarmSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
     if (hasFailedAlarm) {
       existing.limitationsAndRentalNotes = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';

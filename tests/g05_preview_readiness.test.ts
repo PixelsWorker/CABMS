@@ -101,13 +101,16 @@ test('mock adapter smoke alarm sign-off updates limitations notice on failure an
   form.signedByTechName = undefined;
   form.signedTimestamp = undefined;
   form.fullSnapshot = undefined;
-  form.alarmSchedule[0].passFail = 'Fail';
+  form.alarmSchedule[0].passFail = 'Pass';
+  form.alarmSchedule[0].buttonTestPass = false;
+  form.alarmSchedule[0].interconnectionPass = true;
   await adapter.saveSmokeAlarmForm('JOB-2026-102', form);
   const signed = await adapter.signOffSmokeAlarmForm('JOB-2026-102', {
     signed_by_name: 'Dave Miller',
     signer_role: 'technician',
     signed_timestamp: '2026-11-04T10:00:00.000Z',
   });
-  assert.equal(signed.alarmSchedule[0].complianceStatusProvisional, 'Fail');
+  assert.equal(signed.alarmSchedule[0].passFail, 'Fail', 'normalizes passFail to Fail when buttonTestPass fails');
+  assert.equal(signed.alarmSchedule[0].complianceStatusProvisional, 'Fail', 'normalizes complianceStatusProvisional to Fail');
   assert.match(signed.limitationsAndRentalNotes, /NON-COMPLIANCE NOTICE/);
 });

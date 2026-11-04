@@ -2008,12 +2008,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
-    const currentSchedule = (current.alarmSchedule || []).map(alarm => ({
-      ...alarm,
-      complianceStatusProvisional: (alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false)
-        ? ('Fail' as const)
-        : alarm.complianceStatusProvisional,
-    }));
+    const currentSchedule = (current.alarmSchedule || []).map(alarm => {
+      const testFailed = alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false;
+      return {
+        ...alarm,
+        passFail: testFailed ? ('Fail' as const) : alarm.passFail,
+        complianceStatusProvisional: testFailed ? ('Fail' as const) : alarm.complianceStatusProvisional,
+      };
+    });
 
     const hasFailedAlarm = currentSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
     let notes = current.limitationsAndRentalNotes;

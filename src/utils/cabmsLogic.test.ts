@@ -107,6 +107,44 @@ test('validateSignedSnapshot rejects malformed synthetic electrical work item ty
   }
 });
 
+test('validateSignedSnapshot rejects unsupported synthetic smoke alarm compliance status', () => {
+  const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  invalid.alarmSchedule[0].complianceStatusProvisional = 'Unknown';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects unsupported synthetic electrical test result values', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  for (const field of ['polarityTest', 'earthContinuity', 'workResult'] as const) {
+    const invalid = structuredClone(valid);
+    invalid.testedWorkItems[0][field] = 'Unknown';
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(invalid), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+      false,
+      field,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects incomplete or blank nested synthetic JSA step observations', () => {
+  const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
+  const blankStep = structuredClone(valid);
+  blankStep.steps[0].taskStep = '   ';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(blankStep), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+  const invalidRisk = structuredClone(valid);
+  (invalidRisk.steps[0] as any).initialRisk = 'UNKNOWN';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidRisk), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+});
+
 test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {
   const validElectrical = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
   const invalidCases: [string | undefined, string, string, string][] = [

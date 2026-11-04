@@ -834,12 +834,45 @@ export function validateSignedSnapshot(
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported alarm power source.' };
     }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      !['Pass', 'Fail', 'Provisional'].includes(alarm.complianceStatusProvisional as string)
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported compliance status.' };
+    }
     if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
       ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
         .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||
       (typeof item.rcdTripTimeMs !== 'number' && typeof item.rcdTripTimeMs !== 'string')
     )) {
       return { valid: false, error: 'ELECTRICAL snapshot contains invalid tested work item fields.' };
+    }
+    if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
+      !['Pass', 'Fail'].includes(item.polarityTest as string) ||
+      !['Pass', 'Fail'].includes(item.earthContinuity as string) ||
+      !['Pass', 'Fail'].includes(item.workResult as string)
+    )) {
+      return { valid: false, error: 'ELECTRICAL snapshot contains an unsupported test result value.' };
+    }
+    if (formType === 'JSA') {
+      if (parsed.steps.some((step: Record<string, unknown>) =>
+        ['taskStep', 'hazards', 'controls', 'responsibleRole'].some(field => typeof step[field] !== 'string' || (step[field] as string).trim() === '') ||
+        !['L', 'M', 'H', 'E'].includes(step.initialRisk as string) ||
+        !['L', 'M', 'H', 'E'].includes(step.residualRisk as string)
+      )) {
+        return { valid: false, error: 'JSA snapshot contains invalid or incomplete step observations.' };
+      }
+      if (parsed.ppeChecklist.some((item: Record<string, unknown>) =>
+        typeof item.item !== 'string' || item.item.trim() === '' ||
+        !['Yes', 'No', 'N/A'].includes(item.status as string)
+      )) {
+        return { valid: false, error: 'JSA snapshot contains invalid PPE checklist observations.' };
+      }
+      if (parsed.isolationsAndPermits.some((item: Record<string, unknown>) =>
+        typeof item.item !== 'string' || item.item.trim() === '' ||
+        !['Yes', 'No', 'N/A'].includes(item.required as string)
+      )) {
+        return { valid: false, error: 'JSA snapshot contains invalid isolations and permits observations.' };
+      }
     }
     return { valid: true, parsedSnapshot: parsed };
   } catch (e: any) {

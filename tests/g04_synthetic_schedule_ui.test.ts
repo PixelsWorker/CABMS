@@ -208,6 +208,7 @@ test('production environment 404 displays disabled message and suppresses appoin
 
  assert.match(container.textContent!,/Synthetic scheduling is disabled in this environment/);
  assert.equal(container.querySelector('form'),null,'creation form is not displayed in production environment');
+ assert.match(container.textContent!,/Field Service Dispatch & Calendar Scheduling/,'production session retains simulated dispatch calendar view');
  await act(async()=>root.unmount());
 });
 
@@ -248,5 +249,31 @@ test('revocation or 403 access denial clears cached appointments list',async t=>
  assert.equal(container.querySelectorAll('li').length, 0, 'appointments list is empty on 403 access denial');
  assert.doesNotMatch(container.textContent!,/scheduled - version 1/,'scheduled appointment record is removed on 403 access denial');
 
+ await act(async()=>root.unmount());
+});
+
+test('authenticated technician session routes to simulated schedule view with technician scoping',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport));
+ const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'},actor=G01_TEST_AUTH.technician;
+ const token=await fixture.token(actor.uid,actor.email);
+
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'}),keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ for(const k of keys)Object.defineProperty(globalThis,k,{configurable:true,writable:true,value:k==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[k]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const k of keys){const d=saved.get(k);if(d)Object.defineProperty(globalThis,k,d);else delete (globalThis as any)[k];}});
+
+ mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+  return worker.fetch(new Request(input,init),env);
+ });setApiBase('http://localhost');
+
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'technician'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ assert.match(container.textContent!,/Field Service Dispatch & Calendar Scheduling/);
+ assert.doesNotMatch(container.textContent!,/Synthetic demo appointments/);
  await act(async()=>root.unmount());
 });

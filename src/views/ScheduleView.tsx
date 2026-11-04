@@ -29,7 +29,18 @@ import { Job } from '../types/cabms.ts';
 
 export const ScheduleView: React.FC = () => {
   const session = useG01Session();
-  return session ? <G04AppointmentsView key={JSON.stringify([session.workspaceId, session.profile?.user.id])} /> : <SimulatedScheduleView />;
+  const workspace = session?.workspaceId;
+  const role = session?.profile?.memberships.find(m => m.workspace_id === workspace)?.role;
+  const eligible = !!role && role !== 'technician';
+
+  return session && eligible ? (
+    <G04AppointmentsView
+      key={JSON.stringify([session.workspaceId, session.profile?.user.id])}
+      fallback={<SimulatedScheduleView />}
+    />
+  ) : (
+    <SimulatedScheduleView />
+  );
 };
 
 const SimulatedScheduleView: React.FC = () => {

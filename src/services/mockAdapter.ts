@@ -486,9 +486,13 @@ export class MockDataAdapter implements CabmsDataAdapter {
       };
     });
     const hasFailedAlarm = existing.alarmSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
-    if (hasFailedAlarm) {
-      existing.limitationsAndRentalNotes = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    const failureNotice = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    const existingNotes = (existing.limitationsAndRentalNotes || '').trim();
+    let notes = existingNotes;
+    if (hasFailedAlarm && !existingNotes.includes(failureNotice)) {
+      notes = existingNotes ? `${existingNotes} • ${failureNotice}` : failureNotice;
     }
+    existing.limitationsAndRentalNotes = notes;
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
     existing.signedTimestamp = signer.signed_timestamp;

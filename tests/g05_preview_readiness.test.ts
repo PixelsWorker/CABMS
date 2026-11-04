@@ -91,7 +91,7 @@ test('preview readiness validates signed snapshots recording legitimate failed i
   assert.deepEqual(getInvalidPreviewForms(['ELECTRICAL'], { ELECTRICAL: true }, { ELECTRICAL: elecValid }), []);
 });
 
-test('mock adapter smoke alarm sign-off updates limitations notice on failure and preserves non-compliance evidence', async () => {
+test('mock adapter smoke alarm sign-off updates limitations notice on failure and preserves existing notes and non-compliance evidence', async () => {
   const { MockDataAdapter } = await import('../src/services/mockAdapter.ts');
   const adapter = new MockDataAdapter();
   await adapter.resetToBaseline();
@@ -101,6 +101,7 @@ test('mock adapter smoke alarm sign-off updates limitations notice on failure an
   form.signedByTechName = undefined;
   form.signedTimestamp = undefined;
   form.fullSnapshot = undefined;
+  form.limitationsAndRentalNotes = 'Bedroom 3 ceiling height requires scaffold';
   form.alarmSchedule[0].passFail = 'Pass';
   form.alarmSchedule[0].buttonTestPass = false;
   form.alarmSchedule[0].interconnectionPass = true;
@@ -112,5 +113,5 @@ test('mock adapter smoke alarm sign-off updates limitations notice on failure an
   });
   assert.equal(signed.alarmSchedule[0].passFail, 'Fail', 'normalizes passFail to Fail when buttonTestPass fails');
   assert.equal(signed.alarmSchedule[0].complianceStatusProvisional, 'Fail', 'normalizes complianceStatusProvisional to Fail');
-  assert.match(signed.limitationsAndRentalNotes, /NON-COMPLIANCE NOTICE/);
+  assert.match(signed.limitationsAndRentalNotes, /^Bedroom 3 ceiling height requires scaffold • NON-COMPLIANCE NOTICE/);
 });

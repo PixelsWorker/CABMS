@@ -2018,9 +2018,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     const hasFailedAlarm = currentSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
-    let notes = current.limitationsAndRentalNotes;
-    if (hasFailedAlarm) {
-      notes = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    const failureNotice = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    let notes = (current.limitationsAndRentalNotes || '').trim();
+    if (hasFailedAlarm && !notes.includes(failureNotice)) {
+      notes = notes ? `${notes} • ${failureNotice}` : failureNotice;
     }
 
     const finalized: SmokeAlarmCertData = {

@@ -50,12 +50,15 @@ test('authenticated synthetic scheduling creates, reschedules with new times and
  await act(async()=>{(start as any)[startProps].onChange({target:{value:'2026-11-05T01:00:00.000Z'}});});
  failAppointmentRefresh=true;
  await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();
- assert.match(container.textContent!,/Unable to load synthetic appointments/);
+ assert.match(container.textContent!,/Saved\. \(List refresh failed; displaying confirmed save\.\)/);
+ assert.match(container.textContent!,new RegExp(job.id),'confirmed appointment remains visible when follow-up read fails');
+ assert.match(container.textContent!,/scheduled - version 1/,'confirmed status remains visible when follow-up read fails');
  assert.doesNotMatch(container.textContent!,/outcome is unknown/);
  assert.equal(Array.from(container.querySelectorAll('button')).some(button=>button.disabled),false,'confirmed save remains unlocked when only the follow-up read fails');
  failAppointmentRefresh=false;
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(button=>button.textContent==='Refresh appointments')!.click();});await flush();
  assert.match(container.textContent!,new RegExp(job.id));assert.match(container.textContent!,/scheduled - version 1/);
+ assert.doesNotMatch(container.textContent!,/List refresh failed/);
  const click=async(label:string)=>{await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent===label)!.click();});await flush();};
  // Reschedule regression: change actual UTC start and end times and assert persisted and displayed values
  await act(async()=>{(start as any)[startProps].onChange({target:{value:'2026-11-06T03:00:00.000Z'}});});
@@ -87,10 +90,11 @@ test('definite 409 conflict and 422 rejection do not lock the UI as uncertain',a
  t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const k of keys){const d=saved.get(k);if(d)Object.defineProperty(globalThis,k,d);else delete (globalThis as any)[k];}});
 
  let injectStatus:number|null=null;
+ let injectDetail:string='Synthetic simulated rejection';
  mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
   const request=new Request(input,init);
   if(injectStatus && request.method==='POST' && new URL(request.url).pathname.endsWith('/demo-appointments')){
-   return Response.json({detail:'Synthetic simulated rejection'},{status:injectStatus});
+   return Response.json({detail:injectDetail},{status:injectStatus});
   }
   return worker.fetch(request,env);
  });setApiBase('http://localhost');
@@ -116,6 +120,21 @@ test('definite 409 conflict and 422 rejection do not lock the UI as uncertain',a
  assert.match(container.textContent!,/Save rejected: invalid appointment parameters/);
  assert.doesNotMatch(container.textContent!,/Changes are locked/);
  assert.equal(Array.from(container.querySelectorAll('button')).some(b=>b.disabled),false,'form buttons remain unlocked on 422 rejection');
+
+ // 403 permission denial (pre-write)
+ injectStatus=403;
+ injectDetail='You do not have access to this workspace';
+ await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();
+ assert.match(container.textContent!,/Save rejected: permission denied/);
+ assert.doesNotMatch(container.textContent!,/Changes are locked/);
+ assert.equal(Array.from(container.querySelectorAll('button')).some(b=>b.disabled),false,'form buttons remain unlocked on 403 rejection');
+
+ // 403 post-write Permission changed locks the UI because write outcome is uncertain
+ injectStatus=403;
+ injectDetail='Permission changed';
+ await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();
+ assert.match(container.textContent!,/Save outcome is unknown/);
+ assert.match(container.textContent!,/Changes are locked/);
 
  await act(async()=>root.unmount());
 });
@@ -189,5 +208,45 @@ test('production environment 404 displays disabled message and suppresses appoin
 
  assert.match(container.textContent!,/Synthetic scheduling is disabled in this environment/);
  assert.equal(container.querySelector('form'),null,'creation form is not displayed in production environment');
+ await act(async()=>root.unmount());
+});
+
+test('revocation or 403 access denial clears cached appointments list',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport));
+ const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'},actor=G01_TEST_AUTH.officeStaff;
+ const token=await fixture.token(actor.uid,actor.email);
+ const direct=(path:string,body:unknown)=>worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)}),env);
+ const e=await (await direct('enquiries',{customer_name:'Synthetic',service:'Synthetic appointment'})).json() as {id:string};
+ const job=await (await direct(`enquiries/${e.id}/conversion`,{})).json() as {id:string};
+ await direct('demo-appointments',{job_id:job.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'});
+
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'}),keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ for(const k of keys)Object.defineProperty(globalThis,k,{configurable:true,writable:true,value:k==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[k]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const k of keys){const d=saved.get(k);if(d)Object.defineProperty(globalThis,k,d);else delete (globalThis as any)[k];}});
+
+ let denyAccess=false;
+ mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const request=new Request(input,init);
+  if(denyAccess && request.method==='GET' && new URL(request.url).pathname.endsWith('/demo-appointments')){
+   return Response.json({detail:'Access denied'},{status:403});
+  }
+  return worker.fetch(request,env);
+ });setApiBase('http://localhost');
+
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ assert.match(container.textContent!,new RegExp(job.id));
+ denyAccess=true;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(button=>button.textContent==='Refresh appointments')!.click();});await flush();
+ assert.match(container.textContent!,/Access denied\. Synthetic appointments are unavailable\./);
+ assert.equal(container.querySelectorAll('li').length, 0, 'appointments list is empty on 403 access denial');
+ assert.doesNotMatch(container.textContent!,/scheduled - version 1/,'scheduled appointment record is removed on 403 access denial');
+
  await act(async()=>root.unmount());
 });

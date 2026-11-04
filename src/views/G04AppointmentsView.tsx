@@ -42,11 +42,14 @@ export function G04AppointmentsView() {
       if(n===epoch.current){setAppointments(rows);setMessage('');}
     } catch (error: unknown) {
       if(n===epoch.current){
-        setAppointments([]);
         if (error instanceof AppointmentApiError && error.status === 404) {
+          setAppointments([]);
           setMessage('Synthetic scheduling is disabled in this environment.');
+        } else if (error instanceof AppointmentApiError && (error.status === 401 || error.status === 403)) {
+          setAppointments([]);
+          setMessage('Access denied. Synthetic appointments are unavailable.');
         } else {
-          setMessage('Unable to load synthetic appointments.');
+          setMessage(prev => prev.startsWith('Saved') ? prev : 'Unable to load synthetic appointments.');
         }
       }
     }
@@ -57,15 +60,39 @@ export function G04AppointmentsView() {
   const mutate=async(path:string,method:string,body:unknown)=>{
     if(!workspace || inFlight.current || locked)return;
     if (body && typeof body === 'object' && 'starts_at' in body && 'ends_at' in body && !validDemoAppointmentRange(body.starts_at,body.ends_at)) {setMessage('Enter valid UTC start and end times, with the end after the start.');return;}
+    const activeWorkspace=workspace;
+    const mutationEpoch=++epoch.current;
     inFlight.current=true;setBusy(true);setMessage('Saving synthetic appointment...');
     let token:string;
     try {token=await session.token();}
     catch {setMessage('Session could not be verified; no change was sent.');inFlight.current=false;setBusy(false);return;}
     try {
-      await request(workspace,token,path,method,body);
+      const saved=await request<DemoAppointment>(activeWorkspace,token,path,method,body);
+      if(mutationEpoch!==epoch.current || session.workspaceId!==activeWorkspace)return;
+      setAppointments(prev=>{
+        const remaining=prev.filter(a=>a.id!==saved.id);
+        return [...remaining,saved].sort((a,b)=>a.starts_at.localeCompare(b.starts_at)||a.id.localeCompare(b.id));
+      });
       setMessage('Saved. Refreshing...');
-      await refresh();
+      const n=++epoch.current;
+      try {
+        const rows=await request<DemoAppointment[]>(activeWorkspace,token,'');
+        if(n===epoch.current && session.workspaceId===activeWorkspace){setAppointments(rows);setMessage('');}
+      } catch (refreshError: unknown) {
+        if(n===epoch.current && session.workspaceId===activeWorkspace){
+          if(refreshError instanceof AppointmentApiError && refreshError.status===404){
+            setAppointments([]);
+            setMessage('Synthetic scheduling is disabled in this environment.');
+          } else if (refreshError instanceof AppointmentApiError && (refreshError.status === 401 || refreshError.status === 403)) {
+            setAppointments([]);
+            setMessage('Saved, but subsequent access was denied. Cleared synthetic appointments.');
+          } else {
+            setMessage('Saved. (List refresh failed; displaying confirmed save.)');
+          }
+        }
+      }
     } catch (error: unknown) {
+      if(mutationEpoch!==epoch.current || session.workspaceId!==activeWorkspace)return;
       if (error instanceof AppointmentApiError) {
         if (error.status === 409) {
           setMessage(`Save rejected: conflict or stale appointment version. (${error.message})`);
@@ -77,6 +104,10 @@ export function G04AppointmentsView() {
         }
         if (error.status === 401) {
           setMessage('Session could not be verified; sign in again.');
+          return;
+        }
+        if (error.status === 403 && error.message !== 'Permission changed') {
+          setMessage(`Save rejected: permission denied. (${error.message})`);
           return;
         }
         if (error.status === 404) {

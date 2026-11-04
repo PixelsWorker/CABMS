@@ -860,6 +860,15 @@ export function validateSignedSnapshot(
       if (typeof parsed.overallRiskLevel !== 'string' || !['L', 'M', 'H', 'E'].includes(parsed.overallRiskLevel)) {
         return { valid: false, error: 'JSA snapshot contains invalid overallRiskLevel.' };
       }
+      if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+        return { valid: false, error: 'JSA snapshot must contain at least one step observation.' };
+      }
+      if (parsed.inductionCompleted !== true) {
+        return { valid: false, error: 'JSA snapshot requires inductionCompleted: true.' };
+      }
+      if (parsed.competencyVerified !== true) {
+        return { valid: false, error: 'JSA snapshot requires competencyVerified: true.' };
+      }
       if (parsed.steps.some((step: Record<string, unknown>) =>
         ['taskStep', 'hazards', 'controls', 'responsibleRole'].some(field => typeof step[field] !== 'string' || (step[field] as string).trim() === '') ||
         !['L', 'M', 'H', 'E'].includes(step.initialRisk as string) ||

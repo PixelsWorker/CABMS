@@ -44,3 +44,28 @@ test('preview readiness rejects snapshots with invalid top-level classification 
     ['JSA'],
   );
 });
+
+test('preview readiness rejects JSA snapshots with empty steps or unconfirmed induction competency', () => {
+  const baseJsa = {
+    ...INITIAL_JSA_FORM,
+    signedOff: true,
+    signedByTechName: 'Dave Miller',
+    signedTimestamp: '2026-11-02 09:30',
+    frozenIssuerSnapshot: 'Solarcell Pty Ltd',
+  };
+
+  const emptyStepsJsa = { ...baseJsa, steps: [] };
+  const validEmptySteps = isValidPreviewSignOff('JSA', 'JOB-2026-101', true, JSON.stringify(emptyStepsJsa));
+  assert.equal(validEmptySteps, false);
+  assert.deepEqual(getInvalidPreviewForms(['JSA'], { JSA: true }, { JSA: validEmptySteps }), ['JSA']);
+
+  const unconfirmedInduction = { ...baseJsa, inductionCompleted: false };
+  const validInduction = isValidPreviewSignOff('JSA', 'JOB-2026-101', true, JSON.stringify(unconfirmedInduction));
+  assert.equal(validInduction, false);
+  assert.deepEqual(getInvalidPreviewForms(['JSA'], { JSA: true }, { JSA: validInduction }), ['JSA']);
+
+  const unconfirmedCompetency = { ...baseJsa, competencyVerified: false };
+  const validCompetency = isValidPreviewSignOff('JSA', 'JOB-2026-101', true, JSON.stringify(unconfirmedCompetency));
+  assert.equal(validCompetency, false);
+  assert.deepEqual(getInvalidPreviewForms(['JSA'], { JSA: true }, { JSA: validCompetency }), ['JSA']);
+});

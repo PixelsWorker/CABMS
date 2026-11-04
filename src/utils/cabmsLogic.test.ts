@@ -207,6 +207,28 @@ test('validateSignedSnapshot rejects incomplete or blank nested synthetic JSA st
   );
 });
 
+test('validateSignedSnapshot rejects JSA snapshot with empty steps array or unconfirmed induction competency', () => {
+  const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
+
+  const emptySteps = structuredClone(valid);
+  emptySteps.steps = [];
+  const emptyStepsResult = validateSignedSnapshot(JSON.stringify(emptySteps), INITIAL_JSA_FORM.jobReference, 'JSA');
+  assert.equal(emptyStepsResult.valid, false);
+  assert.match(emptyStepsResult.error || '', /at least one step/);
+
+  const incompleteInduction = structuredClone(valid);
+  incompleteInduction.inductionCompleted = false;
+  const inductionResult = validateSignedSnapshot(JSON.stringify(incompleteInduction), INITIAL_JSA_FORM.jobReference, 'JSA');
+  assert.equal(inductionResult.valid, false);
+  assert.match(inductionResult.error || '', /inductionCompleted/);
+
+  const incompleteCompetency = structuredClone(valid);
+  incompleteCompetency.competencyVerified = false;
+  const competencyResult = validateSignedSnapshot(JSON.stringify(incompleteCompetency), INITIAL_JSA_FORM.jobReference, 'JSA');
+  assert.equal(competencyResult.valid, false);
+  assert.match(competencyResult.error || '', /competencyVerified/);
+});
+
 test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {
   const validElectrical = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
   const invalidCases: [string | undefined, string, string, string][] = [

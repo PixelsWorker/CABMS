@@ -52,7 +52,7 @@ test('revocation immediately before the appointment insert denies the write', as
  const j=await (await call(`enquiries/${e.id}/conversion`,{})).json() as {id:string};let revoked=false;
  const guarded={prepare:(sql:string)=>{if(!revoked && sql.includes('INSERT INTO demo_appointments')){db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(actor.userId,'solarcell');revoked=true;}return db.prepare(sql);},exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db)};
  const response=await worker.fetch(new Request('http://local/api/v1/workspaces/solarcell/demo-appointments',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({job_id:j.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'})}),{...env,DB:guarded as any});
- assert.equal(revoked,true);assert.equal(response.status,403);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM demo_appointments').first<{count:number}>())?.count,0);
+ assert.equal(revoked,true);assert.equal(response.status,403);const denied=await response.json() as Record<string,unknown>;assert.equal(denied.code,'PERMISSION_CHANGED');assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM demo_appointments').first<{count:number}>())?.count,0);
 });
 
 test('revocation immediately before an appointment update denies the write', async t=>{
@@ -67,6 +67,7 @@ test('revocation immediately before an appointment update denies the write', asy
  const guarded={prepare:(sql:string)=>{if(!revoked && sql.includes('UPDATE demo_appointments')){db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(actor.userId,'solarcell');revoked=true;}return db.prepare(sql);},exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db)};
  const response=await worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/demo-appointments/${a.id}`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({version:1,status:'cancelled'})}),{...env,DB:guarded as any});
  assert.equal(revoked,true);assert.equal(response.status,403);
+ const updateDenied=await response.json() as Record<string,unknown>;assert.equal(updateDenied.code,'PERMISSION_CHANGED');
  const row=await db.prepare('SELECT status, version FROM demo_appointments WHERE id=?').bind(a.id).first<{status:string;version:number}>();assert.equal(row?.status,'scheduled');assert.equal(row?.version,1);
 });
 
@@ -131,6 +132,7 @@ test('revocation immediately after the appointment insert denies disclosure whil
  // Status is 403 Permission changed
  assert.equal(response.status,403);
  const body=await response.json() as Record<string,unknown>;
+ assert.equal(body.code,'PERMISSION_CHANGED');
  // Does NOT disclose appointment details (id, starts_at, ends_at)
  assert.equal(body.id,undefined);
  assert.equal(body.starts_at,undefined);

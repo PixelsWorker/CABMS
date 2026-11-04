@@ -2,7 +2,7 @@ import { validDemoAppointmentRange } from '../../../contracts/demoAppointments.t
 /** Local synthetic appointments only; no real assignments or calendar synchronization. */
 import type { Env } from '../../types.ts';
 import { authorizeWorkspaceAccess, type AuthenticationService } from '../auth.ts';
-import { accessDeniedResponse, authenticationRequiredResponse, createProblemResponse, validationErrorResponse } from '../problem.ts';
+import { accessDeniedResponse, authenticationRequiredResponse, createProblemResponse, permissionChangedResponse, validationErrorResponse } from '../problem.ts';
 import { listAppointments, createAppointment, updateAppointment } from '../../modules/scheduling/demoAppointmentRepo.ts';
 
 export async function handleDemoAppointments(request: Request, env: Env, workspace: string, id: string | undefined, requestId: string, authentication: AuthenticationService): Promise<Response> {
@@ -11,7 +11,7 @@ export async function handleDemoAppointments(request: Request, env: Env, workspa
  if (!auth) return authenticationRequiredResponse('Valid staff authentication token is required',requestId);
  const role=await authorizeWorkspaceAccess(env.DB,workspace,auth);
  if (!role || role.role==='technician') return accessDeniedResponse('You do not have access to this workspace',requestId);
- const reply=async(data:unknown,status=200)=>{ const current=await authorizeWorkspaceAccess(env.DB,workspace,auth); if(!current || current.role==='technician') return accessDeniedResponse('Permission changed',requestId); return Response.json(data,{status,headers:{'X-Request-Id':requestId}}); };
+ const reply=async(data:unknown,status=200)=>{ const current=await authorizeWorkspaceAccess(env.DB,workspace,auth); if(!current || current.role==='technician') return permissionChangedResponse('Permission changed',requestId); return Response.json(data,{status,headers:{'X-Request-Id':requestId}}); };
  if (request.method==='GET' && !id) return reply(await listAppointments(env.DB,workspace,auth));
  if ((request.method==='POST' && !id) || (request.method==='PATCH' && id)) {
   let input:unknown; try {input=await request.json();} catch {return validationErrorResponse('Invalid JSON',[],requestId);}
@@ -30,7 +30,7 @@ export async function handleDemoAppointments(request: Request, env: Env, workspa
    if (updated) return reply(updated);
   }
   const current=await authorizeWorkspaceAccess(env.DB,workspace,auth);
-  if (!current || current.role==='technician') return accessDeniedResponse('Permission changed',requestId);
+  if (!current || current.role==='technician') return permissionChangedResponse('Permission changed',requestId);
   return createProblemResponse(409,'CONFLICT','conflict','Conflict','Synthetic job or appointment unavailable, stale or cancelled',requestId);
  }
  return createProblemResponse(405,'METHOD_NOT_ALLOWED','method-not-allowed','Method Not Allowed','Method not allowed for this resource',requestId,undefined,undefined,{Allow:id?'PATCH':'GET, POST'});

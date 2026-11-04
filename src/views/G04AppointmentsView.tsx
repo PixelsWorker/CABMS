@@ -6,7 +6,7 @@ import { buildApiUrl } from '../services/g01Client.ts';
 import { validDemoAppointmentRange, type DemoAppointment } from '../../contracts/demoAppointments.ts';
 
 export class AppointmentApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public code?: string) {
     super(message);
     this.name = 'AppointmentApiError';
   }
@@ -16,11 +16,13 @@ async function request<T>(workspace:string, token:string, path:string, method='G
   const response=await fetch(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspace)}/demo-appointments${path}`),{method,signal:AbortSignal.timeout(10000),headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
   if (!response.ok) {
     let detail = '';
+    let code: string | undefined;
     try {
-      const data = await response.json() as { detail?: string; title?: string };
+      const data = await response.json() as { detail?: string; title?: string; code?: string };
       detail = data.detail || data.title || '';
+      code = data.code;
     } catch {}
-    throw new AppointmentApiError(response.status, detail || `Request failed (HTTP ${response.status}).`);
+    throw new AppointmentApiError(response.status, detail || `Request failed (HTTP ${response.status}).`, code);
   }
   return response.json() as Promise<T>;
 }
@@ -31,7 +33,8 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
   const [appointments,setAppointments]=React.useState<DemoAppointment[]>([]); const [jobId,setJobId]=React.useState('');
   const [start,setStart]=React.useState('2026-11-05T01:00:00.000Z'),[end,setEnd]=React.useState('2026-11-05T02:00:00.000Z');
   const [message,setMessage]=React.useState('Loading synthetic appointments...'),[busy,setBusy]=React.useState(false),[locked,setLocked]=React.useState(false);
-  const epoch=React.useRef(0), inFlight=React.useRef(false);
+  const [isEnvironmentDisabled,setIsEnvironmentDisabled]=React.useState(false);
+  const epoch=React.useRef(0), inFlight=React.useRef(false), environmentDisabledRef=React.useRef(false);
 
   const refresh=React.useCallback(async()=>{
     if(!workspace || !eligible)return;
@@ -39,11 +42,22 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
     try {
       const token=await session.token();
       const rows=await request<DemoAppointment[]>(workspace,token,'');
-      if(n===epoch.current){setAppointments(rows);setMessage('');}
+      if(n===epoch.current){
+        environmentDisabledRef.current=false;
+        setIsEnvironmentDisabled(false);
+        setAppointments(rows);
+        setMessage('');
+      }
     } catch (error: unknown) {
       if(n===epoch.current){
         if (error instanceof AppointmentApiError && error.status === 404) {
           setAppointments([]);
+          environmentDisabledRef.current=true;
+          setIsEnvironmentDisabled(true);
+          setMessage('Synthetic scheduling is disabled in this environment.');
+        } else if (environmentDisabledRef.current) {
+          setAppointments([]);
+          setIsEnvironmentDisabled(true);
           setMessage('Synthetic scheduling is disabled in this environment.');
         } else if (error instanceof AppointmentApiError && (error.status === 401 || error.status === 403)) {
           setAppointments([]);
@@ -55,7 +69,12 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
     }
   },[workspace,session.profile?.user.id,role]);
 
-  React.useEffect(()=>{setAppointments([]);if(eligible)void refresh();else setMessage('');return()=>{epoch.current++;};},[refresh,eligible]);
+  React.useEffect(()=>{
+    setAppointments([]);
+    if(eligible)void refresh();
+    else setMessage('');
+    return()=>{epoch.current++;};
+  },[refresh,eligible]);
 
   const mutate=async(path:string,method:string,body:unknown)=>{
     if(!workspace || inFlight.current || locked)return;
@@ -77,11 +96,22 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
       const n=++epoch.current;
       try {
         const rows=await request<DemoAppointment[]>(activeWorkspace,token,'');
-        if(n===epoch.current && session.workspaceId===activeWorkspace){setAppointments(rows);setMessage('');}
+        if(n===epoch.current && session.workspaceId===activeWorkspace){
+          environmentDisabledRef.current=false;
+          setIsEnvironmentDisabled(false);
+          setAppointments(rows);
+          setMessage('');
+        }
       } catch (refreshError: unknown) {
         if(n===epoch.current && session.workspaceId===activeWorkspace){
           if(refreshError instanceof AppointmentApiError && refreshError.status===404){
             setAppointments([]);
+            environmentDisabledRef.current=true;
+            setIsEnvironmentDisabled(true);
+            setMessage('Synthetic scheduling is disabled in this environment.');
+          } else if (environmentDisabledRef.current) {
+            setAppointments([]);
+            setIsEnvironmentDisabled(true);
             setMessage('Synthetic scheduling is disabled in this environment.');
           } else if (refreshError instanceof AppointmentApiError && (refreshError.status === 401 || refreshError.status === 403)) {
             setAppointments([]);
@@ -109,7 +139,7 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
         }
         if (error.status === 403) {
           setAppointments([]);
-          if (error.message !== 'Permission changed') {
+          if (error.code === 'ACCESS_DENIED') {
             setMessage(`Save rejected: permission denied. (${error.message})`);
             return;
           }
@@ -119,6 +149,8 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
         }
         if (error.status === 404) {
           setAppointments([]);
+          environmentDisabledRef.current=true;
+          setIsEnvironmentDisabled(true);
           setMessage('Synthetic scheduling is disabled in this environment.');
           return;
         }
@@ -132,7 +164,6 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
   };
 
   const allowed=data.status==='ready';
-  const isEnvironmentDisabled = message === 'Synthetic scheduling is disabled in this environment.';
 
   return (
     <div className="space-y-6">

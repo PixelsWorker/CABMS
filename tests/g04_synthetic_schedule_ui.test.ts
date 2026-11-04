@@ -4,7 +4,7 @@ import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
 import {JSDOM} from 'jsdom';
 import {SessionContext,type Session} from '../src/context/G01Session.tsx';
-import {CabmsProvider} from '../src/context/CabmsContext.tsx';
+import {CabmsProvider, useCabms} from '../src/context/CabmsContext.tsx';
 import {ScheduleView} from '../src/views/ScheduleView.tsx';
 import {setApiBase,resetApiBase} from '../src/services/g01Client.ts';
 import {createLocalD1Database,type LocalD1Database} from '../backend/db/d1.ts';
@@ -91,10 +91,11 @@ test('definite 409 conflict and 422 rejection do not lock the UI as uncertain',a
 
  let injectStatus:number|null=null;
  let injectDetail:string='Synthetic simulated rejection';
+ let injectCode:string|undefined=undefined;
  mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
   const request=new Request(input,init);
   if(injectStatus && request.method==='POST' && new URL(request.url).pathname.endsWith('/demo-appointments')){
-   return Response.json({detail:injectDetail},{status:injectStatus});
+   return Response.json({detail:injectDetail,code:injectCode},{status:injectStatus});
   }
   return worker.fetch(request,env);
  });setApiBase('http://localhost');
@@ -123,6 +124,7 @@ test('definite 409 conflict and 422 rejection do not lock the UI as uncertain',a
 
  // 403 permission denial (pre-write)
  injectStatus=403;
+ injectCode='ACCESS_DENIED';
  injectDetail='You do not have access to this workspace';
  await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();
  assert.match(container.textContent!,/Save rejected: permission denied/);
@@ -131,6 +133,7 @@ test('definite 409 conflict and 422 rejection do not lock the UI as uncertain',a
 
  // 403 post-write Permission changed locks the UI because write outcome is uncertain
  injectStatus=403;
+ injectCode='PERMISSION_CHANGED';
  injectDetail='Permission changed';
  await act(async()=>{container.querySelector('form')!.dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true}));});await flush();
  assert.match(container.textContent!,/Save outcome is unknown/);
@@ -271,17 +274,47 @@ test('authenticated technician session routes to simulated schedule view with te
  const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'technician'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
  const container=dom.window.document.getElementById('root')!,root=createRoot(container);
  const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,30));});
- await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ function TechnicianScopingRig(){
+  const {createJob}=useCabms();
+  const createdRef=React.useRef(false);
+  React.useEffect(()=>{
+   if(createdRef.current)return;
+   createdRef.current=true;
+   createJob({
+    brandId:'solarcell',
+    title:'Solar Inverter Inspection by Alex',
+    scheduledDate:'2026-11-02',
+    scheduledTime:'11:00',
+    appointmentStatus:'SCHEDULED',
+    assignedTechId:'TECH-002',
+    assignedTechName:'Alex Taylor',
+    status:'IN_PROGRESS',
+   });
+   createJob({
+    brandId:'solarcell',
+    title:'Unscheduled Solar Maintenance by Alex',
+    appointmentStatus:'UNSCHEDULED',
+    assignedTechId:'TECH-002',
+    assignedTechName:'Alex Taylor',
+    status:'IN_PROGRESS',
+   });
+  },[createJob]);
+  return React.createElement(ScheduleView);
+ }
+
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(TechnicianScopingRig))));});await flush();
 
  assert.match(container.textContent!,/Field Service Dispatch & Calendar Scheduling/);
  assert.doesNotMatch(container.textContent!,/Synthetic demo appointments/);
 
- // Technician scoping: assigned jobs for TECH-001 (Dave Miller) are visible
+ // Technician scoping: assigned jobs for TECH-001 (Dave Miller) in solarcell are visible
  assert.match(container.textContent!,/JOB-2026-101/,'technician sees own assigned job');
  assert.match(container.textContent!,/Dave Miller/,'technician sees own assignment name');
 
- // Technician scoping: other technicians' jobs (TECH-002 / Alex Taylor, e.g. JOB-2026-104) are strictly hidden
- assert.doesNotMatch(container.textContent!,/JOB-2026-104/,'technician cannot view another technician assigned job');
+ // Technician scoping: other technician's jobs (TECH-002 / Alex Taylor) in the SAME authorized solarcell workspace are strictly hidden
+ assert.doesNotMatch(container.textContent!,/Solar Inverter Inspection by Alex/,'technician cannot view another technician scheduled job in same workspace');
+ assert.doesNotMatch(container.textContent!,/Unscheduled Solar Maintenance by Alex/,'technician cannot view another technician unscheduled job in same workspace');
  assert.doesNotMatch(container.textContent!,/Alex Taylor/,'technician cannot view another technician name in dispatch');
  assert.doesNotMatch(container.textContent!,/TECH-002/,'technician cannot view other technician ID');
 
@@ -306,10 +339,11 @@ test('401 or 403 access denial during mutation clears previously loaded appointm
 
  let injectStatus:number|null=null;
  let injectDetail:string='Access denied';
+ let injectCode:string|undefined=undefined;
  mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
   const request=new Request(input,init);
   if(injectStatus && (request.method==='POST' || request.method==='PATCH') && new URL(request.url).pathname.includes('/demo-appointments')){
-   return Response.json({detail:injectDetail},{status:injectStatus});
+   return Response.json({detail:injectDetail,code:injectCode},{status:injectStatus});
   }
   return worker.fetch(request,env);
  });setApiBase('http://localhost');
@@ -326,6 +360,7 @@ test('401 or 403 access denial during mutation clears previously loaded appointm
 
  // 1. HTTP 401 during mutation: clears records, shows session error, remains unlocked
  injectStatus=401;
+ injectCode='AUTHENTICATION_REQUIRED';
  injectDetail='Unauthorized';
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
  assert.match(container.textContent!,/Session could not be verified; sign in again\./);
@@ -334,31 +369,118 @@ test('401 or 403 access denial during mutation clears previously loaded appointm
 
  // Restore appointment for next check
  injectStatus=null;
+ injectCode=undefined;
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Refresh appointments')!.click();});await flush();
  assert.match(container.textContent!,new RegExp(job.id));
  assert.equal(container.querySelectorAll('li').length,1);
 
- // 2. HTTP 403 pre-write rejection during mutation: clears records, shows permission denied, remains unlocked
+ // 2. HTTP 403 pre-write rejection during mutation with ACCESS_DENIED and custom detail text:
+ // Clears records, shows permission denied including custom text, remains unlocked
  injectStatus=403;
- injectDetail='You do not have access to this workspace';
+ injectCode='ACCESS_DENIED';
+ injectDetail='Custom pre-write rejection detail';
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
- assert.match(container.textContent!,/Save rejected: permission denied/);
+ assert.match(container.textContent!,/Save rejected: permission denied\. \(Custom pre-write rejection detail\)/);
  assert.equal(container.querySelectorAll('li').length,0,'appointments list is cleared on 403 pre-write rejection');
  assert.doesNotMatch(container.textContent!,/Changes are locked/,'403 pre-write rejection does not lock form as uncertain');
 
  // Restore appointment for next check
  injectStatus=null;
+ injectCode=undefined;
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Refresh appointments')!.click();});await flush();
  assert.match(container.textContent!,new RegExp(job.id));
  assert.equal(container.querySelectorAll('li').length,1);
 
- // 3. HTTP 403 post-write permission revocation during mutation: clears records, locks UI as uncertain
+ // 3. HTTP 403 post-write permission revocation during mutation with PERMISSION_CHANGED and custom detail text:
+ // Clears records, locks UI as uncertain, safety does NOT depend on human-readable detail text
  injectStatus=403;
- injectDetail='Permission changed';
+ injectCode='PERMISSION_CHANGED';
+ injectDetail='Custom permission revoked detail';
  await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
  assert.match(container.textContent!,/Save outcome is unknown/);
  assert.match(container.textContent!,/Changes are locked/);
  assert.equal(container.querySelectorAll('li').length,0,'appointments list is cleared on 403 post-write revocation');
+
+ // 4. HTTP 403 with missing or unknown code is handled conservatively as uncertain outcome:
+ // Simulating navigating away and back to clear the view-level lock per design
+ await act(async()=>root.unmount());
+ const container2=dom.window.document.getElementById('root')!,root2=createRoot(container2);
+ injectStatus=null;
+ injectCode=undefined;
+ await act(async()=>{root2.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+ assert.match(container2.textContent!,new RegExp(job.id));
+ assert.equal(container2.querySelectorAll('li').length,1);
+
+ injectStatus=403;
+ injectCode=undefined;
+ injectDetail='Unrecognized error without structured code';
+ await act(async()=>{Array.from(container2.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
+ assert.match(container2.textContent!,/Save outcome is unknown/);
+ assert.match(container2.textContent!,/Changes are locked/);
+ assert.equal(container2.querySelectorAll('li').length,0,'missing 403 code conservatively clears records and locks form');
+
+ await act(async()=>root2.unmount());
+});
+
+test('disabled-environment state persists across same-workspace profile and role refreshes even when subsequent read fails',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport));
+ const env={DB:db,ENVIRONMENT:'production',FIREBASE_PROJECT_ID:'cabms-test'},actor=G01_TEST_AUTH.officeStaff;
+ const token=await fixture.token(actor.uid,actor.email);
+
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'}),keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ for(const k of keys)Object.defineProperty(globalThis,k,{configurable:true,writable:true,value:k==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[k]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const k of keys){const d=saved.get(k);if(d)Object.defineProperty(globalThis,k,d);else delete (globalThis as any)[k];}});
+
+ let failWith500=false;
+ let recoverWith200=false;
+ mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const request=new Request(input,init);
+  if(request.method==='GET' && new URL(request.url).pathname.includes('/demo-appointments')){
+   if(recoverWith200){
+    return Response.json([]);
+   }
+   if(failWith500){
+    return Response.json({detail:'Internal Server Outage'},{status:500});
+   }
+  }
+  return worker.fetch(request,env);
+ });setApiBase('http://localhost');
+
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ // Initial 404 disables synthetic scheduling and displays fallback simulated calendar
+ assert.match(container.textContent!,/Synthetic scheduling is disabled in this environment/);
+ assert.equal(container.querySelector('form'),null,'creation form is suppressed in disabled environment');
+ assert.match(container.textContent!,/Field Service Dispatch & Calendar Scheduling/,'simulated fallback calendar is rendered');
+
+ // Profile refresh with role update where subsequent read encounters transient 500 failure
+ failWith500=true;
+ const updatedSession:Session={...session,profile:{...session.profile!,memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'owner_admin'}]}};
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:updatedSession},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ // Disabled environment state and message persist across same-workspace role update and non-404 failure
+ assert.match(container.textContent!,/Synthetic scheduling is disabled in this environment/,'disabled message preserved across role update and transient failure');
+ assert.equal(container.querySelector('form'),null,'creation form remains suppressed');
+ assert.match(container.textContent!,/Field Service Dispatch & Calendar Scheduling/,'fallback calendar remains rendered');
+ assert.doesNotMatch(container.textContent!,/Unable to load synthetic appointments/,'generic load error does not overwrite disabled environment status');
+
+ // Environment recovery: subsequent read succeeds with 200
+ failWith500=false;
+ recoverWith200=true;
+ await act(async()=>{
+  const btn=Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Refresh appointments');
+  if(btn) btn.click();
+  else {
+   // Re-render to trigger refresh if controls were hidden
+   root.render(React.createElement(SessionContext.Provider,{value:{...updatedSession}},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));
+  }
+ });await flush();
 
  await act(async()=>root.unmount());
 });

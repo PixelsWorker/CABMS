@@ -129,6 +129,68 @@ test('validateSignedSnapshot rejects unsupported synthetic electrical test resul
   }
 });
 
+test('validateSignedSnapshot rejects smoke alarm snapshot with empty alarmSchedule', () => {
+  const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  invalid.alarmSchedule = [];
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects electrical snapshot with blank rcdTripTimeMs', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  const invalidBlank = structuredClone(valid);
+  invalidBlank.testedWorkItems[0].rcdTripTimeMs = '   ';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidBlank), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+    false,
+  );
+  const invalidEmpty = structuredClone(valid);
+  invalidEmpty.testedWorkItems[0].rcdTripTimeMs = '';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidEmpty), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects JSA snapshot with missing or invalid overallRiskLevel', () => {
+  const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
+  const invalidMissing = structuredClone(valid);
+  delete (invalidMissing as any).overallRiskLevel;
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidMissing), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+  const invalidEnum = structuredClone(valid);
+  (invalidEnum as any).overallRiskLevel = 'Unknown';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidEnum), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects TCA2 snapshot with unsupported top-level enums', () => {
+  const seeded = JSON.parse(INITIAL_TCA2_CERT.fullSnapshot!);
+  const valid = {
+    ...seeded,
+    customerAcknowledged: INITIAL_TCA2_CERT.customerAcknowledged,
+    officeReviewCompleted: INITIAL_TCA2_CERT.officeReviewCompleted,
+  };
+  const invalidRisk = structuredClone(valid);
+  invalidRisk.riskCategory = 'Critical Extreme Catastrophe';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidRisk), INITIAL_TCA2_CERT.jobReference, 'TCA2').valid,
+    false,
+  );
+  const invalidUrgency = structuredClone(valid);
+  invalidUrgency.urgencyLevel = 'Someday Eventually';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidUrgency), INITIAL_TCA2_CERT.jobReference, 'TCA2').valid,
+    false,
+  );
+});
+
 test('validateSignedSnapshot rejects incomplete or blank nested synthetic JSA step observations', () => {
   const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
   const blankStep = structuredClone(valid);

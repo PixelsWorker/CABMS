@@ -688,7 +688,7 @@ const signedSnapshotSchema: Record<SignedFormType, {
   objects: string[];
 }> = {
   JSA: {
-    strings: ['date', 'customerName', 'siteContactPlaceholder', 'siteAddress', 'taskDescription', 'assetsIdentified', 'personnelName', 'personnelRole', 'licencePlaceholder', 'licenceExpiryPlaceholder', 'formRevision', 'issuerPlaceholder', 'emergencyAssemblyArea', 'emergencyWardenPlaceholder', 'firstAidOfficerPlaceholder'],
+    strings: ['date', 'customerName', 'siteContactPlaceholder', 'siteAddress', 'taskDescription', 'assetsIdentified', 'personnelName', 'personnelRole', 'licencePlaceholder', 'licenceExpiryPlaceholder', 'formRevision', 'issuerPlaceholder', 'emergencyAssemblyArea', 'emergencyWardenPlaceholder', 'firstAidOfficerPlaceholder', 'overallRiskLevel'],
     booleans: ['inductionCompleted', 'competencyVerified'],
     numbers: [],
     arrays: ['steps', 'ppeChecklist', 'isolationsAndPermits', 'attachedSampleIds'],
@@ -817,6 +817,9 @@ export function validateSignedSnapshot(
         return { valid: false, error: `${formType} snapshot contains an incomplete ${arrayField} entry.` };
       }
     }
+    if (formType === 'SMOKE_ALARM' && (!Array.isArray(parsed.alarmSchedule) || parsed.alarmSchedule.length === 0)) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot must contain at least one alarm schedule entry.' };
+    }
     if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
       (alarm.passFail !== 'Pass' && alarm.passFail !== 'Fail') ||
       typeof alarm.buttonTestPass !== 'boolean' || typeof alarm.interconnectionPass !== 'boolean'
@@ -842,7 +845,7 @@ export function validateSignedSnapshot(
     if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
       ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
         .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||
-      (typeof item.rcdTripTimeMs !== 'number' && typeof item.rcdTripTimeMs !== 'string')
+      (typeof item.rcdTripTimeMs === 'number' ? !Number.isFinite(item.rcdTripTimeMs) || item.rcdTripTimeMs < 0 : typeof item.rcdTripTimeMs !== 'string' || item.rcdTripTimeMs.trim() === '')
     )) {
       return { valid: false, error: 'ELECTRICAL snapshot contains invalid tested work item fields.' };
     }
@@ -854,6 +857,9 @@ export function validateSignedSnapshot(
       return { valid: false, error: 'ELECTRICAL snapshot contains an unsupported test result value.' };
     }
     if (formType === 'JSA') {
+      if (typeof parsed.overallRiskLevel !== 'string' || !['L', 'M', 'H', 'E'].includes(parsed.overallRiskLevel)) {
+        return { valid: false, error: 'JSA snapshot contains invalid overallRiskLevel.' };
+      }
       if (parsed.steps.some((step: Record<string, unknown>) =>
         ['taskStep', 'hazards', 'controls', 'responsibleRole'].some(field => typeof step[field] !== 'string' || (step[field] as string).trim() === '') ||
         !['L', 'M', 'H', 'E'].includes(step.initialRisk as string) ||
@@ -872,6 +878,32 @@ export function validateSignedSnapshot(
         !['Yes', 'No', 'N/A'].includes(item.required as string)
       )) {
         return { valid: false, error: 'JSA snapshot contains invalid isolations and permits observations.' };
+      }
+    }
+    if (formType === 'TCA2') {
+      if (
+        typeof parsed.riskCategory !== 'string' ||
+        !['High (Immediate Shock / Fire Hazard)', 'Medium (Degraded Performance / Mechanical Hazard)', 'Low (Identification / Labelling Defect)'].includes(parsed.riskCategory)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported riskCategory.' };
+      }
+      if (
+        typeof parsed.urgencyLevel !== 'string' ||
+        !['Immediate (Within 24 Hours)', 'Urgent (Within 7 Days)', 'Routine (Next Scheduled Maintenance)'].includes(parsed.urgencyLevel)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported urgencyLevel.' };
+      }
+      if (
+        typeof parsed.cablingScope !== 'string' ||
+        !['Existing Only', 'New Only', 'Both Existing and New'].includes(parsed.cablingScope)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported cablingScope.' };
+      }
+      if (
+        typeof parsed.responsibleParty !== 'string' ||
+        !['Customer / Building Owner', 'Original Installer', 'Network Carrier', 'Other Third Party'].includes(parsed.responsibleParty)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported responsibleParty.' };
       }
     }
     return { valid: true, parsedSnapshot: parsed };

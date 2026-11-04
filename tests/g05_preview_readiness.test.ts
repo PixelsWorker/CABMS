@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../src/utils/g05PreviewReadiness.ts';
-import { INITIAL_ELECTRICAL_CERT } from '../src/data/seedData.ts';
+import { INITIAL_ELECTRICAL_CERT, INITIAL_JSA_FORM } from '../src/data/seedData.ts';
 
 test('preview reports only required forms without inventing requirements', () => {
   assert.deepEqual(getPendingPreviewForms([], {}), []);
@@ -25,4 +25,22 @@ test('invalid signed preview snapshots are distinct from unsigned forms', () => 
   assert.deepEqual(getPendingPreviewForms(required, flags), ['TCA1']);
   assert.deepEqual(getInvalidPreviewForms(required, flags, { JSA: false }), ['JSA']);
   assert.deepEqual(getInvalidPreviewForms(required, flags, { JSA: true }), []);
+});
+
+
+test('preview readiness rejects snapshots with invalid top-level classification enums', () => {
+  const invalidJsa = {
+    ...INITIAL_JSA_FORM,
+    signedOff: true,
+    signedByTechName: 'Dave Miller',
+    signedTimestamp: '2026-11-02 09:30',
+    frozenIssuerSnapshot: 'Solarcell Pty Ltd',
+    overallRiskLevel: 'UNKNOWN',
+  };
+  const valid = isValidPreviewSignOff('JSA', 'JOB-2026-101', true, JSON.stringify(invalidJsa));
+  assert.equal(valid, false);
+  assert.deepEqual(
+    getInvalidPreviewForms(['JSA'], { JSA: true }, { JSA: valid }),
+    ['JSA'],
+  );
 });

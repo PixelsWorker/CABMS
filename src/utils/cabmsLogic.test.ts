@@ -728,6 +728,7 @@ test('validateQuoteInput: validates quote title, line items, and rejects invalid
     { id: '2', description: 'Huge 2', quantity: 1, unitPrice: 1e306, total: 1e306 },
   ]).valid, false);
   assert.throws(() => calculateQuoteTotals([{ total: 1e306 }, { total: 1e306 }]), RangeError);
+  assert.throws(() => calculateQuoteTotals([{ total: Number.MAX_SAFE_INTEGER }]), RangeError);
 });
 
 test('validateJobCompletion: blocks completion if job requires forms but forms are unsigned', () => {

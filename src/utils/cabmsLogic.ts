@@ -908,6 +908,10 @@ export function calculateQuoteTotals(lineItems: Array<{ total: number }>): {
   const subtotalCents = lineItems.reduce((acc, item) => acc + amountInCents(item.total), 0n);
   const gstCents = (subtotalCents + 5n) / 10n;
   const totalCents = subtotalCents + gstCents;
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+  if (subtotalCents > maxSafe || gstCents > maxSafe || totalCents > maxSafe) {
+    throw new RangeError('Cannot calculate quote totals: amounts exceed maximum representable currency range.');
+  }
   const subtotal = Number(subtotalCents) / 100;
   const gst = Number(gstCents) / 100;
   const total = Number(totalCents) / 100;

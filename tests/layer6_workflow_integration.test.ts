@@ -221,6 +221,7 @@ test('LAYER 6: synthetic adapter quotes freeze published terms while draft conte
   assert.equal(issued.termsVersion, published.version);
   assert.equal(issued.termsContentSnapshot, published.content);
   issued.lineItems[0].description = 'Altered returned copy';
+  items[0].description = 'Caller changed after issuance';
   await adapter.createTemplateDraftRevision(terms.id, 'Another synthetic draft');
   await adapter.recordQuoteAcceptance('JOB-2026-103', 'valid');
   const accepted = (await adapter.getQuoteForJob('JOB-2026-103'))!;
@@ -3944,5 +3945,26 @@ test('G03 context path prepareQuoteForJob rejects invalid inputs without changin
     assert.equal(stored.subtotal, 0.35);
     assert.equal(stored.gst, 0.04);
     assert.equal(stored.total, 0.39);
+  });
+});
+test('G03 quote issuance selects a newly published TERMS revision on the context path', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const originalTerms = ctx.templates.find(t => t.type === 'TERMS')!;
+    await act(async () => { ctx.createTemplateDraftRevision(originalTerms.id, 'Updated published terms v2'); });
+    await act(async () => { ctx.submitTemplateForReview(originalTerms.id); });
+    await act(async () => { ctx.publishTemplateVersion(originalTerms.id); });
+    const updatedTerms = ctx.templates.find(t => t.id === originalTerms.id)!;
+    assert.equal(updatedTerms.activeStatus, 'PUBLISHED');
+    assert.notEqual(updatedTerms.currentVersion, originalTerms.currentVersion);
+
+    let issued!: Quote;
+    await act(async () => {
+      issued = ctx.prepareQuoteForJob('JOB-2026-101', 'Quote with v2 terms', [
+        { id: 'item-1', description: 'Item 1', quantity: 1, unitPrice: 100, total: 100 }
+      ]);
+    });
+    assert.equal(issued.termsVersion, updatedTerms.currentVersion);
+    assert.equal(issued.termsContentSnapshot, 'Updated published terms v2');
   });
 });

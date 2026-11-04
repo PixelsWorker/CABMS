@@ -2538,6 +2538,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(message);
     }
 
+    const clonedLineItems = structuredClone(lineItems);
     seqCounters.quote++;
     const quoteId = `QUOTE-2026-${seqCounters.quote}`;
     const followUps: QuoteFollowUp[] = [
@@ -2569,7 +2570,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       subtotal,
       gst,
       total,
-      lineItems: structuredClone(lineItems),
+      lineItems: clonedLineItems,
       termsVersion: publishedTerms.version,
       termsContentSnapshot: publishedTerms.content,
       frozenIssuerSnapshot: `${brand.legalIssuerName} • ${brand.abnPlaceholder}`,

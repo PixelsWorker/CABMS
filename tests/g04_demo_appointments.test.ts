@@ -51,7 +51,7 @@ test('revocation immediately before the appointment insert denies the write', as
  const e=await (await call('enquiries',{customer_name:'Synthetic',service:'Demo'})).json() as {id:string};
  const j=await (await call(`enquiries/${e.id}/conversion`,{})).json() as {id:string};let revoked=false;
  const guarded={prepare:(sql:string)=>{if(!revoked && sql.includes('INSERT INTO demo_appointments')){db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(actor.userId,'solarcell');revoked=true;}return db.prepare(sql);},exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db)};
- const response=await worker.fetch(new Request('http://local/api/v1/workspaces/solarcell/demo-appointments',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({job_id:j.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'})}),{...env,DB:guarded});
+ const response=await worker.fetch(new Request('http://local/api/v1/workspaces/solarcell/demo-appointments',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({job_id:j.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'})}),{...env,DB:guarded as any});
  assert.equal(revoked,true);assert.equal(response.status,403);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM demo_appointments').first<{count:number}>())?.count,0);
 });
 
@@ -65,7 +65,76 @@ test('revocation immediately before an appointment update denies the write', asy
  const j=await (await call(`enquiries/${e.id}/conversion`,{})).json() as {id:string};
  const a=await (await call('demo-appointments',{job_id:j.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'})).json() as {id:string};let revoked=false;
  const guarded={prepare:(sql:string)=>{if(!revoked && sql.includes('UPDATE demo_appointments')){db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(actor.userId,'solarcell');revoked=true;}return db.prepare(sql);},exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db)};
- const response=await worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/demo-appointments/${a.id}`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({version:1,status:'cancelled'})}),{...env,DB:guarded});
+ const response=await worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/demo-appointments/${a.id}`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({version:1,status:'cancelled'})}),{...env,DB:guarded as any});
  assert.equal(revoked,true);assert.equal(response.status,403);
  const row=await db.prepare('SELECT status, version FROM demo_appointments WHERE id=?').bind(a.id).first<{status:string;version:number}>();assert.equal(row?.status,'scheduled');assert.equal(row?.version,1);
+});
+
+test('concurrent appointment creates on the same job both succeed in current schema', async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport)),actor=G01_TEST_AUTH.officeStaff;
+ const token=await fixture.token(actor.uid,actor.email);const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'};
+ const call=(path:string,body:unknown)=>worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/${path}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)}),env);
+ const e=await (await call('enquiries',{customer_name:'Synthetic',service:'Demo'})).json() as {id:string};
+ const j=await (await call(`enquiries/${e.id}/conversion`,{})).json() as {id:string};
+ const b1={job_id:j.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'};
+ const b2={job_id:j.id,starts_at:'2026-11-06T01:00:00.000Z',ends_at:'2026-11-06T02:00:00.000Z'};
+ const [res1,res2]=await Promise.all([call('demo-appointments',b1),call('demo-appointments',b2)]);
+ assert.equal(res1.status,201);
+ assert.equal(res2.status,201);
+ const list=await db.prepare('SELECT COUNT(*) as count FROM demo_appointments WHERE job_id=? AND status=?').bind(j.id,'scheduled').first<{count:number}>();
+ assert.equal(list?.count,2,'both appointments persist when multiple active appointments are permitted');
+});
+
+test('revocation immediately after the appointment insert denies disclosure while appointment remains committed', async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport)),actor=G01_TEST_AUTH.officeStaff;
+ const token=await fixture.token(actor.uid,actor.email);const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'};
+ const call=(path:string,body:unknown)=>worker.fetch(new Request(`http://local/api/v1/workspaces/solarcell/${path}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)}),env);
+ const e=await (await call('enquiries',{customer_name:'Synthetic',service:'Demo'})).json() as {id:string};
+ const j=await (await call(`enquiries/${e.id}/conversion`,{})).json() as {id:string};let revoked=false;
+ const baseDbPrepare=db.prepare.bind(db);
+ const guarded={
+  prepare:(sql:string)=>{
+   const stmt=baseDbPrepare(sql);
+   if(sql.includes('INSERT INTO demo_appointments')){
+    return {
+     bind:(...args:unknown[])=>{
+      const bound=stmt.bind(...args);
+      return {
+       first:async<T=unknown>():Promise<T|null>=>{
+        const result=await bound.first<T>();
+        // Revoke membership AFTER the insert statement has committed in D1
+        if(!revoked){
+         db.getSqliteHandle().prepare('DELETE FROM workspace_memberships WHERE user_id=? AND workspace_id=?').run(actor.userId,'solarcell');
+         revoked=true;
+        }
+        return result;
+       },
+       all:bound.all.bind(bound),
+       run:bound.run.bind(bound),
+      };
+     },
+     first:stmt.first.bind(stmt),
+     all:stmt.all.bind(stmt),
+     run:stmt.run.bind(stmt),
+    };
+   }
+   return stmt;
+  },
+  exec:(sql:string)=>db.exec(sql),dump:()=>db.dump(),batch:db.batch.bind(db),
+ };
+ const response=await worker.fetch(new Request('http://local/api/v1/workspaces/solarcell/demo-appointments',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({job_id:j.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'})}),{...env,DB:guarded as any});
+ assert.equal(revoked,true);
+ // Status is 403 Permission changed
+ assert.equal(response.status,403);
+ const body=await response.json() as Record<string,unknown>;
+ // Does NOT disclose appointment details (id, starts_at, ends_at)
+ assert.equal(body.id,undefined);
+ assert.equal(body.starts_at,undefined);
+ // But row was committed in D1
+ const count=await db.prepare('SELECT COUNT(*) AS count FROM demo_appointments WHERE job_id=?').bind(j.id).first<{count:number}>();
+ assert.equal(count?.count,1,'appointment row remains committed in database');
 });

@@ -230,6 +230,79 @@ test('LAYER 6: synthetic adapter quotes freeze published terms while draft conte
   assert.equal(accepted.lineItems[0].description, 'Synthetic scope');
 });
 
+test('LAYER 6: synthetic adapter maintains published TERMS revision lifecycle across quotes and drafts', async () => {
+  const adapter = new MockDataAdapter();
+  const templates = await adapter.getTemplates();
+  const terms = templates.find(t => t.type === 'TERMS')!;
+  const originalVersion = terms.currentVersion;
+  const originalPublishedRev = terms.revisions.find(r => r.status === 'PUBLISHED' && r.version === originalVersion)!;
+
+  // 1. Issue Quote 1 on JOB-2026-101 using initial published terms v1.0
+  const items = [{ id: '1', description: 'Item 1', quantity: 1, unitPrice: 100, total: 100 }];
+  const quote1 = await adapter.prepareQuoteForJob('JOB-2026-101', 'Initial Quote', items);
+  assert.equal(quote1.termsVersion, originalVersion);
+  assert.equal(quote1.termsContentSnapshot, originalPublishedRev.content);
+
+  // 2. Create draft on TERMS
+  await adapter.createTemplateDraftRevision(terms.id, 'Terms Revision v1.1 text');
+  const inDraftTemplates = await adapter.getTemplates();
+  const inDraftTerms = inDraftTemplates.find(t => t.id === terms.id)!;
+  assert.equal(inDraftTerms.activeStatus, 'DRAFT');
+
+  // Unpublished draft cannot be published directly without review
+  await assert.rejects(
+    () => adapter.publishTemplateVersion(terms.id),
+    (err: any) => err.code === 'VALIDATION_FAILED'
+  );
+
+  // Subsequent quote during draft still snapshots original published version
+  const quote2 = await adapter.prepareQuoteForJob('JOB-2026-102', 'Quote during draft', items);
+  assert.equal(quote2.termsVersion, originalVersion);
+  assert.equal(quote2.termsContentSnapshot, originalPublishedRev.content);
+
+  // 3. Submit draft for review
+  await adapter.submitTemplateForReview(terms.id);
+  const inReviewTemplates = await adapter.getTemplates();
+  const inReviewTerms = inReviewTemplates.find(t => t.id === terms.id)!;
+  assert.equal(inReviewTerms.activeStatus, 'REVIEW');
+
+  // Subsequent quote during review still snapshots original published version
+  const quote3 = await adapter.prepareQuoteForJob('JOB-2026-103', 'Quote during review', items);
+  assert.equal(quote3.termsVersion, originalVersion);
+  assert.equal(quote3.termsContentSnapshot, originalPublishedRev.content);
+
+  // 4. Publish reviewed version
+  const publishedTpl = await adapter.publishTemplateVersion(terms.id);
+  assert.equal(publishedTpl.activeStatus, 'PUBLISHED');
+  assert.notEqual(publishedTpl.currentVersion, originalVersion);
+  assert.equal(publishedTpl.currentVersion, 'v2.5');
+
+  // Verify published revision is present in revisions
+  const newPublishedRev = publishedTpl.revisions.find(r => r.status === 'PUBLISHED' && r.version === publishedTpl.currentVersion)!;
+  assert.ok(newPublishedRev);
+  assert.equal(newPublishedRev.content, 'Terms Revision v1.1 text');
+
+  // 5. Subsequent quote snapshots the newly published revision v1.1
+  const quote4 = await adapter.prepareQuoteForJob('JOB-2026-104', 'Quote after v1.1 publish', items);
+  assert.equal(quote4.termsVersion, 'v2.5');
+  assert.equal(quote4.termsContentSnapshot, 'Terms Revision v1.1 text');
+
+  // 6. Existing quotes 1, 2, 3 remain strictly stable with original terms and pricing
+  const stored1 = (await adapter.getQuoteForJob('JOB-2026-101'))!;
+  assert.equal(stored1.termsVersion, originalVersion);
+  assert.equal(stored1.termsContentSnapshot, originalPublishedRev.content);
+  assert.equal(stored1.total, 110); // 100 + 10% GST
+
+  const stored2 = (await adapter.getQuoteForJob('JOB-2026-102'))!;
+  assert.equal(stored2.termsVersion, originalVersion);
+
+  // 7. Further draft edits do not alter quote 4 or quote 1
+  await adapter.createTemplateDraftRevision(terms.id, 'Draft v1.2 in progress');
+  const stored4 = (await adapter.getQuoteForJob('JOB-2026-104'))!;
+  assert.equal(stored4.termsVersion, 'v2.5');
+  assert.equal(stored4.termsContentSnapshot, 'Terms Revision v1.1 text');
+});
+
 test('LAYER 6: synthetic adapter rejects malformed quote inputs without changing job state', async () => {
   const adapter = new MockDataAdapter();
   const before = adapter.getInitialBaseline();

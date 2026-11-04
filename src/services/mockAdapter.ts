@@ -21,6 +21,7 @@ import {
   Tca1CertData,
   Tca2AuditRecord,
   Tca2CertData,
+  TemplateRevision,
   TemplateSetting,
   WebsiteEnquiry,
 } from '../types/cabms.ts';
@@ -37,7 +38,7 @@ import {
 } from './types.ts';
 
 import { INITIAL_BUSINESS_CLOCK, serializeBusinessInstant, calculateQuoteExpiration, calculateQuoteFollowUpDates } from '../utils/businessTime.ts';
-import { validateQuoteInput, calculateQuoteTotals, roundedLineTotalCents, amountInCents } from '../utils/cabmsLogic.ts';
+import { validateQuoteInput, calculateQuoteTotals, roundedLineTotalCents, amountInCents, processPublishTemplate } from '../utils/cabmsLogic.ts';
 
 // Direct fixture imports
 import brandsFixture from '../data/fixtures/brands.json';
@@ -730,7 +731,15 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
-    tpl.activeStatus = 'PUBLISHED';
+    if (tpl.activeStatus === 'PUBLISHED') {
+      return structuredClone(tpl);
+    }
+
+    const res = processPublishTemplate(tpl, 'super_admin', serializeBusinessInstant(this.clock()));
+    if (!res.success || !res.updatedTemplate) {
+      throw new ValidationError(res.error || 'Cannot publish template.');
+    }
+    Object.assign(tpl, res.updatedTemplate);
     return structuredClone(tpl);
   }
 
@@ -738,8 +747,16 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
+    const draftRev: TemplateRevision = {
+      version: `${tpl.currentVersion}-draft`,
+      status: 'DRAFT',
+      content: newContent,
+      updatedAt: serializeBusinessInstant(this.clock()),
+      updatedBy: 'SUPER_ADMIN',
+    };
     tpl.content = newContent;
     tpl.activeStatus = 'DRAFT';
+    tpl.revisions = [draftRev, ...tpl.revisions];
     return structuredClone(tpl);
   }
 
@@ -748,6 +765,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
     if (!tpl) throw new NotFoundError('Template', templateId);
 
     tpl.activeStatus = 'REVIEW';
+    tpl.revisions = tpl.revisions.map((r, idx) =>
+      idx === 0 ? { ...r, status: 'REVIEW', updatedAt: serializeBusinessInstant(this.clock()) } : r
+    );
     return structuredClone(tpl);
   }
 

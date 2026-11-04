@@ -275,5 +275,90 @@ test('authenticated technician session routes to simulated schedule view with te
 
  assert.match(container.textContent!,/Field Service Dispatch & Calendar Scheduling/);
  assert.doesNotMatch(container.textContent!,/Synthetic demo appointments/);
+
+ // Technician scoping: assigned jobs for TECH-001 (Dave Miller) are visible
+ assert.match(container.textContent!,/JOB-2026-101/,'technician sees own assigned job');
+ assert.match(container.textContent!,/Dave Miller/,'technician sees own assignment name');
+
+ // Technician scoping: other technicians' jobs (TECH-002 / Alex Taylor, e.g. JOB-2026-104) are strictly hidden
+ assert.doesNotMatch(container.textContent!,/JOB-2026-104/,'technician cannot view another technician assigned job');
+ assert.doesNotMatch(container.textContent!,/Alex Taylor/,'technician cannot view another technician name in dispatch');
+ assert.doesNotMatch(container.textContent!,/TECH-002/,'technician cannot view other technician ID');
+
+ await act(async()=>root.unmount());
+});
+
+test('401 or 403 access denial during mutation clears previously loaded appointment records',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(),worker=createWorker(createAuthenticationService(fixture.transport));
+ const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'},actor=G01_TEST_AUTH.officeStaff;
+ const token=await fixture.token(actor.uid,actor.email);
+ const direct=(path:string,body:unknown)=>worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)}),env);
+ const e=await (await direct('enquiries',{customer_name:'Synthetic',service:'Synthetic appointment'})).json() as {id:string};
+ const job=await (await direct(`enquiries/${e.id}/conversion`,{})).json() as {id:string};
+ await direct('demo-appointments',{job_id:job.id,starts_at:'2026-11-05T01:00:00.000Z',ends_at:'2026-11-05T02:00:00.000Z'});
+
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'}),keys=['window','document','navigator','HTMLElement','HTMLInputElement','IS_REACT_ACT_ENVIRONMENT'];
+ const saved=new Map(keys.map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
+ for(const k of keys)Object.defineProperty(globalThis,k,{configurable:true,writable:true,value:k==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[k]});
+ t.after(()=>{mock.restoreAll();resetApiBase();dom.window.close();for(const k of keys){const d=saved.get(k);if(d)Object.defineProperty(globalThis,k,d);else delete (globalThis as any)[k];}});
+
+ let injectStatus:number|null=null;
+ let injectDetail:string='Access denied';
+ mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+  const request=new Request(input,init);
+  if(injectStatus && (request.method==='POST' || request.method==='PATCH') && new URL(request.url).pathname.includes('/demo-appointments')){
+   return Response.json({detail:injectDetail},{status:injectStatus});
+  }
+  return worker.fetch(request,env);
+ });setApiBase('http://localhost');
+
+ const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=>token,login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const flush=async()=>act(async()=>{await new Promise(r=>setTimeout(r,30));});
+ await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(ScheduleView))));});await flush();
+
+ // Confirm appointment is loaded initially
+ assert.match(container.textContent!,new RegExp(job.id));
+ assert.match(container.textContent!,/scheduled - version 1/);
+ assert.equal(container.querySelectorAll('li').length,1);
+
+ // 1. HTTP 401 during mutation: clears records, shows session error, remains unlocked
+ injectStatus=401;
+ injectDetail='Unauthorized';
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
+ assert.match(container.textContent!,/Session could not be verified; sign in again\./);
+ assert.equal(container.querySelectorAll('li').length,0,'appointments list is cleared on 401 mutation failure');
+ assert.doesNotMatch(container.textContent!,/Changes are locked/,'401 error does not lock form as uncertain');
+
+ // Restore appointment for next check
+ injectStatus=null;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Refresh appointments')!.click();});await flush();
+ assert.match(container.textContent!,new RegExp(job.id));
+ assert.equal(container.querySelectorAll('li').length,1);
+
+ // 2. HTTP 403 pre-write rejection during mutation: clears records, shows permission denied, remains unlocked
+ injectStatus=403;
+ injectDetail='You do not have access to this workspace';
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
+ assert.match(container.textContent!,/Save rejected: permission denied/);
+ assert.equal(container.querySelectorAll('li').length,0,'appointments list is cleared on 403 pre-write rejection');
+ assert.doesNotMatch(container.textContent!,/Changes are locked/,'403 pre-write rejection does not lock form as uncertain');
+
+ // Restore appointment for next check
+ injectStatus=null;
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Refresh appointments')!.click();});await flush();
+ assert.match(container.textContent!,new RegExp(job.id));
+ assert.equal(container.querySelectorAll('li').length,1);
+
+ // 3. HTTP 403 post-write permission revocation during mutation: clears records, locks UI as uncertain
+ injectStatus=403;
+ injectDetail='Permission changed';
+ await act(async()=>{Array.from(container.querySelectorAll('button')).find(b=>b.textContent==='Cancel appointment')!.click();});await flush();
+ assert.match(container.textContent!,/Save outcome is unknown/);
+ assert.match(container.textContent!,/Changes are locked/);
+ assert.equal(container.querySelectorAll('li').length,0,'appointments list is cleared on 403 post-write revocation');
+
  await act(async()=>root.unmount());
 });

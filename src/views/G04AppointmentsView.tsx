@@ -65,7 +65,7 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
     inFlight.current=true;setBusy(true);setMessage('Saving synthetic appointment...');
     let token:string;
     try {token=await session.token();}
-    catch {setMessage('Session could not be verified; no change was sent.');inFlight.current=false;setBusy(false);return;}
+    catch {setAppointments([]);setMessage('Session could not be verified; no change was sent.');inFlight.current=false;setBusy(false);return;}
     try {
       const saved=await request<DemoAppointment>(activeWorkspace,token,path,method,body);
       if(mutationEpoch!==epoch.current || session.workspaceId!==activeWorkspace)return;
@@ -103,14 +103,22 @@ export function G04AppointmentsView({ fallback }: { fallback?: React.ReactNode }
           return;
         }
         if (error.status === 401) {
+          setAppointments([]);
           setMessage('Session could not be verified; sign in again.');
           return;
         }
-        if (error.status === 403 && error.message !== 'Permission changed') {
-          setMessage(`Save rejected: permission denied. (${error.message})`);
+        if (error.status === 403) {
+          setAppointments([]);
+          if (error.message !== 'Permission changed') {
+            setMessage(`Save rejected: permission denied. (${error.message})`);
+            return;
+          }
+          setLocked(true);
+          setMessage('Save outcome is unknown. Do not retry until the outcome is independently verified; refresh alone may not establish it.');
           return;
         }
         if (error.status === 404) {
+          setAppointments([]);
           setMessage('Synthetic scheduling is disabled in this environment.');
           return;
         }

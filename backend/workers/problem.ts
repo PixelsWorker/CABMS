@@ -92,6 +92,22 @@ export function accessDeniedResponse(
   );
 }
 
+export function permissionChangedResponse(
+  detail: string,
+  requestId: string,
+  instance?: string
+): Response {
+  return createProblemResponse(
+    403,
+    'PERMISSION_CHANGED',
+    'permission-changed',
+    'Permission Changed',
+    detail,
+    requestId,
+    instance
+  );
+}
+
 export function resourceNotFoundResponse(
   detail: string,
   requestId: string,

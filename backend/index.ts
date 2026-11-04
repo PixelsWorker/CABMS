@@ -25,6 +25,7 @@ import {
 import { StructuredLogger } from './workers/logger.ts';
 import { approvedMembership } from './workers/privilegedApproval.ts';
 import { handleDemoJourney, handleDemoJob } from './workers/routes/demoJourney.ts';
+import { handleDemoAppointments } from './workers/routes/demoAppointments.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
   return {
@@ -149,6 +150,9 @@ export function createWorker(authentication: AuthenticationService = productionA
         }
         return addCors(resp, env);
       }
+
+      const appointmentMatch = /^\/api\/v1\/workspaces\/([^/]+)\/demo-appointments(?:\/([^/]+))?$/.exec(pathname);
+      if (appointmentMatch) return addCors(await handleDemoAppointments(request, env, appointmentMatch[1], appointmentMatch[2], requestId, authentication), env);
 
       const jobMatch = /^\/api\/v1\/workspaces\/([^/]+)\/jobs\/([^/]+)(?:\/steps\/([^/]+))?$/.exec(pathname);
       if (jobMatch) {

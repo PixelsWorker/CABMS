@@ -65,6 +65,8 @@ import {
   processPublishTemplate,
   processReviewDispatch,
   validateSignedSnapshot,
+  validateQuoteInput,
+  calculateQuoteTotals,
 } from '../utils/cabmsLogic.ts';
 import { advanceBusinessClock, businessCalendarDate, serializeBusinessInstant, calculateQuoteFollowUpDates, calculateQuoteExpiration } from '../utils/businessTime.ts';
 
@@ -2497,10 +2499,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(access.reason);
     }
 
-    // Clear subtotal (ex-GST) + GST (10%) = Total (inc-GST) convention
-    const subtotal = Math.round(lineItems.reduce((acc, item) => acc + item.total, 0) * 100) / 100;
-    const gst = Math.round(subtotal * 0.1 * 100) / 100;
-    const total = Math.round((subtotal + gst) * 100) / 100;
+    const validation = validateQuoteInput(title, lineItems);
+    if (!validation.valid) {
+      const message = validation.error || 'Cannot prepare quote: line items must have valid values and totals.';
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
+
+    const { subtotal, gst, total } = calculateQuoteTotals(lineItems);
 
     const brand = brands[targetBrandId];
     // The editable template content may be a draft. Only the matching published

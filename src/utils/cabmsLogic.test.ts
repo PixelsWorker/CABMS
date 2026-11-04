@@ -13,6 +13,10 @@ import {
   processPublishTemplate,
   processReviewDispatch,
   validateSignedSnapshot,
+  validateQuoteInput,
+  calculateQuoteTotals,
+  roundedLineTotalCents,
+  amountInCents,
 } from './cabmsLogic.ts';
 import { Job, Customer, TemplateSetting } from '../types/cabms.ts';
 import {
@@ -640,12 +644,90 @@ test('verifyPersonaAccess: technician and office staff boundaries (G00-001)', ()
 test('quotation GST math: ex-GST subtotal + 10% GST = total inc GST without double taxing', () => {
   const grossTarget = 1450;
   const exSubtotal = Math.round((grossTarget / 1.1) * 100) / 100;
-  const gst = Math.round(exSubtotal * 0.1 * 100) / 100;
-  const calculatedTotal = Math.round((exSubtotal + gst) * 100) / 100;
+  const totals = calculateQuoteTotals([{ total: exSubtotal }]);
 
-  assert.equal(exSubtotal, 1318.18);
-  assert.equal(gst, 131.82);
-  assert.equal(calculatedTotal, 1450.00);
+  assert.equal(totals.subtotal, 1318.18);
+  assert.equal(totals.gst, 131.82);
+  assert.equal(totals.total, 1450.00);
+});
+
+test('calculateQuoteTotals: synthetic half-up integer-cent rounding across boundary cases', () => {
+  // P2-2 verified rule: subtotal $0.35 -> GST $0.04 -> total $0.39
+  const p2Case = calculateQuoteTotals([{ total: 0.35 }]);
+  assert.equal(p2Case.subtotal, 0.35);
+  assert.equal(p2Case.gst, 0.04);
+  assert.equal(p2Case.total, 0.39);
+
+  // Aggregation of multiple line items reaching $0.35
+  const multiItem = calculateQuoteTotals([
+    { total: 0.34 },
+    { total: 0.01 },
+  ]);
+  assert.equal(multiItem.subtotal, 0.35);
+  assert.equal(multiItem.gst, 0.04);
+  assert.equal(multiItem.total, 0.39);
+
+  // Fractional quantity line items aggregating to exact totals
+  const halfUnitQty = 0.5;
+  const halfUnitPrice = 0.70;
+  const lineTotalCents = roundedLineTotalCents(halfUnitQty, halfUnitPrice);
+  assert.equal(lineTotalCents, 35n);
+  const fractionalCase = calculateQuoteTotals([{ total: Number(lineTotalCents) / 100 }]);
+  assert.equal(fractionalCase.subtotal, 0.35);
+  assert.equal(fractionalCase.gst, 0.04);
+  assert.equal(fractionalCase.total, 0.39);
+
+  // Exact boundary cases for 10% half-up rounding:
+  // 4 cents -> 0.4c -> 0c
+  assert.deepEqual(calculateQuoteTotals([{ total: 0.04 }]), { subtotal: 0.04, gst: 0.00, total: 0.04 });
+  // 5 cents -> 0.5c -> 1c
+  assert.deepEqual(calculateQuoteTotals([{ total: 0.05 }]), { subtotal: 0.05, gst: 0.01, total: 0.06 });
+  // 14 cents -> 1.4c -> 1c
+  assert.deepEqual(calculateQuoteTotals([{ total: 0.14 }]), { subtotal: 0.14, gst: 0.01, total: 0.15 });
+  // 15 cents -> 1.5c -> 2c
+  assert.deepEqual(calculateQuoteTotals([{ total: 0.15 }]), { subtotal: 0.15, gst: 0.02, total: 0.17 });
+  // 34 cents -> 3.4c -> 3c
+  assert.deepEqual(calculateQuoteTotals([{ total: 0.34 }]), { subtotal: 0.34, gst: 0.03, total: 0.37 });
+});
+
+test('validateQuoteInput: validates quote title, line items, and rejects invalid amounts', () => {
+  const validItem = { id: 'item-1', description: 'Labour', quantity: 2, unitPrice: 50, total: 100 };
+
+  // Valid inputs
+  assert.equal(validateQuoteInput('Valid Quote', [validItem]).valid, true);
+  assert.equal(validateQuoteInput('Quote', [{ id: 'item-2', description: 'Fractional', quantity: 1.5, unitPrice: 20, total: 30 }]).valid, true);
+
+  // Blank or invalid title
+  assert.equal(validateQuoteInput('', [validItem]).valid, false);
+  assert.equal(validateQuoteInput('   ', [validItem]).valid, false);
+  assert.equal(validateQuoteInput(null, [validItem]).valid, false);
+
+  // Empty or invalid lineItems array
+  assert.equal(validateQuoteInput('Quote', []).valid, false);
+  assert.equal(validateQuoteInput('Quote', null).valid, false);
+
+  // Invalid item fields
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, id: '' }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, description: '  ' }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, quantity: 0 }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, quantity: -1 }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, quantity: Number.NaN }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, unitPrice: -5 }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, total: -100 }]).valid, false);
+
+  // Total mismatch with unitPrice * quantity
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, total: 99.99 }]).valid, false);
+
+  // Fractional cent total and fractional cent unitPrice
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, total: 100.005 }]).valid, false);
+  assert.equal(validateQuoteInput('Quote', [{ ...validItem, unitPrice: 0.001, quantity: 10, total: 0.01 }]).valid, false);
+
+  // Non-finite overflow amounts
+  assert.equal(validateQuoteInput('Quote', [
+    { id: '1', description: 'Huge 1', quantity: 1, unitPrice: 1e306, total: 1e306 },
+    { id: '2', description: 'Huge 2', quantity: 1, unitPrice: 1e306, total: 1e306 },
+  ]).valid, false);
+  assert.throws(() => calculateQuoteTotals([{ total: 1e306 }, { total: 1e306 }]), RangeError);
 });
 
 test('validateJobCompletion: blocks completion if job requires forms but forms are unsigned', () => {

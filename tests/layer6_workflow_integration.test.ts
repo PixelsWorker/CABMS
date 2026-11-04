@@ -3896,3 +3896,53 @@ test('G03 preview refuses issuance when the published terms revision is missing'
     }
   });
 });
+
+test('G03 context path prepareQuoteForJob rejects invalid inputs without changing job quote state or counters', async () => {
+  await withMountedContext(async ctx => {
+    await act(async () => { ctx.resetDemo(); ctx.setPersona('super_admin'); });
+    const beforeState = structuredClone(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote);
+    const validItem = { id: 'item-1', description: 'Synthetic item', quantity: 2, unitPrice: 50, total: 100 };
+
+    const invalidInputs: [string, typeof validItem[], RegExp][] = [
+      ['', [validItem], /title is required/],
+      ['   ', [validItem], /title is required/],
+      ['Quote', [], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, id: '' }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, description: '' }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, quantity: 0 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, quantity: -1 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, unitPrice: -10 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, total: -100 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, total: 99.99 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, total: 100.005 }], /line items must have valid values and totals/],
+      ['Quote', [{ ...validItem, unitPrice: 0.001, quantity: 10, total: 0.01 }], /line items must have valid values and totals/],
+    ];
+
+    for (const [title, lineItems, expectedErr] of invalidInputs) {
+      await act(async () => {
+        assert.throws(
+          () => ctx.prepareQuoteForJob('JOB-2026-101', title, lineItems),
+          expectedErr,
+        );
+      });
+      // Assert job quote state was NOT changed
+      assert.deepEqual(ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote, beforeState);
+    }
+
+    // Now issue a valid quote with $0.35 subtotal to prove P2-2 GST rounding on context path
+    let issued!: Quote;
+    await act(async () => {
+      issued = ctx.prepareQuoteForJob('JOB-2026-101', 'P2-2 Half Up Quote', [
+        { id: 'item-sub35', description: 'Small Part', quantity: 1, unitPrice: 0.35, total: 0.35 },
+      ]);
+    });
+    assert.equal(issued.subtotal, 0.35);
+    assert.equal(issued.gst, 0.04);
+    assert.equal(issued.total, 0.39);
+    assert.equal(issued.id, 'QUOTE-2026-51', 'quote counter was not incremented during failed attempts');
+    const stored = ctx.getAuthoritativeState().jobs.find(j => j.id === 'JOB-2026-101')!.quote!;
+    assert.equal(stored.subtotal, 0.35);
+    assert.equal(stored.gst, 0.04);
+    assert.equal(stored.total, 0.39);
+  });
+});

@@ -37,6 +37,7 @@ import {
 } from './types.ts';
 
 import { INITIAL_BUSINESS_CLOCK, serializeBusinessInstant, calculateQuoteExpiration, calculateQuoteFollowUpDates } from '../utils/businessTime.ts';
+import { validateQuoteInput, calculateQuoteTotals, roundedLineTotalCents, amountInCents } from '../utils/cabmsLogic.ts';
 
 // Direct fixture imports
 import brandsFixture from '../data/fixtures/brands.json';
@@ -50,32 +51,6 @@ import sampleAttachmentsFixture from '../data/fixtures/sampleAttachments.json';
 import complianceFormsFixture from '../data/fixtures/complianceForms.json';
 import tca2AuditsFixture from '../data/fixtures/tca2Audits.json';
 
-function roundedLineTotalCents(quantity: number, unitPrice: number): bigint {
-  const asFraction = (value: number): [bigint, bigint] => {
-    const [coefficient, exponentText] = value.toString().toLowerCase().split('e');
-    const [whole, fraction = ''] = coefficient.split('.');
-    const exponent = Number(exponentText || 0) - fraction.length;
-    const numerator = BigInt(`${whole}${fraction}`);
-    return exponent >= 0
-      ? [numerator * 10n ** BigInt(exponent), 1n]
-      : [numerator, 10n ** BigInt(-exponent)];
-  };
-  const [quantityNumerator, quantityDenominator] = asFraction(quantity);
-  const [priceNumerator, priceDenominator] = asFraction(unitPrice);
-  const numerator = quantityNumerator * priceNumerator * 100n;
-  const denominator = quantityDenominator * priceDenominator;
-  return (numerator * 2n + denominator) / (denominator * 2n);
-}
-
-function amountInCents(amount: number): bigint {
-  const [coefficient, exponentText] = amount.toString().toLowerCase().split('e');
-  const [whole, fraction = ''] = coefficient.split('.');
-  const exponent = Number(exponentText || 0) - fraction.length + 2;
-  const numerator = BigInt(`${whole}${fraction}`);
-  return exponent >= 0
-    ? numerator * 10n ** BigInt(exponent)
-    : (numerator * 2n + 10n ** BigInt(-exponent)) / (2n * 10n ** BigInt(-exponent));
-}
 
 interface ComplianceStore {
   jsa: Record<string, JsaFormData>;
@@ -602,19 +577,9 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job) throw new NotFoundError('Job', jobId);
 
-    if (typeof title !== 'string' || !title.trim()) {
-      throw new ValidationError('Cannot prepare quote: title is required.');
-    }
-    if (!Array.isArray(lineItems) || lineItems.length === 0 || lineItems.some(item =>
-      !item || typeof item.id !== 'string' || !item.id.trim() ||
-      typeof item.description !== 'string' || !item.description.trim() ||
-      !Number.isFinite(item.quantity) || item.quantity <= 0 ||
-      !Number.isFinite(item.unitPrice) || item.unitPrice < 0 ||
-      !Number.isFinite(item.total) || item.total < 0 ||
-      Number(amountInCents(item.total)) / 100 !== item.total ||
-      roundedLineTotalCents(item.quantity, item.unitPrice) !== amountInCents(item.total)
-    )) {
-      throw new ValidationError('Cannot prepare quote: line items must have valid values and totals.');
+    const validation = validateQuoteInput(title, lineItems);
+    if (!validation.valid) {
+      throw new ValidationError(validation.error || 'Cannot prepare quote: line items must have valid values and totals.');
     }
 
     // Editable preview content may be an unpublished draft; freeze the current
@@ -634,9 +599,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
       if (!(error instanceof RangeError)) throw error;
       throw new ValidationError(`Cannot prepare quote: ${error.message}`);
     }
-    const subtotal = Math.round(lineItems.reduce((acc, item) => acc + item.total, 0) * 100) / 100;
-    const gst = Math.round(subtotal * 0.10 * 100) / 100;
-    const total = Math.round((subtotal + gst) * 100) / 100;
+    const { subtotal, gst, total } = calculateQuoteTotals(lineItems);
     const quoteId = `QUOTE-2026-${String(jobId).replace(/[^\d]/g, '')}`;
 
     const newQuote: Quote = {

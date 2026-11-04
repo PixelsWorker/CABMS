@@ -243,6 +243,12 @@ test('LAYER 6: synthetic adapter maintains published TERMS revision lifecycle ac
   assert.equal(quote1.termsVersion, originalVersion);
   assert.equal(quote1.termsContentSnapshot, originalPublishedRev.content);
 
+  // Submitting for review when no draft exists must be rejected
+  await assert.rejects(
+    () => adapter.submitTemplateForReview(terms.id),
+    (err: any) => err.code === 'VALIDATION_FAILED'
+  );
+
   // 2. Create draft on TERMS
   await adapter.createTemplateDraftRevision(terms.id, 'Terms Revision v1.1 text');
   const inDraftTemplates = await adapter.getTemplates();

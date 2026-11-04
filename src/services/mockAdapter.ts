@@ -764,6 +764,10 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
+    if (tpl.revisions[0]?.status !== 'DRAFT') {
+      throw new ValidationError('Only a draft revision can be submitted for review.');
+    }
+
     tpl.activeStatus = 'REVIEW';
     tpl.revisions = tpl.revisions.map((r, idx) =>
       idx === 0 ? { ...r, status: 'REVIEW', updatedAt: serializeBusinessInstant(this.clock()) } : r

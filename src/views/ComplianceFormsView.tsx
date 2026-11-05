@@ -41,7 +41,7 @@ import {
   Tca1CertData,
   Tca2CertData,
 } from '../types/cabms.ts';
-import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
+import { validateSignedSnapshot, DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, stripAffirmativeComplianceNotes } from '../utils/cabmsLogic.ts';
 import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../utils/g05PreviewReadiness.ts';
 
 type ActiveFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
@@ -1701,6 +1701,25 @@ export const ComplianceFormsView: React.FC = () => {
                           </tbody>
                         </table>
                       </div>
+
+                      {(() => {
+                        const rawNotes = displaySmoke.limitationsAndRentalNotes || '';
+                        const hasFailed = (displaySmoke.alarmSchedule || []).some((a: any) =>
+                          a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail' || a.buttonTestPass === false || a.interconnectionPass === false
+                        );
+                        let notesToShow = rawNotes;
+                        if (hasFailed && !displaySmoke.signedOff) {
+                          notesToShow = stripAffirmativeComplianceNotes(rawNotes);
+                          const draftNotice = 'DRAFT NOTICE: One or more alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+                          notesToShow = notesToShow ? `${notesToShow} • ${draftNotice}` : draftNotice;
+                        }
+                        if (!notesToShow) return null;
+                        return (
+                          <div className="bg-slate-50 p-2.5 rounded border border-slate-200 text-[11px] text-slate-700">
+                            <strong>Limitations &amp; Statutory Compliance Notes:</strong> {notesToShow}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 

@@ -25,6 +25,11 @@ import {
   WebsiteEnquiry,
 } from '../types/cabms.ts';
 import {
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE,
+  stripAffirmativeComplianceNotes,
+} from '../utils/cabmsLogic.ts';
+import {
   CabmsDataAdapter,
   CreateJobPayload,
   ForbiddenError,
@@ -486,11 +491,14 @@ export class MockDataAdapter implements CabmsDataAdapter {
       };
     });
     const hasFailedAlarm = existing.alarmSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
-    const failureNotice = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    const failureNotice = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
     const existingNotes = (existing.limitationsAndRentalNotes || '').trim();
     let notes = existingNotes;
-    if (hasFailedAlarm && !existingNotes.includes(failureNotice)) {
-      notes = existingNotes ? `${existingNotes} • ${failureNotice}` : failureNotice;
+    if (hasFailedAlarm) {
+      notes = stripAffirmativeComplianceNotes(notes);
+    }
+    if (hasFailedAlarm && !notes.includes(failureNotice)) {
+      notes = notes ? `${notes} • ${failureNotice}` : failureNotice;
     }
     existing.limitationsAndRentalNotes = notes;
     existing.signedOff = true;

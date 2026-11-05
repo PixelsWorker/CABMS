@@ -13,6 +13,9 @@ import {
   processPublishTemplate,
   processReviewDispatch,
   validateSignedSnapshot,
+  stripAffirmativeComplianceNotes,
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE,
 } from './cabmsLogic.ts';
 import { Job, Customer, TemplateSetting, SmokeAlarmCertData, ElectricalCertData } from '../types/cabms.ts';
 import {
@@ -358,6 +361,69 @@ test('validateSignedSnapshot rejects TCA2 snapshot with unsupported top-level en
     validateSignedSnapshot(JSON.stringify(invalidUrgency), INITIAL_TCA2_CERT.jobReference, 'TCA2').valid,
     false,
   );
+});
+
+test('validateSignedSnapshot rejects and validates ELECTRICAL occupierRole enum values', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  for (const validRole of ['Owner', 'Tenant', 'Property Manager', 'Builder'] as const) {
+    const clone = structuredClone(valid);
+    clone.occupierRole = validRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+    assert.equal(res.valid, true, `Valid occupierRole "${validRole}" should be accepted`);
+  }
+  for (const invalidRole of ['Contractor', 'Subcontractor', 'Unknown', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.occupierRole = invalidRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+    assert.equal(res.valid, false, `Invalid occupierRole "${invalidRole}" should be rejected`);
+    assert.match(res.error || '', /unsupported occupierRole|lacks mandatory occupierRole/);
+  }
+});
+
+test('validateSignedSnapshot rejects and validates SMOKE_ALARM top-level enums', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+
+  for (const validRole of ['Owner', 'Property Manager', 'Tenant'] as const) {
+    const clone = structuredClone(valid);
+    clone.issuedToRole = validRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, true, `Valid issuedToRole "${validRole}" should be accepted`);
+  }
+  for (const invalidRole of ['Builder', 'Contractor', 'Unknown', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.issuedToRole = invalidRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, false, `Invalid issuedToRole "${invalidRole}" should be rejected`);
+    assert.match(res.error || '', /unsupported issuedToRole|lacks mandatory issuedToRole/);
+  }
+
+  for (const validType of ['Detached House', 'Townhouse', 'Unit / Apartment', 'Commercial Office'] as const) {
+    const clone = structuredClone(valid);
+    clone.propertyType = validType;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, true, `Valid propertyType "${validType}" should be accepted`);
+  }
+  for (const invalidType of ['Warehouse', 'Factory', 'InvalidType', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.propertyType = invalidType;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, false, `Invalid propertyType "${invalidType}" should be rejected`);
+    assert.match(res.error || '', /unsupported propertyType|lacks mandatory propertyType/);
+  }
+
+  for (const validStatus of ['Occupied', 'Vacant', 'Tenanted'] as const) {
+    const clone = structuredClone(valid);
+    clone.occupancyStatus = validStatus;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, true, `Valid occupancyStatus "${validStatus}" should be accepted`);
+  }
+  for (const invalidStatus of ['Abandoned', 'Under Construction', 'InvalidStatus', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.occupancyStatus = invalidStatus;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, false, `Invalid occupancyStatus "${invalidStatus}" should be rejected`);
+    assert.match(res.error || '', /unsupported occupancyStatus|lacks mandatory occupancyStatus/);
+  }
 });
 
 test('validateSignedSnapshot rejects incomplete or blank nested synthetic JSA step observations', () => {
@@ -1226,6 +1292,143 @@ test('processPublishTemplate: preserves reviewed revision in complete audit hist
   // Both the old v1.0 and the newly published revision are preserved in revisions array
   assert.equal(result.updatedTemplate?.revisions.length, 2);
   assert.ok(result.updatedTemplate?.revisions.some((r: any) => r.version === 'v1.1' && r.status === 'PUBLISHED'));
+});
+
+test('stripAffirmativeComplianceNotes removes every occurrence of default compliance notes while preserving custom technician text', () => {
+  // Single occurrence of DEFAULT note
+  assert.equal(
+    stripAffirmativeComplianceNotes(DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE),
+    '',
+  );
+  // Single occurrence of SEEDED note
+  assert.equal(
+    stripAffirmativeComplianceNotes(SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE),
+    '',
+  );
+  // Multiple occurrences of both notes combined with technician notes
+  const complex = `${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE} • Ceiling height in bedroom 2 requires ladder. • ${SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE} • ${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE}`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(complex),
+    'Ceiling height in bedroom 2 requires ladder.',
+  );
+  // Unrelated technician text untouched
+  assert.equal(
+    stripAffirmativeComplianceNotes('Custom technician note only'),
+    'Custom technician note only',
+  );
+  // Embedded or quoted text in technician narrative is preserved
+  const narrative = 'Previous certificate stated: Interconnected photoelectric alarms comply with current Queensland fire legislation. Inspection found otherwise.';
+  assert.equal(
+    stripAffirmativeComplianceNotes(narrative),
+    narrative,
+  );
+  // Default compliance sentence followed immediately by custom text in same paragraph
+  const sameParagraph = `${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE} Bedroom 3 ceiling fan requires clearance check.`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(sameParagraph),
+    'Bedroom 3 ceiling fan requires clearance check.',
+  );
+  // Adjacent repeats of default note are both removed
+  const adjacent = `${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE} • ${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE}`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(adjacent),
+    '',
+  );
+
+  // Space-separated repeated default notes in all permutations and orders
+  const D = DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE;
+  const S = SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE;
+
+  // D + space + D
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D} ${D}`),
+    '',
+    'D + space + D is completely stripped',
+  );
+
+  // S + space + S
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${S} ${S}`),
+    '',
+    'S + space + S is completely stripped',
+  );
+
+  // D + space + S
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D} ${S}`),
+    '',
+    'D + space + S is completely stripped',
+  );
+
+  // S + space + D
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${S} ${D}`),
+    '',
+    'S + space + D is completely stripped',
+  );
+
+  // D + space + S + space + D
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D} ${S} ${D}`),
+    '',
+    'D + space + S + space + D is completely stripped',
+  );
+
+  // S + space + D + space + S
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${S} ${D} ${S}`),
+    '',
+    'S + space + D + space + S is completely stripped',
+  );
+
+  // Multiple consecutive whitespace characters (spaces, tabs, newlines) between repeated defaults
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D}   ${S}`),
+    '',
+    'Multiple spaces between defaults stripped',
+  );
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D}\t${S}`),
+    '',
+    'Tab between defaults stripped',
+  );
+
+  // Technician-authored text before and after repeated defaults
+  const techBeforeAndAfter = `Replaced hallway alarm • ${D} ${S} • Tested OK on master control panel`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(techBeforeAndAfter),
+    'Replaced hallway alarm • Tested OK on master control panel',
+    'Preserves technician text before and after repeated defaults',
+  );
+
+  const techBeforeOnly = `Replaced hallway alarm • ${D} ${S}`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(techBeforeOnly),
+    'Replaced hallway alarm',
+    'Preserves technician text before repeated defaults',
+  );
+
+  const techAfterOnly = `${D} ${S} • Tested OK on master control panel`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(techAfterOnly),
+    'Tested OK on master control panel',
+    'Preserves technician text after repeated defaults',
+  );
+
+  // Narrative quotations that mention legislation but must remain intact
+  const narrativeD = `Technician noted that ${D} cannot be asserted at this time.`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(narrativeD),
+    narrativeD,
+    'Preserves embedded narrative quote referencing default note',
+  );
+
+  const narrativeS = `Previous owner report claimed that ${S} but testing failed.`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(narrativeS),
+    narrativeS,
+    'Preserves embedded narrative quote referencing seeded note',
+  );
 });
 
 

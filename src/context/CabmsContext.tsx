@@ -65,6 +65,9 @@ import {
   processPublishTemplate,
   processReviewDispatch,
   validateSignedSnapshot,
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE,
+  stripAffirmativeComplianceNotes,
 } from '../utils/cabmsLogic.ts';
 import { advanceBusinessClock, businessCalendarDate, serializeBusinessInstant, calculateQuoteFollowUpDates, calculateQuoteExpiration } from '../utils/businessTime.ts';
 
@@ -1735,7 +1738,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ],
       relatedElectricalCertRef: 'N/A',
       attachmentsLinked: false,
-      limitationsAndRentalNotes: 'Interconnected photoelectric alarms comply with current Queensland fire legislation.',
+      limitationsAndRentalNotes: DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
       signedOff: false,
       provisionalNote: 'PROVISIONAL NOTICE: Per-alarm Pass/Fail, room counts, and expiry wording are provisional.',
       attachedSampleIds: [],
@@ -2018,8 +2021,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     });
 
     const hasFailedAlarm = currentSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
-    const failureNotice = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+    const failureNotice = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
     let notes = (current.limitationsAndRentalNotes || '').trim();
+    if (hasFailedAlarm) {
+      notes = stripAffirmativeComplianceNotes(notes);
+    }
     if (hasFailedAlarm && !notes.includes(failureNotice)) {
       notes = notes ? `${notes} • ${failureNotice}` : failureNotice;
     }

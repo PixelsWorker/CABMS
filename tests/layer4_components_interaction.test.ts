@@ -1305,3 +1305,59 @@ test('LAYER 4: WorkspaceSettings — retains unsaved form drafts across workspac
     assert.equal(ctx.brands.solarcell.preferredPreset, 'light_neutral', 'Saved draft preset committed to brand configuration');
   });
 });
+
+
+test('LAYER 4: ComplianceFormsView renders statutory non-compliance notice in smoke alarm print preview when inspection failed', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container) => {
+    let id = '';
+    await act(async () => {
+      id = ctx.createJob({ brandId: 'solarcell', title: 'Smoke alarm failure test', jobType: 'JT-001', formsRequired: ['SMOKE_ALARM'] }).id;
+      ctx.setSelectedJobId(id);
+    });
+
+    await act(async () => {
+      const tab = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Smoke Alarm'));
+      tab?.click();
+    });
+
+    const smoke = ctx.getOrCreateSmokeAlarm(id);
+    const updatedSchedule = smoke.alarmSchedule.map((a, i) => i === 0 ? { ...a, passFail: 'Fail' as const, buttonTestPass: false } : a);
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(id, { alarmSchedule: updatedSchedule });
+    });
+
+    // 1. Verify draft preview before sign-off suppresses default compliance assertion and displays draft failure notice
+    await act(async () => {
+      const printBtn = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Print / PDF Preview'));
+      printBtn?.click();
+    });
+    let draftText = container.textContent || '';
+    assert.ok(draftText.includes('DRAFT NOTICE: One or more alarms failed inspection'), 'Draft print preview contains draft failure notice');
+    assert.ok(!draftText.includes('Interconnected photoelectric alarms comply with current Queensland fire legislation.'), 'Draft print preview suppresses default compliance note when alarm failed');
+
+    // Close preview modal
+    await act(async () => {
+      const closeBtn = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Close Preview'));
+      closeBtn?.click();
+    });
+
+    // 2. Sign off the smoke alarm certificate
+    await act(async () => {
+      ctx.signOffSmokeAlarm(id);
+    });
+
+    const signedSmoke = ctx.getOrCreateSmokeAlarm(id);
+    assert.equal(signedSmoke.signedOff, true);
+
+    // 3. Verify signed print preview renders statutory failure notice
+    await act(async () => {
+      const printBtn = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Print / PDF Preview'));
+      printBtn?.click();
+    });
+
+    const text = container.textContent || '';
+    assert.ok(text.includes('Limitations & Statutory Compliance Notes:'), 'Print preview displays the limitations/statutory notes block');
+    assert.ok(text.includes('NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection'), 'Print preview contains the statutory non-compliance notice');
+    assert.ok(!text.includes('Interconnected photoelectric alarms comply with current Queensland fire legislation.'), 'Untouched default compliance assertion is removed on failure');
+  });
+});

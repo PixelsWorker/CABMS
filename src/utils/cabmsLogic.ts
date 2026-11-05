@@ -733,6 +733,35 @@ function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+export const DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE = 'Interconnected photoelectric alarms comply with current Queensland fire legislation.';
+export const SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE = 'All installed alarms meet the Queensland Fire and Emergency Services smoke alarm legislation mandate for interconnected photoelectric alarms.';
+export const STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+
+export const KNOWN_DEFAULT_COMPLIANCE_NOTES = [
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE,
+] as const;
+
+export function stripAffirmativeComplianceNotes(notes: string): string {
+  let cleaned = notes;
+  const escapedNotes = KNOWN_DEFAULT_COMPLIANCE_NOTES
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  const regex = new RegExp(`(^|[•\\r\\n])\\s*(?:${escapedNotes})(?=\\s|•|$)`, 'g');
+  let prev: string;
+  do {
+    prev = cleaned;
+    cleaned = cleaned.replace(regex, '$1 ');
+  } while (cleaned !== prev);
+
+  return cleaned
+    .split(/\s*•\s*/)
+    .map(s => s.trim().replace(/^[•\s]+|[•\s]+$/g, ''))
+    .filter(s => s.length > 0)
+    .join(' • ')
+    .trim();
+}
+
 export function validateSignedSnapshot(
   snapshotRaw?: string,
   expectedJobId?: string,
@@ -853,8 +882,24 @@ export function validateSignedSnapshot(
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot cannot record Pass status when recorded tests failed.' };
     }
+    if (formType === 'SMOKE_ALARM') {
+      if (!['Owner', 'Property Manager', 'Tenant'].includes(parsed.issuedToRole as string)) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported issuedToRole.' };
+      }
+      if (!['Detached House', 'Townhouse', 'Unit / Apartment', 'Commercial Office'].includes(parsed.propertyType as string)) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported propertyType.' };
+      }
+      if (!['Occupied', 'Vacant', 'Tenanted'].includes(parsed.occupancyStatus as string)) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported occupancyStatus.' };
+      }
+    }
     if (formType === 'ELECTRICAL' && (!Array.isArray(parsed.testedWorkItems) || parsed.testedWorkItems.length === 0)) {
       return { valid: false, error: 'ELECTRICAL snapshot must contain at least one tested work item.' };
+    }
+    if (formType === 'ELECTRICAL') {
+      if (!['Owner', 'Tenant', 'Property Manager', 'Builder'].includes(parsed.occupierRole as string)) {
+        return { valid: false, error: 'ELECTRICAL snapshot contains an unsupported occupierRole.' };
+      }
     }
     if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
       ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']

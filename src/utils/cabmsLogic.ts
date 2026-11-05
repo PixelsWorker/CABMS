@@ -85,6 +85,11 @@ export function validateJobCompletion(
           missingRequirements.push('Electrical Certificate record not started');
         } else if (!elec.signedOff) {
           missingRequirements.push('Electrical Certificate requires technician Preview sign-off');
+        } else {
+          const failingItems = (elec.testedWorkItems || []).filter(w => w.workResult === 'Fail' || w.polarityTest === 'Fail' || w.earthContinuity === 'Fail');
+          if (failingItems.length > 0) {
+            warnings.push(`Warning: ${failingItems.length} electrical test item(s) marked Fail. Rectification required.`);
+          }
         }
         // Always preserve unresolved Part B warning
         warnings.push('NOTICE: Electrical Part B / sections 7-8 not supplied or unresolved. No completed live certificate can be inferred.');
@@ -688,7 +693,7 @@ const signedSnapshotSchema: Record<SignedFormType, {
   objects: string[];
 }> = {
   JSA: {
-    strings: ['date', 'customerName', 'siteContactPlaceholder', 'siteAddress', 'taskDescription', 'assetsIdentified', 'personnelName', 'personnelRole', 'licencePlaceholder', 'licenceExpiryPlaceholder', 'formRevision', 'issuerPlaceholder', 'emergencyAssemblyArea', 'emergencyWardenPlaceholder', 'firstAidOfficerPlaceholder'],
+    strings: ['date', 'customerName', 'siteContactPlaceholder', 'siteAddress', 'taskDescription', 'assetsIdentified', 'personnelName', 'personnelRole', 'licencePlaceholder', 'licenceExpiryPlaceholder', 'formRevision', 'issuerPlaceholder', 'emergencyAssemblyArea', 'emergencyWardenPlaceholder', 'firstAidOfficerPlaceholder', 'overallRiskLevel'],
     booleans: ['inductionCompleted', 'competencyVerified'],
     numbers: [],
     arrays: ['steps', 'ppeChecklist', 'isolationsAndPermits', 'attachedSampleIds'],
@@ -728,6 +733,56 @@ function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+export const DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE = 'Interconnected photoelectric alarms comply with current Queensland fire legislation.';
+export const SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE = 'All installed alarms meet the Queensland Fire and Emergency Services smoke alarm legislation mandate for interconnected photoelectric alarms.';
+export const STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE = 'NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+
+export const KNOWN_DEFAULT_COMPLIANCE_NOTES = [
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE,
+] as const;
+
+/** Derive the unsigned/snapshot result without changing the technician's stored selection. */
+export function effectiveElectricalResult(item: ElectricalCertData['testedWorkItems'][number]): 'Pass' | 'Fail' {
+  return item.polarityTest === 'Fail' || item.earthContinuity === 'Fail' ? 'Fail' : item.workResult;
+}
+
+/** Overlay failed tests on manual smoke-alarm results; retain manual Fail and Provisional values. */
+export function effectiveSmokeAlarmResults(alarm: SmokeAlarmCertData['alarmSchedule'][number]) {
+  const failed = alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false;
+  return {
+    passFail: failed ? ('Fail' as const) : alarm.passFail,
+    complianceStatusProvisional: failed ? ('Fail' as const) : alarm.complianceStatusProvisional,
+  };
+}
+
+/** Match known assertions at note boundaries while preserving quotations in technician narratives. */
+function affirmativeCompliancePattern(): RegExp {
+  const escapedNotes = KNOWN_DEFAULT_COMPLIANCE_NOTES
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  return new RegExp(`(^|[•\\r\\n])\\s*(?:${escapedNotes})(?=\\s|•|$)`, 'g');
+}
+
+/** Remove known default assertions only while preparing unsigned or newly finalized notes. */
+export function stripAffirmativeComplianceNotes(notes: string): string {
+  let cleaned = notes;
+  const regex = affirmativeCompliancePattern();
+  let prev: string;
+  do {
+    prev = cleaned;
+    cleaned = cleaned.replace(regex, '$1 ');
+  } while (cleaned !== prev);
+
+  return cleaned
+    .split(/\s*•\s*/)
+    .map(s => s.trim().replace(/^[•\s]+|[•\s]+$/g, ''))
+    .filter(s => s.length > 0)
+    .join(' • ')
+    .trim();
+}
+
+/** Validate frozen preview evidence without mutating or repairing its recorded contents. */
 export function validateSignedSnapshot(
   snapshotRaw?: string,
   expectedJobId?: string,
@@ -815,6 +870,139 @@ export function validateSignedSnapshot(
     for (const [arrayField, requiredFields] of Object.entries(nestedRequirements[formType as SignedFormType] || {})) {
       if (parsed[arrayField].some((item: unknown) => !isRecord(item) || requiredFields.some(field => !(field in item)))) {
         return { valid: false, error: `${formType} snapshot contains an incomplete ${arrayField} entry.` };
+      }
+    }
+    if (formType === 'SMOKE_ALARM' && (!Array.isArray(parsed.alarmSchedule) || parsed.alarmSchedule.length === 0)) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot must contain at least one alarm schedule entry.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      (alarm.passFail !== 'Pass' && alarm.passFail !== 'Fail') ||
+      typeof alarm.buttonTestPass !== 'boolean' || typeof alarm.interconnectionPass !== 'boolean'
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains invalid alarm test results.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      ['id', 'roomLocation', 'alarmBrandModel', 'standardMarkingPlaceholder', 'manufactureDateOrExpiry', 'powerSource', 'complianceStatusProvisional']
+        .some(field => typeof alarm[field] !== 'string' || alarm[field].trim() === '')
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains missing or invalid alarm schedule fields.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      !['240V Hardwired with Battery Backup', '10-Year Sealed Lithium', 'Replaceable 9V Alkaline'].includes(alarm.powerSource as string)
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported alarm power source.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      !['Pass', 'Fail', 'Provisional'].includes(alarm.complianceStatusProvisional as string)
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported compliance status.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      (alarm.passFail === 'Pass' || alarm.complianceStatusProvisional === 'Pass') &&
+      (alarm.buttonTestPass === false || alarm.interconnectionPass === false || alarm.passFail === 'Fail')
+    )) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot cannot record Pass status when recorded tests failed.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      alarm.passFail === 'Fail' || alarm.complianceStatusProvisional === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false
+    ) && affirmativeCompliancePattern().test(parsed.limitationsAndRentalNotes)) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot cannot retain affirmative compliance notes for a failed inspection.' };
+    }
+    if (formType === 'SMOKE_ALARM') {
+      if (!['Owner', 'Property Manager', 'Tenant'].includes(parsed.issuedToRole as string)) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported issuedToRole.' };
+      }
+      if (!['Detached House', 'Townhouse', 'Unit / Apartment', 'Commercial Office'].includes(parsed.propertyType as string)) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported propertyType.' };
+      }
+      if (!['Occupied', 'Vacant', 'Tenanted'].includes(parsed.occupancyStatus as string)) {
+        return { valid: false, error: 'SMOKE_ALARM snapshot contains an unsupported occupancyStatus.' };
+      }
+    }
+    if (formType === 'ELECTRICAL' && (!Array.isArray(parsed.testedWorkItems) || parsed.testedWorkItems.length === 0)) {
+      return { valid: false, error: 'ELECTRICAL snapshot must contain at least one tested work item.' };
+    }
+    if (formType === 'ELECTRICAL') {
+      if (!['Owner', 'Tenant', 'Property Manager', 'Builder'].includes(parsed.occupierRole as string)) {
+        return { valid: false, error: 'ELECTRICAL snapshot contains an unsupported occupierRole.' };
+      }
+    }
+    if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
+      ['id', 'description', 'circuitsTested', 'insulationResistanceResult', 'polarityTest', 'earthContinuity', 'workResult']
+        .some(field => typeof item[field] !== 'string' || item[field].trim() === '') ||
+      (typeof item.rcdTripTimeMs === 'number' ? !Number.isFinite(item.rcdTripTimeMs) || item.rcdTripTimeMs < 0 : typeof item.rcdTripTimeMs !== 'string' || item.rcdTripTimeMs.trim() === '')
+    )) {
+      return { valid: false, error: 'ELECTRICAL snapshot contains invalid tested work item fields.' };
+    }
+    if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
+      !['Pass', 'Fail'].includes(item.polarityTest as string) ||
+      !['Pass', 'Fail'].includes(item.earthContinuity as string) ||
+      !['Pass', 'Fail'].includes(item.workResult as string)
+    )) {
+      return { valid: false, error: 'ELECTRICAL snapshot contains an unsupported test result value.' };
+    }
+    if (formType === 'ELECTRICAL' && parsed.testedWorkItems.some((item: Record<string, unknown>) =>
+      item.workResult === 'Pass' && (item.polarityTest === 'Fail' || item.earthContinuity === 'Fail')
+    )) {
+      return { valid: false, error: 'ELECTRICAL snapshot cannot record Pass workResult when polarity or earth continuity failed.' };
+    }
+    if (formType === 'JSA') {
+      if (typeof parsed.overallRiskLevel !== 'string' || !['L', 'M', 'H', 'E'].includes(parsed.overallRiskLevel)) {
+        return { valid: false, error: 'JSA snapshot contains invalid overallRiskLevel.' };
+      }
+      if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+        return { valid: false, error: 'JSA snapshot must contain at least one step observation.' };
+      }
+      if (parsed.inductionCompleted !== true) {
+        return { valid: false, error: 'JSA snapshot requires inductionCompleted: true.' };
+      }
+      if (parsed.competencyVerified !== true) {
+        return { valid: false, error: 'JSA snapshot requires competencyVerified: true.' };
+      }
+      if (parsed.steps.some((step: Record<string, unknown>) =>
+        ['taskStep', 'hazards', 'controls', 'responsibleRole'].some(field => typeof step[field] !== 'string' || (step[field] as string).trim() === '') ||
+        !['L', 'M', 'H', 'E'].includes(step.initialRisk as string) ||
+        !['L', 'M', 'H', 'E'].includes(step.residualRisk as string)
+      )) {
+        return { valid: false, error: 'JSA snapshot contains invalid or incomplete step observations.' };
+      }
+      if (parsed.ppeChecklist.some((item: Record<string, unknown>) =>
+        typeof item.item !== 'string' || item.item.trim() === '' ||
+        !['Yes', 'No', 'N/A'].includes(item.status as string)
+      )) {
+        return { valid: false, error: 'JSA snapshot contains invalid PPE checklist observations.' };
+      }
+      if (parsed.isolationsAndPermits.some((item: Record<string, unknown>) =>
+        typeof item.item !== 'string' || item.item.trim() === '' ||
+        !['Yes', 'No', 'N/A'].includes(item.required as string)
+      )) {
+        return { valid: false, error: 'JSA snapshot contains invalid isolations and permits observations.' };
+      }
+    }
+    if (formType === 'TCA2') {
+      if (
+        typeof parsed.riskCategory !== 'string' ||
+        !['High (Immediate Shock / Fire Hazard)', 'Medium (Degraded Performance / Mechanical Hazard)', 'Low (Identification / Labelling Defect)'].includes(parsed.riskCategory)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported riskCategory.' };
+      }
+      if (
+        typeof parsed.urgencyLevel !== 'string' ||
+        !['Immediate (Within 24 Hours)', 'Urgent (Within 7 Days)', 'Routine (Next Scheduled Maintenance)'].includes(parsed.urgencyLevel)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported urgencyLevel.' };
+      }
+      if (
+        typeof parsed.cablingScope !== 'string' ||
+        !['Existing Only', 'New Only', 'Both Existing and New'].includes(parsed.cablingScope)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported cablingScope.' };
+      }
+      if (
+        typeof parsed.responsibleParty !== 'string' ||
+        !['Customer / Building Owner', 'Original Installer', 'Network Carrier', 'Other Third Party'].includes(parsed.responsibleParty)
+      ) {
+        return { valid: false, error: 'TCA2 snapshot contains an unsupported responsibleParty.' };
       }
     }
     return { valid: true, parsedSnapshot: parsed };

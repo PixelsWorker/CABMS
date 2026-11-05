@@ -41,7 +41,8 @@ import {
   Tca1CertData,
   Tca2CertData,
 } from '../types/cabms.ts';
-import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
+import { validateSignedSnapshot, effectiveElectricalResult, effectiveSmokeAlarmResults, DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, stripAffirmativeComplianceNotes } from '../utils/cabmsLogic.ts';
+import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../utils/g05PreviewReadiness.ts';
 
 type ActiveFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
 
@@ -118,6 +119,16 @@ export const ComplianceFormsView: React.FC = () => {
       case 'TCA2': return currentTca2.signedOff;
     }
   })();
+
+  const previewSignedOff = { JSA: currentJsa.signedOff, ELECTRICAL: currentElec.signedOff, SMOKE_ALARM: currentSmoke.signedOff, TCA1: currentTca1.signedOff, TCA2: currentTca2.signedOff };
+  const pendingPreviewForms = getPendingPreviewForms(currentJob.formsRequired, previewSignedOff);
+  const invalidPreviewForms = getInvalidPreviewForms(currentJob.formsRequired, previewSignedOff, {
+    JSA: isValidPreviewSignOff('JSA', currentJob.id, currentJsa.signedOff, currentJsa.fullSnapshot),
+    ELECTRICAL: isValidPreviewSignOff('ELECTRICAL', currentJob.id, currentElec.signedOff, currentElec.fullSnapshot),
+    SMOKE_ALARM: isValidPreviewSignOff('SMOKE_ALARM', currentJob.id, currentSmoke.signedOff, currentSmoke.fullSnapshot),
+    TCA1: isValidPreviewSignOff('TCA1', currentJob.id, currentTca1.signedOff, currentTca1.fullSnapshot),
+    TCA2: isValidPreviewSignOff('TCA2', currentJob.id, currentTca2.signedOff, currentTca2.fullSnapshot),
+  });
 
   // Persona boundary: Technicians can only access jobs assigned to them (G00-001)
   const isTechnicianRestricted =
@@ -256,6 +267,11 @@ export const ComplianceFormsView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <div className="cabms-card p-4" role="note">
+        <strong>Simulation only.</strong> These forms and sign-offs are preview data; they are not legally signed certificates or persistent job evidence.
+        <p>Required preview forms awaiting sign-off: {pendingPreviewForms.length ? pendingPreviewForms.join(', ') : 'None listed as pending'}.</p>
+        {invalidPreviewForms.length > 0 && <p role="alert">Invalid signed preview snapshots require review: {invalidPreviewForms.join(', ')}.</p>}
+      </div>
       {/* Top Header & Job Switcher */}
       <div className="cabms-card p-5 shadow-sm">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -789,7 +805,13 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentElec.signedOff}
                           value={item.polarityTest}
                           onChange={e => {
-                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, polarityTest: e.target.value as any } : row);
+                            const newPolarity = e.target.value as 'Pass' | 'Fail';
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
+                              if (rowIndex === idx) {
+                                return { ...row, polarityTest: newPolarity };
+                              }
+                              return row;
+                            });
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="cabms-input rounded px-2 py-1 text-(--cabms-text-primary) w-full"
@@ -805,7 +827,13 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentElec.signedOff}
                           value={item.earthContinuity}
                           onChange={e => {
-                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => rowIndex === idx ? { ...row, earthContinuity: e.target.value as any } : row);
+                            const newEarth = e.target.value as 'Pass' | 'Fail';
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
+                              if (rowIndex === idx) {
+                                return { ...row, earthContinuity: newEarth };
+                              }
+                              return row;
+                            });
                             updateElectricalForm(currentJob.id, { testedWorkItems: updated });
                           }}
                           className="cabms-input rounded px-2 py-1 text-(--cabms-text-primary) w-full"
@@ -813,6 +841,31 @@ export const ComplianceFormsView: React.FC = () => {
                           <option value="Pass">Pass</option>
                           <option value="Fail">Fail</option>
                         </select>
+                      </div>
+
+                      <div>
+                        <label className="text-(--cabms-text-secondary) block mb-0.5">Work Result (manual)</label>
+                        <select
+                          disabled={currentElec.signedOff}
+                          value={item.workResult}
+                          onChange={e => {
+                            const val = e.target.value as 'Pass' | 'Fail';
+                            const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
+                              if (rowIndex === idx) {
+                                return { ...row, workResult: val };
+                              }
+                              return row;
+                            });
+                            updateElectricalForm(currentJob.id, { testedWorkItems: updated });
+                          }}
+                          className={`cabms-input rounded px-2 py-1 text-xs font-bold w-full ${item.workResult === 'Pass' ? 'text-emerald-400' : 'text-red-400'}`}
+                        >
+                          <option value="Pass">Pass</option>
+                          <option value="Fail">Fail</option>
+                        </select>
+                        <span data-testid={`electrical-effective-result-${idx}`} className={`text-xs font-bold ${effectiveElectricalResult(item) === 'Fail' ? 'text-red-400' : 'text-emerald-400'}`}>
+                          Effective result: {effectiveElectricalResult(item)}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -885,7 +938,7 @@ export const ComplianceFormsView: React.FC = () => {
                       <th className="p-3">Power Source / Model</th>
                       <th className="p-3 text-center">Interconnected</th>
                       <th className="p-3 text-center">Expiry Year</th>
-                      <th className="p-3 text-center">Result</th>
+                      <th className="p-3 text-center">Manual / Effective Result</th>
                       <th className="p-3 text-center">Action</th>
                     </tr>
                   </thead>
@@ -924,7 +977,13 @@ export const ComplianceFormsView: React.FC = () => {
                             disabled={currentSmoke.signedOff}
                             type="button"
                             onClick={() => {
-                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, interconnectionPass: !row.interconnectionPass } : row);
+                              const newInterconn = !alarm.interconnectionPass;
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => {
+                                if (rowIndex === idx) {
+                                  return { ...row, interconnectionPass: newInterconn };
+                                }
+                                return row;
+                              });
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -951,9 +1010,17 @@ export const ComplianceFormsView: React.FC = () => {
                         <td className="p-2.5 text-center">
                           <select
                             disabled={currentSmoke.signedOff}
+                            aria-label="Manual smoke alarm result"
                             value={alarm.passFail}
                             onChange={e => {
-                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => rowIndex === idx ? { ...row, passFail: e.target.value as any } : row);
+                              const newPassFail = e.target.value as 'Pass' | 'Fail';
+                              const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => {
+                                if (rowIndex === idx) {
+                                  const newCompliance = newPassFail;
+                                  return { ...row, passFail: newPassFail, complianceStatusProvisional: newCompliance };
+                                }
+                                return row;
+                              });
                               updateSmokeAlarmForm(currentJob.id, { alarmSchedule: updated });
                             }}
                             className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -965,6 +1032,9 @@ export const ComplianceFormsView: React.FC = () => {
                             <option value="Pass">Pass</option>
                             <option value="Fail">Fail</option>
                           </select>
+                          <span data-testid={`smoke-effective-result-${idx}`} className={`block text-[11px] font-bold ${effectiveSmokeAlarmResults(alarm).passFail === 'Fail' ? 'text-red-400' : 'text-emerald-400'}`}>
+                            Effective result: {effectiveSmokeAlarmResults(alarm).passFail}
+                          </span>
                         </td>
                         <td className="p-2.5 text-center">
                           <button
@@ -1460,8 +1530,8 @@ export const ComplianceFormsView: React.FC = () => {
               }
 
               const displayJsa = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentJsa;
-              const displayElec = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentElec;
-              const displaySmoke = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentSmoke;
+              const displayElec = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : { ...currentElec, testedWorkItems: currentElec.testedWorkItems.map(item => ({ ...item, workResult: effectiveElectricalResult(item) })) };
+              const displaySmoke = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : { ...currentSmoke, alarmSchedule: currentSmoke.alarmSchedule.map(alarm => ({ ...alarm, ...effectiveSmokeAlarmResults(alarm) })) };
               const displayTca1 = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentTca1;
               const displayTca2 = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentTca2;
 
@@ -1573,10 +1643,10 @@ export const ComplianceFormsView: React.FC = () => {
                                 <td className="p-1.5 font-semibold text-slate-900">{w.description}</td>
                                 <td className="p-1.5">{w.circuitsTested}</td>
                                 <td className="p-1.5 font-mono">{w.insulationResistanceResult}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{w.polarityTest}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{w.earthContinuity}</td>
+                                <td className={`p-1.5 text-center font-bold ${w.polarityTest === 'Pass' ? 'text-emerald-700' : 'text-red-700'}`}>{w.polarityTest}</td>
+                                <td className={`p-1.5 text-center font-bold ${w.earthContinuity === 'Pass' ? 'text-emerald-700' : 'text-red-700'}`}>{w.earthContinuity}</td>
                                 <td className="p-1.5 font-mono">{w.rcdTripTimeMs}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-800">{w.workResult}</td>
+                                <td className={`p-1.5 text-center font-bold ${w.workResult === 'Pass' ? 'text-emerald-800' : 'text-red-800'}`}>{w.workResult}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1622,14 +1692,33 @@ export const ComplianceFormsView: React.FC = () => {
                                 <td className="p-1.5">{a.alarmBrandModel}</td>
                                 <td className="p-1.5 font-mono">{a.standardMarkingPlaceholder}</td>
                                 <td className="p-1.5 text-[10px]">{a.powerSource}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-700">{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
-                                <td className="p-1.5 text-center font-bold text-emerald-800">{a.passFail}</td>
+                                <td className={`p-1.5 text-center font-bold ${a.buttonTestPass ? 'text-emerald-700' : 'text-red-700'}`}>{a.buttonTestPass ? 'Pass' : 'Fail'}</td>
+                                <td className={`p-1.5 text-center font-bold ${a.interconnectionPass ? 'text-emerald-700' : 'text-red-700'}`}>{a.interconnectionPass ? 'Pass' : 'Fail'}</td>
+                                <td className={`p-1.5 text-center font-bold ${a.passFail === 'Pass' ? 'text-emerald-800' : 'text-red-800'}`}>{a.passFail}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
+
+                      {(() => {
+                        const rawNotes = displaySmoke.limitationsAndRentalNotes || '';
+                        const hasFailed = (displaySmoke.alarmSchedule || []).some((a: any) =>
+                          a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail' || a.buttonTestPass === false || a.interconnectionPass === false
+                        );
+                        let notesToShow = rawNotes;
+                        if (hasFailed && !displaySmoke.signedOff) {
+                          notesToShow = stripAffirmativeComplianceNotes(rawNotes);
+                          const draftNotice = 'DRAFT NOTICE: One or more alarms failed inspection or interconnection verification. Rectification required under Queensland fire legislation.';
+                          notesToShow = notesToShow ? `${notesToShow} • ${draftNotice}` : draftNotice;
+                        }
+                        if (!notesToShow) return null;
+                        return (
+                          <div className="bg-slate-50 p-2.5 rounded border border-slate-200 text-[11px] text-slate-700">
+                            <strong>Limitations &amp; Statutory Compliance Notes:</strong> {notesToShow}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 

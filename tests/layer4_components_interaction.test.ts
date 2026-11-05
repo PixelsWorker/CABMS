@@ -204,16 +204,42 @@ test('LAYER 4: Components — JobsView renders work order list, filter controls,
   assert.ok(html.includes('JOB-2026-101'));
 });
 
-test('LAYER 4: Components — ComplianceFormsView renders JSA, Electrical, Smoke Alarm, TCA1, TCA2 tabs', () => {
-  const html = renderToString(
-    React.createElement(CabmsProvider, null, React.createElement(ComplianceFormsView))
-  );
-  assert.ok(html.includes('Job Safety Analysis (JSA)'));
-  assert.ok(html.includes('TCA1 Cabling'));
-  assert.ok(html.includes('TCA2 Defect Notice'));
-  assert.ok(html.includes('Apply Technician Preview Sign-off') || html.includes('Preview Sign-off Applied'));
-  assert.ok(html.includes('Site Induction Completed'));
-  assert.ok(html.includes('Competencies Verified'));
+test('LAYER 4: Components — ComplianceFormsView lists only pending required preview forms', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container) => {
+    let id = '';
+    await act(async () => {
+      id = ctx.createJob({ brandId: 'solarcell', title: 'Synthetic pending form', jobType: 'JT-001', formsRequired: ['JSA'] }).id;
+      ctx.setSelectedJobId(id);
+    });
+    const html = container.textContent || '';
+    assert.ok(html.includes('Simulation only.'));
+    assert.ok(html.includes('not legally signed certificates or persistent job evidence'));
+    assert.ok(html.includes('Required preview forms awaiting sign-off: JSA'), 'explicit required form name is shown');
+    assert.ok(!html.includes('None listed as pending'));
+    assert.ok(!container.querySelector('[role="alert"]'), 'unsigned required form does not show an invalid-snapshot alert');
+    assert.ok(html.includes('Job Safety Analysis (JSA)'));
+    assert.ok(html.includes('TCA1 Cabling'));
+    assert.ok(html.includes('TCA2 Defect Notice'));
+    assert.ok(html.includes('Apply Technician Preview Sign-off') || html.includes('Preview Sign-off Applied'));
+    assert.ok(html.includes('Site Induction Completed'));
+    assert.ok(html.includes('Competencies Verified'));
+  });
+});
+
+test('LAYER 4: ComplianceFormsView alerts when a required signed preview snapshot is invalid', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+    const id = 'JOB-2026-101';
+    await act(async () => { ctx.signOffJsa(id); });
+    const signed = ctx.getOrCreateJsa(id);
+    assert.equal(signed.signedOff, true);
+    signed.fullSnapshot = '{ malformed preview snapshot';
+    await act(async () => {
+      const tab = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Electrical'))!;
+      tab.click();
+    });
+    const alert = container.querySelector('[role="alert"]');
+    assert.ok(alert?.textContent?.includes('JSA'), 'invalid signed snapshot is identified for review');
+  });
 });
 
 test('LAYER 4: Components — ComplianceFormsView renders hazard matrix and PPE checklist in JSA', () => {
@@ -1279,3 +1305,141 @@ test('LAYER 4: WorkspaceSettings — retains unsaved form drafts across workspac
     assert.equal(ctx.brands.solarcell.preferredPreset, 'light_neutral', 'Saved draft preset committed to brand configuration');
   });
 });
+
+
+test('LAYER 4: ComplianceFormsView renders statutory non-compliance notice in smoke alarm print preview when inspection failed', async () => {
+  await mountView(React.createElement(ComplianceFormsView), async (ctx, container) => {
+    let id = '';
+    await act(async () => {
+      id = ctx.createJob({ brandId: 'solarcell', title: 'Smoke alarm failure test', jobType: 'JT-001', formsRequired: ['SMOKE_ALARM'] }).id;
+      ctx.setSelectedJobId(id);
+    });
+
+    await act(async () => {
+      const tab = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Smoke Alarm'));
+      tab?.click();
+    });
+
+    const smoke = ctx.getOrCreateSmokeAlarm(id);
+    const updatedSchedule = smoke.alarmSchedule.map((a, i) => i === 0 ? { ...a, passFail: 'Fail' as const, buttonTestPass: false } : a);
+    await act(async () => {
+      ctx.updateSmokeAlarmForm(id, { alarmSchedule: updatedSchedule });
+    });
+
+    // 1. Verify draft preview before sign-off suppresses default compliance assertion and displays draft failure notice
+    await act(async () => {
+      const printBtn = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Print / PDF Preview'));
+      printBtn?.click();
+    });
+    let draftText = container.textContent || '';
+    assert.ok(draftText.includes('DRAFT NOTICE: One or more alarms failed inspection'), 'Draft print preview contains draft failure notice');
+    assert.ok(!draftText.includes('Interconnected photoelectric alarms comply with current Queensland fire legislation.'), 'Draft print preview suppresses default compliance note when alarm failed');
+
+    // Close preview modal
+    await act(async () => {
+      const closeBtn = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Close Preview'));
+      closeBtn?.click();
+    });
+
+    // 2. Sign off the smoke alarm certificate
+    await act(async () => {
+      ctx.signOffSmokeAlarm(id);
+    });
+
+    const signedSmoke = ctx.getOrCreateSmokeAlarm(id);
+    assert.equal(signedSmoke.signedOff, true);
+
+    // 3. Verify signed print preview renders statutory failure notice
+    await act(async () => {
+      const printBtn = Array.from(container.querySelectorAll('button')).find(button => button.textContent?.includes('Print / PDF Preview'));
+      printBtn?.click();
+    });
+
+    const text = container.textContent || '';
+    assert.ok(text.includes('Limitations & Statutory Compliance Notes:'), 'Print preview displays the limitations/statutory notes block');
+    assert.ok(text.includes('NON-COMPLIANCE NOTICE: One or more smoke alarms failed inspection'), 'Print preview contains the statutory non-compliance notice');
+    assert.ok(!text.includes('Interconnected photoelectric alarms comply with current Queensland fire legislation.'), 'Untouched default compliance assertion is removed on failure');
+  });
+});
+
+
+for (const manual of ['Pass', 'Fail'] as const) {
+  test(`LAYER 4: G05 electrical test corrections preserve manual ${manual} and freeze effective results`, async () => {
+    await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+      let id = '';
+      await act(async () => {
+        id = ctx.createJob({ brandId: 'solarcell', title: 'Synthetic electrical correction', jobType: 'JT-001', formsRequired: ['ELECTRICAL'] }).id;
+        ctx.setSelectedJobId(id);
+      });
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Electrical Cert (Part A)'))!.click(); });
+      const select = (label: string) => Array.from(container.querySelectorAll('label')).find(l => l.textContent === label)!.parentElement!.querySelector('select')!;
+      const change = async (label: string, value: string) => act(async () => {
+        const el = select(label); el.value = value; el.dispatchEvent(new window.Event('change', { bubbles: true }));
+      });
+      await change('Polarity', 'Fail');
+      assert.equal(select('Work Result (manual)').value, 'Pass', 'manual control remains selectable during forced failure');
+      assert.equal(container.querySelector('[data-testid=electrical-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await change('Work Result (manual)', manual);
+      assert.equal(ctx.getOrCreateElectrical(id).testedWorkItems[0].workResult, manual, 'test edit preserves manual intent');
+      await change('Earth Continuity', 'Fail');
+      await change('Polarity', 'Pass');
+      assert.equal(container.querySelector('[data-testid=electrical-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail', 'other failed test still forces effective failure');
+      await change('Earth Continuity', 'Pass');
+      assert.equal(select('Work Result (manual)').value, manual, 'corrected tests restore manual selection');
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Print / PDF Preview'))!.click(); });
+      const resultCell = container.querySelectorAll('table').item(container.querySelectorAll('table').length - 1).querySelector('tbody tr')!.lastElementChild!;
+      assert.equal(resultCell.textContent, manual, 'draft preview agrees with effective result');
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Close Preview'))!.click(); });
+      await act(async () => { ctx.signOffElectrical(id); });
+      const signed = ctx.getOrCreateElectrical(id);
+      assert.equal(signed.signedOff, true);
+      assert.equal(JSON.parse(signed.fullSnapshot!).testedWorkItems[0].workResult, manual);
+    });
+  });
+
+  test(`LAYER 4: G05 smoke test corrections preserve manual ${manual} without stale notices`, async () => {
+    await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+      let id = '';
+      await act(async () => {
+        id = ctx.createJob({ brandId: 'solarcell', title: 'Synthetic smoke correction', jobType: 'JT-001', formsRequired: ['SMOKE_ALARM'] }).id;
+        ctx.setSelectedJobId(id);
+      });
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Smoke Alarm'))!.click(); });
+      const row = () => container.querySelector('tbody tr')!;
+      const result = () => Array.from(row().querySelectorAll('select')).at(-1)!;
+      const toggle = async () => act(async () => { row().querySelector('button')!.click(); });
+      await toggle();
+      assert.equal(result().value, 'Pass', 'manual control remains selectable during forced failure');
+      assert.equal(container.querySelector('[data-testid=smoke-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await act(async () => { const el = result(); el.value = manual; el.dispatchEvent(new window.Event('change', { bubbles: true })); });
+      assert.equal(ctx.getOrCreateSmokeAlarm(id).alarmSchedule[0].passFail, manual);
+      await toggle();
+      assert.equal(result().value, manual);
+      assert.equal(ctx.getOrCreateSmokeAlarm(id).alarmSchedule[0].complianceStatusProvisional, manual);
+      // A separate failed button test continues to force the effective result.
+      await act(async () => {
+        const form = ctx.getOrCreateSmokeAlarm(id);
+        ctx.updateSmokeAlarmForm(id, { alarmSchedule: form.alarmSchedule.map((a, i) => i === 0 ? { ...a, buttonTestPass: false } : a) });
+      });
+      assert.equal(container.querySelector('[data-testid=smoke-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await toggle(); await toggle();
+      assert.equal(container.querySelector('[data-testid=smoke-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await act(async () => {
+        const form = ctx.getOrCreateSmokeAlarm(id);
+        ctx.updateSmokeAlarmForm(id, { alarmSchedule: form.alarmSchedule.map(a => ({ ...a, buttonTestPass: true })) });
+      });
+      assert.equal(result().value, manual);
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Print / PDF Preview'))!.click(); });
+      const previewRow = Array.from(container.querySelectorAll('table')).at(-1)!.querySelector('tbody tr')!;
+      assert.equal(previewRow.lastElementChild!.textContent, manual);
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Close Preview'))!.click(); });
+      await act(async () => { ctx.signOffSmokeAlarm(id); });
+      const signed = ctx.getOrCreateSmokeAlarm(id);
+      assert.equal(signed.signedOff, true);
+      const frozen = JSON.parse(signed.fullSnapshot!);
+      assert.equal(frozen.alarmSchedule[0].passFail, manual);
+      assert.equal(frozen.alarmSchedule[0].complianceStatusProvisional, manual);
+      assert.equal(frozen.limitationsAndRentalNotes.includes('NON-COMPLIANCE NOTICE'), manual === 'Fail');
+    });
+  });
+}

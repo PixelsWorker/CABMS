@@ -65,6 +65,11 @@ import {
   processPublishTemplate,
   processReviewDispatch,
   validateSignedSnapshot,
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE,
+  stripAffirmativeComplianceNotes,
+  effectiveElectricalResult,
+  effectiveSmokeAlarmResults,
   validateQuoteInput,
   calculateQuoteTotals,
 } from '../utils/cabmsLogic.ts';
@@ -1737,7 +1742,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       ],
       relatedElectricalCertRef: 'N/A',
       attachmentsLinked: false,
-      limitationsAndRentalNotes: 'Interconnected photoelectric alarms comply with current Queensland fire legislation.',
+      limitationsAndRentalNotes: DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
       signedOff: false,
       provisionalNote: 'PROVISIONAL NOTICE: Per-alarm Pass/Fail, room counts, and expiry wording are provisional.',
       attachedSampleIds: [],
@@ -2010,8 +2015,22 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
+    const currentSchedule = (current.alarmSchedule || []).map(alarm => ({ ...alarm, ...effectiveSmokeAlarmResults(alarm) }));
+
+    const hasFailedAlarm = currentSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
+    const failureNotice = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
+    let notes = (current.limitationsAndRentalNotes || '').trim();
+    if (hasFailedAlarm) {
+      notes = stripAffirmativeComplianceNotes(notes);
+    }
+    if (hasFailedAlarm && !notes.includes(failureNotice)) {
+      notes = notes ? `${notes} • ${failureNotice}` : failureNotice;
+    }
+
     const finalized: SmokeAlarmCertData = {
       ...current,
+      alarmSchedule: currentSchedule,
+      limitationsAndRentalNotes: notes,
       signedOff: true,
       signedByTechName: signer,
       signedTimestamp: timestamp,
@@ -2047,8 +2066,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const timestamp = serializeBusinessInstant(demoClock);
     const frozenIssuer = `${brand.legalIssuerName} • ${brand.abnPlaceholder}`;
 
+    const currentItems = (current.testedWorkItems || []).map(item => ({
+      ...item,
+      workResult: effectiveElectricalResult(item),
+    }));
+
     const finalized: ElectricalCertData = {
       ...current,
+      testedWorkItems: currentItems,
       signedOff: true,
       signedByTechName: signer,
       signedTimestamp: timestamp,

@@ -13,18 +13,23 @@ import {
   processPublishTemplate,
   processReviewDispatch,
   validateSignedSnapshot,
+  stripAffirmativeComplianceNotes,
+  DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
+  SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE,
+  STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE,
   validateQuoteInput,
   calculateQuoteTotals,
   roundedLineTotalCents,
   amountInCents,
 } from './cabmsLogic.ts';
-import { Job, Customer, TemplateSetting } from '../types/cabms.ts';
+import { Job, Customer, TemplateSetting, SmokeAlarmCertData, ElectricalCertData } from '../types/cabms.ts';
 import {
   INITIAL_ELECTRICAL_CERT,
   INITIAL_JSA_FORM,
   INITIAL_SMOKE_ALARM_CERT,
   INITIAL_TCA1_CERT,
   INITIAL_TCA2_CERT,
+  INITIAL_JOBS,
 } from '../data/seedData.ts';
 
 test('validateSignedSnapshot accepts all five CABMS signed form schemas', () => {
@@ -53,6 +58,418 @@ test('validateSignedSnapshot accepts all five CABMS signed form schemas', () => 
     const result = validateSignedSnapshot(snapshot, jobId, formType);
     assert.equal(result.valid, true, `${formType} seed schema should validate: ${result.error || ''}`);
   }
+});
+
+test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  assert.ok(valid.alarmSchedule.length > 0);
+  for (const [field, value] of [['passFail', null], ['buttonTestPass', 'false'], ['interconnectionPass', null]] as const) {
+    const invalid = structuredClone(valid);
+    invalid.alarmSchedule[0][field] = value;
+    assert.equal(validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false, field);
+  }
+  for (const outcome of ['Pass', 'Fail'] as const) {
+    const validOutcome = structuredClone(valid);
+    validOutcome.alarmSchedule[0].passFail = outcome;
+    validOutcome.alarmSchedule[0].buttonTestPass = outcome === 'Pass';
+    validOutcome.alarmSchedule[0].interconnectionPass = outcome === 'Pass';
+    validOutcome.alarmSchedule[0].complianceStatusProvisional = outcome;
+    if (outcome === 'Fail') validOutcome.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(validOutcome), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+      true,
+      `${outcome} is a valid recorded test outcome`,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects contradictory smoke alarm test results', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+
+  const failedButton = structuredClone(valid);
+  failedButton.alarmSchedule[0].passFail = 'Pass';
+  failedButton.alarmSchedule[0].buttonTestPass = false;
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedButton), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+
+  const failedInterconnection = structuredClone(valid);
+  failedInterconnection.alarmSchedule[0].passFail = 'Pass';
+  failedInterconnection.alarmSchedule[0].interconnectionPass = false;
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedInterconnection), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+
+  const failedCompliancePass = structuredClone(valid);
+  failedCompliancePass.alarmSchedule[0].passFail = 'Fail';
+  failedCompliancePass.alarmSchedule[0].buttonTestPass = false;
+  failedCompliancePass.alarmSchedule[0].complianceStatusProvisional = 'Pass';
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedCompliancePass), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+});
+
+test('validateSignedSnapshot rejects contradictory electrical work results when tests failed', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+
+  const failedPolarity = structuredClone(valid);
+  failedPolarity.testedWorkItems[0].polarityTest = 'Fail';
+  failedPolarity.testedWorkItems[0].workResult = 'Pass';
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedPolarity), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
+
+  const failedEarth = structuredClone(valid);
+  failedEarth.testedWorkItems[0].earthContinuity = 'Fail';
+  failedEarth.testedWorkItems[0].workResult = 'Pass';
+  assert.equal(validateSignedSnapshot(JSON.stringify(failedEarth), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
+});
+
+test('validateSignedSnapshot accepts genuine failed smoke alarm inspection and mixed results without false positives', () => {
+  const base = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+
+  // Legitimate failed alarm: failure evidence preserved and consistent
+  const failedAlarm = structuredClone(base);
+  failedAlarm.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
+  failedAlarm.alarmSchedule[0].passFail = 'Fail';
+  failedAlarm.alarmSchedule[0].buttonTestPass = false;
+  failedAlarm.alarmSchedule[0].interconnectionPass = false;
+  failedAlarm.alarmSchedule[0].complianceStatusProvisional = 'Fail';
+  const failedResult = validateSignedSnapshot(JSON.stringify(failedAlarm), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+  assert.equal(failedResult.valid, true, 'Genuine failed alarm inspection is valid to sign off');
+
+  // Mixed schedule: ALM-1 Fail, ALM-2 Pass, ALM-3 Pass, ALM-4 Pass
+  const mixedAlarm = structuredClone(base);
+  mixedAlarm.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
+  mixedAlarm.alarmSchedule[0].passFail = 'Fail';
+  mixedAlarm.alarmSchedule[0].buttonTestPass = false;
+  mixedAlarm.alarmSchedule[0].complianceStatusProvisional = 'Fail';
+  // ALM-2 is Pass
+  mixedAlarm.alarmSchedule[1].passFail = 'Pass';
+  mixedAlarm.alarmSchedule[1].buttonTestPass = true;
+  mixedAlarm.alarmSchedule[1].interconnectionPass = true;
+  mixedAlarm.alarmSchedule[1].complianceStatusProvisional = 'Pass';
+  const mixedResult = validateSignedSnapshot(JSON.stringify(mixedAlarm), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+  assert.equal(mixedResult.valid, true, 'Mixed pass/fail smoke alarm inspection is valid to sign off');
+
+  // Confirm false-positive certificate result is rejected
+  const falsePositive = structuredClone(base);
+  falsePositive.alarmSchedule[0].passFail = 'Pass'; // Claims Pass despite failed button test
+  falsePositive.alarmSchedule[0].buttonTestPass = false;
+  assert.equal(validateSignedSnapshot(JSON.stringify(falsePositive), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid, false);
+});
+
+test('validateSignedSnapshot accepts genuine failed electrical tests and mixed results without false positives', () => {
+  const base = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+
+  // Legitimate failed polarity test
+  const failedPolarity = structuredClone(base);
+  failedPolarity.testedWorkItems[0].polarityTest = 'Fail';
+  failedPolarity.testedWorkItems[0].workResult = 'Fail';
+  const polarityResult = validateSignedSnapshot(JSON.stringify(failedPolarity), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+  assert.equal(polarityResult.valid, true, 'Genuine polarity failure with Fail workResult is valid to sign off');
+
+  // Legitimate failed earth continuity test
+  const failedEarth = structuredClone(base);
+  failedEarth.testedWorkItems[0].earthContinuity = 'Fail';
+  failedEarth.testedWorkItems[0].workResult = 'Fail';
+  const earthResult = validateSignedSnapshot(JSON.stringify(failedEarth), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+  assert.equal(earthResult.valid, true, 'Genuine earth continuity failure with Fail workResult is valid to sign off');
+
+  // Mixed items: WORK-1 Fail, WORK-2 Pass
+  const mixedElec = structuredClone(base);
+  mixedElec.testedWorkItems[0].polarityTest = 'Fail';
+  mixedElec.testedWorkItems[0].workResult = 'Fail';
+  mixedElec.testedWorkItems[1].polarityTest = 'Pass';
+  mixedElec.testedWorkItems[1].earthContinuity = 'Pass';
+  mixedElec.testedWorkItems[1].workResult = 'Pass';
+  const mixedElecResult = validateSignedSnapshot(JSON.stringify(mixedElec), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+  assert.equal(mixedElecResult.valid, true, 'Mixed pass/fail electrical inspection is valid to sign off');
+
+  // Confirm false-positive certificate result is rejected
+  const falsePositiveElec = structuredClone(base);
+  falsePositiveElec.testedWorkItems[0].polarityTest = 'Fail';
+  falsePositiveElec.testedWorkItems[0].workResult = 'Pass'; // Falsely claims Pass
+  assert.equal(validateSignedSnapshot(JSON.stringify(falsePositiveElec), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid, false);
+});
+
+test('validateJobCompletion enforces remediation restrictions on genuine failed electrical and smoke alarm certificates', () => {
+  const testJob: Job = {
+    ...structuredClone(INITIAL_JOBS[0]),
+    id: 'JOB-2026-TEST',
+    status: 'IN_PROGRESS',
+    isDirectToInvoice: false,
+    formsRequired: ['ELECTRICAL', 'SMOKE_ALARM'],
+  };
+
+  const failedSmoke: SmokeAlarmCertData = {
+    ...INITIAL_SMOKE_ALARM_CERT,
+    jobReference: 'JOB-2026-TEST',
+    signedOff: true,
+    alarmSchedule: [
+      {
+        id: 'ALM-1',
+        roomLocation: 'Hallway',
+        alarmBrandModel: 'Clipsal 755PSMA4',
+        standardMarkingPlaceholder: 'AS 3786:2014',
+        manufactureDateOrExpiry: 'Exp 2030',
+        powerSource: '240V Hardwired with Battery Backup',
+        passFail: 'Fail',
+        buttonTestPass: false,
+        interconnectionPass: false,
+        complianceStatusProvisional: 'Fail',
+      },
+    ],
+  };
+
+  const failedElec: ElectricalCertData = {
+    ...INITIAL_ELECTRICAL_CERT,
+    jobReference: 'JOB-2026-TEST',
+    signedOff: true,
+    testedWorkItems: [
+      {
+        id: 'WORK-1',
+        description: 'Inverter AC Feed',
+        circuitsTested: 'Sub-board 1',
+        insulationResistanceResult: '> 200 Megohms',
+        polarityTest: 'Fail',
+        earthContinuity: 'Pass',
+        rcdTripTimeMs: '18ms',
+        workResult: 'Fail',
+      },
+    ],
+  };
+
+  const completion = validateJobCompletion(testJob, { electrical: failedElec, smokeAlarm: failedSmoke });
+  assert.equal(completion.canComplete, true, 'Job can complete operationally when signed documentation is present');
+  assert.ok(completion.warnings.some(w => w.includes('smoke alarm(s) marked Fail in schedule. Remediation required.')));
+  assert.ok(completion.warnings.some(w => w.includes('electrical test item(s) marked Fail. Rectification required.')));
+
+  // If unsigned, completion is strictly blocked
+  const unsignedElec = { ...failedElec, signedOff: false };
+  const blocked = validateJobCompletion(testJob, { electrical: unsignedElec, smokeAlarm: failedSmoke });
+  assert.equal(blocked.canComplete, false);
+  assert.ok(blocked.missingRequirements.some(m => m.includes('Electrical Certificate requires technician Preview sign-off')));
+});
+
+test('validateSignedSnapshot rejects unsupported synthetic smoke alarm power sources', () => {
+  const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  invalid.alarmSchedule[0].powerSource = 'Unknown mains source';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects malformed synthetic smoke alarm schedule field types', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  for (const malformed of [{ value: 'Hallway' }, '', '   ']) {
+    const invalid = structuredClone(valid);
+    invalid.alarmSchedule[0].roomLocation = malformed;
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+      false,
+      `roomLocation ${JSON.stringify(malformed)}`,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects malformed synthetic electrical work item types', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  for (const malformed of [{ invalid: true }, '', '   ']) {
+    const invalid = structuredClone(valid);
+    invalid.testedWorkItems[0].circuitsTested = malformed;
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(invalid), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+      false,
+      `circuitsTested ${JSON.stringify(malformed)}`,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects unsupported synthetic smoke alarm compliance status', () => {
+  const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  invalid.alarmSchedule[0].complianceStatusProvisional = 'Unknown';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects unsupported synthetic electrical test result values', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  for (const field of ['polarityTest', 'earthContinuity', 'workResult'] as const) {
+    const invalid = structuredClone(valid);
+    invalid.testedWorkItems[0][field] = 'Unknown';
+    assert.equal(
+      validateSignedSnapshot(JSON.stringify(invalid), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+      false,
+      field,
+    );
+  }
+});
+
+test('validateSignedSnapshot rejects electrical snapshot with empty testedWorkItems', () => {
+  const invalid = structuredClone(INITIAL_ELECTRICAL_CERT);
+  invalid.testedWorkItems = [];
+  const res = validateSignedSnapshot(JSON.stringify(invalid), invalid.jobReference, 'ELECTRICAL');
+  assert.equal(res.valid, false);
+  assert.equal(res.error, 'ELECTRICAL snapshot must contain at least one tested work item.');
+});
+
+test('validateSignedSnapshot rejects smoke alarm snapshot with empty alarmSchedule', () => {
+  const invalid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  invalid.alarmSchedule = [];
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalid), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects electrical snapshot with blank rcdTripTimeMs', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  const invalidBlank = structuredClone(valid);
+  invalidBlank.testedWorkItems[0].rcdTripTimeMs = '   ';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidBlank), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+    false,
+  );
+  const invalidEmpty = structuredClone(valid);
+  invalidEmpty.testedWorkItems[0].rcdTripTimeMs = '';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidEmpty), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects JSA snapshot with missing or invalid overallRiskLevel', () => {
+  const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
+  const invalidMissing = structuredClone(valid);
+  delete (invalidMissing as any).overallRiskLevel;
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidMissing), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+  const invalidEnum = structuredClone(valid);
+  (invalidEnum as any).overallRiskLevel = 'Unknown';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidEnum), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects TCA2 snapshot with unsupported top-level enums', () => {
+  const seeded = JSON.parse(INITIAL_TCA2_CERT.fullSnapshot!);
+  const valid = {
+    ...seeded,
+    customerAcknowledged: INITIAL_TCA2_CERT.customerAcknowledged,
+    officeReviewCompleted: INITIAL_TCA2_CERT.officeReviewCompleted,
+  };
+  const invalidRisk = structuredClone(valid);
+  invalidRisk.riskCategory = 'Critical Extreme Catastrophe';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidRisk), INITIAL_TCA2_CERT.jobReference, 'TCA2').valid,
+    false,
+  );
+  const invalidUrgency = structuredClone(valid);
+  invalidUrgency.urgencyLevel = 'Someday Eventually';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidUrgency), INITIAL_TCA2_CERT.jobReference, 'TCA2').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects and validates ELECTRICAL occupierRole enum values', () => {
+  const valid = JSON.parse(INITIAL_ELECTRICAL_CERT.fullSnapshot!);
+  for (const validRole of ['Owner', 'Tenant', 'Property Manager', 'Builder'] as const) {
+    const clone = structuredClone(valid);
+    clone.occupierRole = validRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+    assert.equal(res.valid, true, `Valid occupierRole "${validRole}" should be accepted`);
+  }
+  for (const invalidRole of ['Contractor', 'Subcontractor', 'Unknown', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.occupierRole = invalidRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_ELECTRICAL_CERT.jobReference, 'ELECTRICAL');
+    assert.equal(res.valid, false, `Invalid occupierRole "${invalidRole}" should be rejected`);
+    assert.match(res.error || '', /unsupported occupierRole|lacks mandatory occupierRole/);
+  }
+});
+
+test('validateSignedSnapshot rejects and validates SMOKE_ALARM top-level enums', () => {
+  const valid = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+
+  for (const validRole of ['Owner', 'Property Manager', 'Tenant'] as const) {
+    const clone = structuredClone(valid);
+    clone.issuedToRole = validRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, true, `Valid issuedToRole "${validRole}" should be accepted`);
+  }
+  for (const invalidRole of ['Builder', 'Contractor', 'Unknown', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.issuedToRole = invalidRole;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, false, `Invalid issuedToRole "${invalidRole}" should be rejected`);
+    assert.match(res.error || '', /unsupported issuedToRole|lacks mandatory issuedToRole/);
+  }
+
+  for (const validType of ['Detached House', 'Townhouse', 'Unit / Apartment', 'Commercial Office'] as const) {
+    const clone = structuredClone(valid);
+    clone.propertyType = validType;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, true, `Valid propertyType "${validType}" should be accepted`);
+  }
+  for (const invalidType of ['Warehouse', 'Factory', 'InvalidType', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.propertyType = invalidType;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, false, `Invalid propertyType "${invalidType}" should be rejected`);
+    assert.match(res.error || '', /unsupported propertyType|lacks mandatory propertyType/);
+  }
+
+  for (const validStatus of ['Occupied', 'Vacant', 'Tenanted'] as const) {
+    const clone = structuredClone(valid);
+    clone.occupancyStatus = validStatus;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, true, `Valid occupancyStatus "${validStatus}" should be accepted`);
+  }
+  for (const invalidStatus of ['Abandoned', 'Under Construction', 'InvalidStatus', ''] as const) {
+    const clone = structuredClone(valid);
+    clone.occupancyStatus = invalidStatus;
+    const res = validateSignedSnapshot(JSON.stringify(clone), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM');
+    assert.equal(res.valid, false, `Invalid occupancyStatus "${invalidStatus}" should be rejected`);
+    assert.match(res.error || '', /unsupported occupancyStatus|lacks mandatory occupancyStatus/);
+  }
+});
+
+test('validateSignedSnapshot rejects incomplete or blank nested synthetic JSA step observations', () => {
+  const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
+  const blankStep = structuredClone(valid);
+  blankStep.steps[0].taskStep = '   ';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(blankStep), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+  const invalidRisk = structuredClone(valid);
+  (invalidRisk.steps[0] as any).initialRisk = 'UNKNOWN';
+  assert.equal(
+    validateSignedSnapshot(JSON.stringify(invalidRisk), INITIAL_JSA_FORM.jobReference, 'JSA').valid,
+    false,
+  );
+});
+
+test('validateSignedSnapshot rejects JSA snapshot with empty steps array or unconfirmed induction competency', () => {
+  const valid = { ...INITIAL_JSA_FORM, signedOff: true, signedByTechName: 'Dave Miller', signedTimestamp: '2026-11-02 09:30', frozenIssuerSnapshot: 'Solarcell Pty Ltd' };
+
+  const emptySteps = structuredClone(valid);
+  emptySteps.steps = [];
+  const emptyStepsResult = validateSignedSnapshot(JSON.stringify(emptySteps), INITIAL_JSA_FORM.jobReference, 'JSA');
+  assert.equal(emptyStepsResult.valid, false);
+  assert.match(emptyStepsResult.error || '', /at least one step/);
+
+  const incompleteInduction = structuredClone(valid);
+  incompleteInduction.inductionCompleted = false;
+  const inductionResult = validateSignedSnapshot(JSON.stringify(incompleteInduction), INITIAL_JSA_FORM.jobReference, 'JSA');
+  assert.equal(inductionResult.valid, false);
+  assert.match(inductionResult.error || '', /inductionCompleted/);
+
+  const incompleteCompetency = structuredClone(valid);
+  incompleteCompetency.competencyVerified = false;
+  const competencyResult = validateSignedSnapshot(JSON.stringify(incompleteCompetency), INITIAL_JSA_FORM.jobReference, 'JSA');
+  assert.equal(competencyResult.valid, false);
+  assert.match(competencyResult.error || '', /competencyVerified/);
 });
 
 test('validateSignedSnapshot rejects missing, incomplete, malformed, and mismatched snapshots', () => {
@@ -970,6 +1387,143 @@ test('processPublishTemplate: preserves reviewed revision in complete audit hist
   // Both the old v1.0 and the newly published revision are preserved in revisions array
   assert.equal(result.updatedTemplate?.revisions.length, 2);
   assert.ok(result.updatedTemplate?.revisions.some((r: any) => r.version === 'v1.1' && r.status === 'PUBLISHED'));
+});
+
+test('stripAffirmativeComplianceNotes removes every occurrence of default compliance notes while preserving custom technician text', () => {
+  // Single occurrence of DEFAULT note
+  assert.equal(
+    stripAffirmativeComplianceNotes(DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE),
+    '',
+  );
+  // Single occurrence of SEEDED note
+  assert.equal(
+    stripAffirmativeComplianceNotes(SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE),
+    '',
+  );
+  // Multiple occurrences of both notes combined with technician notes
+  const complex = `${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE} • Ceiling height in bedroom 2 requires ladder. • ${SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE} • ${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE}`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(complex),
+    'Ceiling height in bedroom 2 requires ladder.',
+  );
+  // Unrelated technician text untouched
+  assert.equal(
+    stripAffirmativeComplianceNotes('Custom technician note only'),
+    'Custom technician note only',
+  );
+  // Embedded or quoted text in technician narrative is preserved
+  const narrative = 'Previous certificate stated: Interconnected photoelectric alarms comply with current Queensland fire legislation. Inspection found otherwise.';
+  assert.equal(
+    stripAffirmativeComplianceNotes(narrative),
+    narrative,
+  );
+  // Default compliance sentence followed immediately by custom text in same paragraph
+  const sameParagraph = `${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE} Bedroom 3 ceiling fan requires clearance check.`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(sameParagraph),
+    'Bedroom 3 ceiling fan requires clearance check.',
+  );
+  // Adjacent repeats of default note are both removed
+  const adjacent = `${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE} • ${DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE}`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(adjacent),
+    '',
+  );
+
+  // Space-separated repeated default notes in all permutations and orders
+  const D = DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE;
+  const S = SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE;
+
+  // D + space + D
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D} ${D}`),
+    '',
+    'D + space + D is completely stripped',
+  );
+
+  // S + space + S
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${S} ${S}`),
+    '',
+    'S + space + S is completely stripped',
+  );
+
+  // D + space + S
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D} ${S}`),
+    '',
+    'D + space + S is completely stripped',
+  );
+
+  // S + space + D
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${S} ${D}`),
+    '',
+    'S + space + D is completely stripped',
+  );
+
+  // D + space + S + space + D
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D} ${S} ${D}`),
+    '',
+    'D + space + S + space + D is completely stripped',
+  );
+
+  // S + space + D + space + S
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${S} ${D} ${S}`),
+    '',
+    'S + space + D + space + S is completely stripped',
+  );
+
+  // Multiple consecutive whitespace characters (spaces, tabs, newlines) between repeated defaults
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D}   ${S}`),
+    '',
+    'Multiple spaces between defaults stripped',
+  );
+  assert.equal(
+    stripAffirmativeComplianceNotes(`${D}\t${S}`),
+    '',
+    'Tab between defaults stripped',
+  );
+
+  // Technician-authored text before and after repeated defaults
+  const techBeforeAndAfter = `Replaced hallway alarm • ${D} ${S} • Tested OK on master control panel`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(techBeforeAndAfter),
+    'Replaced hallway alarm • Tested OK on master control panel',
+    'Preserves technician text before and after repeated defaults',
+  );
+
+  const techBeforeOnly = `Replaced hallway alarm • ${D} ${S}`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(techBeforeOnly),
+    'Replaced hallway alarm',
+    'Preserves technician text before repeated defaults',
+  );
+
+  const techAfterOnly = `${D} ${S} • Tested OK on master control panel`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(techAfterOnly),
+    'Tested OK on master control panel',
+    'Preserves technician text after repeated defaults',
+  );
+
+  // Narrative quotations that mention legislation but must remain intact
+  const narrativeD = `Technician noted that ${D} cannot be asserted at this time.`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(narrativeD),
+    narrativeD,
+    'Preserves embedded narrative quote referencing default note',
+  );
+
+  const narrativeS = `Previous owner report claimed that ${S} but testing failed.`;
+  assert.equal(
+    stripAffirmativeComplianceNotes(narrativeS),
+    narrativeS,
+    'Preserves embedded narrative quote referencing seeded note',
+  );
 });
 
 

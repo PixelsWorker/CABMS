@@ -29,6 +29,8 @@ import {
   DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
   STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE,
   stripAffirmativeComplianceNotes,
+  effectiveElectricalResult,
+  effectiveSmokeAlarmResults,
 } from '../utils/cabmsLogic.ts';
 import {
   CabmsDataAdapter,
@@ -455,7 +457,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
 
     existing.testedWorkItems = (existing.testedWorkItems || []).map(item => ({
       ...item,
-      workResult: (item.polarityTest === 'Fail' || item.earthContinuity === 'Fail') ? 'Fail' : item.workResult,
+      workResult: effectiveElectricalResult(item),
     }));
     existing.signedOff = true;
     existing.signedByTechName = signer.signed_by_name;
@@ -485,14 +487,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
       throw new ForbiddenError('Smoke Alarm Certificate is already signed off. Snapshot is immutable.');
     }
 
-    existing.alarmSchedule = (existing.alarmSchedule || []).map(alarm => {
-      const testFailed = alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false;
-      return {
-        ...alarm,
-        passFail: testFailed ? 'Fail' : alarm.passFail,
-        complianceStatusProvisional: testFailed ? 'Fail' : alarm.complianceStatusProvisional,
-      };
-    });
+    existing.alarmSchedule = (existing.alarmSchedule || []).map(alarm => ({ ...alarm, ...effectiveSmokeAlarmResults(alarm) }));
     const hasFailedAlarm = existing.alarmSchedule.some(a => a.complianceStatusProvisional === 'Fail' || a.passFail === 'Fail');
     const failureNotice = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
     const existingNotes = (existing.limitationsAndRentalNotes || '').trim();

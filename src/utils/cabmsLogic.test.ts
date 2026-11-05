@@ -16,6 +16,7 @@ import {
   stripAffirmativeComplianceNotes,
   DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE,
   SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE,
+  STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE,
   validateQuoteInput,
   calculateQuoteTotals,
   roundedLineTotalCents,
@@ -73,6 +74,7 @@ test('validateSignedSnapshot rejects invalid synthetic smoke alarm test results'
     validOutcome.alarmSchedule[0].buttonTestPass = outcome === 'Pass';
     validOutcome.alarmSchedule[0].interconnectionPass = outcome === 'Pass';
     validOutcome.alarmSchedule[0].complianceStatusProvisional = outcome;
+    if (outcome === 'Fail') validOutcome.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
     assert.equal(
       validateSignedSnapshot(JSON.stringify(validOutcome), INITIAL_SMOKE_ALARM_CERT.jobReference, 'SMOKE_ALARM').valid,
       true,
@@ -120,6 +122,7 @@ test('validateSignedSnapshot accepts genuine failed smoke alarm inspection and m
 
   // Legitimate failed alarm: failure evidence preserved and consistent
   const failedAlarm = structuredClone(base);
+  failedAlarm.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
   failedAlarm.alarmSchedule[0].passFail = 'Fail';
   failedAlarm.alarmSchedule[0].buttonTestPass = false;
   failedAlarm.alarmSchedule[0].interconnectionPass = false;
@@ -129,6 +132,7 @@ test('validateSignedSnapshot accepts genuine failed smoke alarm inspection and m
 
   // Mixed schedule: ALM-1 Fail, ALM-2 Pass, ALM-3 Pass, ALM-4 Pass
   const mixedAlarm = structuredClone(base);
+  mixedAlarm.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
   mixedAlarm.alarmSchedule[0].passFail = 'Fail';
   mixedAlarm.alarmSchedule[0].buttonTestPass = false;
   mixedAlarm.alarmSchedule[0].complianceStatusProvisional = 'Fail';

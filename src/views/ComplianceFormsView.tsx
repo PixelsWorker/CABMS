@@ -41,7 +41,7 @@ import {
   Tca1CertData,
   Tca2CertData,
 } from '../types/cabms.ts';
-import { validateSignedSnapshot, DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, stripAffirmativeComplianceNotes } from '../utils/cabmsLogic.ts';
+import { validateSignedSnapshot, effectiveElectricalResult, effectiveSmokeAlarmResults, DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, stripAffirmativeComplianceNotes } from '../utils/cabmsLogic.ts';
 import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../utils/g05PreviewReadiness.ts';
 
 type ActiveFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
@@ -808,9 +808,7 @@ export const ComplianceFormsView: React.FC = () => {
                             const newPolarity = e.target.value as 'Pass' | 'Fail';
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
                               if (rowIndex === idx) {
-                                const isFailing = newPolarity === 'Fail' || row.earthContinuity === 'Fail';
-                                const newWorkResult: 'Pass' | 'Fail' = isFailing ? 'Fail' : (row.workResult || 'Pass');
-                                return { ...row, polarityTest: newPolarity, workResult: newWorkResult };
+                                return { ...row, polarityTest: newPolarity };
                               }
                               return row;
                             });
@@ -832,9 +830,7 @@ export const ComplianceFormsView: React.FC = () => {
                             const newEarth = e.target.value as 'Pass' | 'Fail';
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
                               if (rowIndex === idx) {
-                                const isFailing = row.polarityTest === 'Fail' || newEarth === 'Fail';
-                                const newWorkResult: 'Pass' | 'Fail' = isFailing ? 'Fail' : (row.workResult || 'Pass');
-                                return { ...row, earthContinuity: newEarth, workResult: newWorkResult };
+                                return { ...row, earthContinuity: newEarth };
                               }
                               return row;
                             });
@@ -848,16 +844,15 @@ export const ComplianceFormsView: React.FC = () => {
                       </div>
 
                       <div>
-                        <label className="text-(--cabms-text-secondary) block mb-0.5">Work Result</label>
+                        <label className="text-(--cabms-text-secondary) block mb-0.5">Work Result (manual)</label>
                         <select
                           disabled={currentElec.signedOff}
-                          value={item.workResult || 'Pass'}
+                          value={item.workResult}
                           onChange={e => {
                             const val = e.target.value as 'Pass' | 'Fail';
                             const updated = currentElec.testedWorkItems.map((row, rowIndex) => {
                               if (rowIndex === idx) {
-                                const forcedFail = row.polarityTest === 'Fail' || row.earthContinuity === 'Fail';
-                                return { ...row, workResult: forcedFail ? 'Fail' : val };
+                                return { ...row, workResult: val };
                               }
                               return row;
                             });
@@ -868,6 +863,9 @@ export const ComplianceFormsView: React.FC = () => {
                           <option value="Pass">Pass</option>
                           <option value="Fail">Fail</option>
                         </select>
+                        <span data-testid={`electrical-effective-result-${idx}`} className={`text-xs font-bold ${effectiveElectricalResult(item) === 'Fail' ? 'text-red-400' : 'text-emerald-400'}`}>
+                          Effective result: {effectiveElectricalResult(item)}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -940,7 +938,7 @@ export const ComplianceFormsView: React.FC = () => {
                       <th className="p-3">Power Source / Model</th>
                       <th className="p-3 text-center">Interconnected</th>
                       <th className="p-3 text-center">Expiry Year</th>
-                      <th className="p-3 text-center">Result</th>
+                      <th className="p-3 text-center">Manual / Effective Result</th>
                       <th className="p-3 text-center">Action</th>
                     </tr>
                   </thead>
@@ -982,10 +980,7 @@ export const ComplianceFormsView: React.FC = () => {
                               const newInterconn = !alarm.interconnectionPass;
                               const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => {
                                 if (rowIndex === idx) {
-                                  const willPass = newInterconn && row.buttonTestPass;
-                                  const newPassFail = willPass ? row.passFail : 'Fail';
-                                  const newCompliance: 'Pass' | 'Fail' | 'Provisional' = willPass ? row.complianceStatusProvisional : 'Fail';
-                                  return { ...row, interconnectionPass: newInterconn, passFail: newPassFail, complianceStatusProvisional: newCompliance };
+                                  return { ...row, interconnectionPass: newInterconn };
                                 }
                                 return row;
                               });
@@ -1015,12 +1010,13 @@ export const ComplianceFormsView: React.FC = () => {
                         <td className="p-2.5 text-center">
                           <select
                             disabled={currentSmoke.signedOff}
+                            aria-label="Manual smoke alarm result"
                             value={alarm.passFail}
                             onChange={e => {
                               const newPassFail = e.target.value as 'Pass' | 'Fail';
                               const updated = currentSmoke.alarmSchedule.map((row, rowIndex) => {
                                 if (rowIndex === idx) {
-                                  const newCompliance: 'Pass' | 'Fail' | 'Provisional' = newPassFail === 'Fail' ? 'Fail' : ((row.buttonTestPass && row.interconnectionPass) ? 'Pass' : 'Fail');
+                                  const newCompliance = newPassFail;
                                   return { ...row, passFail: newPassFail, complianceStatusProvisional: newCompliance };
                                 }
                                 return row;
@@ -1036,6 +1032,9 @@ export const ComplianceFormsView: React.FC = () => {
                             <option value="Pass">Pass</option>
                             <option value="Fail">Fail</option>
                           </select>
+                          <span data-testid={`smoke-effective-result-${idx}`} className={`block text-[11px] font-bold ${effectiveSmokeAlarmResults(alarm).passFail === 'Fail' ? 'text-red-400' : 'text-emerald-400'}`}>
+                            Effective result: {effectiveSmokeAlarmResults(alarm).passFail}
+                          </span>
                         </td>
                         <td className="p-2.5 text-center">
                           <button
@@ -1531,8 +1530,8 @@ export const ComplianceFormsView: React.FC = () => {
               }
 
               const displayJsa = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentJsa;
-              const displayElec = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentElec;
-              const displaySmoke = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentSmoke;
+              const displayElec = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : { ...currentElec, testedWorkItems: currentElec.testedWorkItems.map(item => ({ ...item, workResult: effectiveElectricalResult(item) })) };
+              const displaySmoke = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : { ...currentSmoke, alarmSchedule: currentSmoke.alarmSchedule.map(alarm => ({ ...alarm, ...effectiveSmokeAlarmResults(alarm) })) };
               const displayTca1 = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentTca1;
               const displayTca2 = (activeStatus.signedOff && parsedSnapshot) ? parsedSnapshot : currentTca2;
 

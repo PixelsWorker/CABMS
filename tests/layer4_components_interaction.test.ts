@@ -1361,3 +1361,85 @@ test('LAYER 4: ComplianceFormsView renders statutory non-compliance notice in sm
     assert.ok(!text.includes('Interconnected photoelectric alarms comply with current Queensland fire legislation.'), 'Untouched default compliance assertion is removed on failure');
   });
 });
+
+
+for (const manual of ['Pass', 'Fail'] as const) {
+  test(`LAYER 4: G05 electrical test corrections preserve manual ${manual} and freeze effective results`, async () => {
+    await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+      let id = '';
+      await act(async () => {
+        id = ctx.createJob({ brandId: 'solarcell', title: 'Synthetic electrical correction', jobType: 'JT-001', formsRequired: ['ELECTRICAL'] }).id;
+        ctx.setSelectedJobId(id);
+      });
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Electrical Cert (Part A)'))!.click(); });
+      const select = (label: string) => Array.from(container.querySelectorAll('label')).find(l => l.textContent === label)!.parentElement!.querySelector('select')!;
+      const change = async (label: string, value: string) => act(async () => {
+        const el = select(label); el.value = value; el.dispatchEvent(new window.Event('change', { bubbles: true }));
+      });
+      await change('Polarity', 'Fail');
+      assert.equal(select('Work Result (manual)').value, 'Pass', 'manual control remains selectable during forced failure');
+      assert.equal(container.querySelector('[data-testid=electrical-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await change('Work Result (manual)', manual);
+      assert.equal(ctx.getOrCreateElectrical(id).testedWorkItems[0].workResult, manual, 'test edit preserves manual intent');
+      await change('Earth Continuity', 'Fail');
+      await change('Polarity', 'Pass');
+      assert.equal(container.querySelector('[data-testid=electrical-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail', 'other failed test still forces effective failure');
+      await change('Earth Continuity', 'Pass');
+      assert.equal(select('Work Result (manual)').value, manual, 'corrected tests restore manual selection');
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Print / PDF Preview'))!.click(); });
+      const resultCell = container.querySelectorAll('table').item(container.querySelectorAll('table').length - 1).querySelector('tbody tr')!.lastElementChild!;
+      assert.equal(resultCell.textContent, manual, 'draft preview agrees with effective result');
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Close Preview'))!.click(); });
+      await act(async () => { ctx.signOffElectrical(id); });
+      const signed = ctx.getOrCreateElectrical(id);
+      assert.equal(signed.signedOff, true);
+      assert.equal(JSON.parse(signed.fullSnapshot!).testedWorkItems[0].workResult, manual);
+    });
+  });
+
+  test(`LAYER 4: G05 smoke test corrections preserve manual ${manual} without stale notices`, async () => {
+    await mountView(React.createElement(ComplianceFormsView), async (ctx, container, window) => {
+      let id = '';
+      await act(async () => {
+        id = ctx.createJob({ brandId: 'solarcell', title: 'Synthetic smoke correction', jobType: 'JT-001', formsRequired: ['SMOKE_ALARM'] }).id;
+        ctx.setSelectedJobId(id);
+      });
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Smoke Alarm'))!.click(); });
+      const row = () => container.querySelector('tbody tr')!;
+      const result = () => Array.from(row().querySelectorAll('select')).at(-1)!;
+      const toggle = async () => act(async () => { row().querySelector('button')!.click(); });
+      await toggle();
+      assert.equal(result().value, 'Pass', 'manual control remains selectable during forced failure');
+      assert.equal(container.querySelector('[data-testid=smoke-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await act(async () => { const el = result(); el.value = manual; el.dispatchEvent(new window.Event('change', { bubbles: true })); });
+      assert.equal(ctx.getOrCreateSmokeAlarm(id).alarmSchedule[0].passFail, manual);
+      await toggle();
+      assert.equal(result().value, manual);
+      assert.equal(ctx.getOrCreateSmokeAlarm(id).alarmSchedule[0].complianceStatusProvisional, manual);
+      // A separate failed button test continues to force the effective result.
+      await act(async () => {
+        const form = ctx.getOrCreateSmokeAlarm(id);
+        ctx.updateSmokeAlarmForm(id, { alarmSchedule: form.alarmSchedule.map((a, i) => i === 0 ? { ...a, buttonTestPass: false } : a) });
+      });
+      assert.equal(container.querySelector('[data-testid=smoke-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await toggle(); await toggle();
+      assert.equal(container.querySelector('[data-testid=smoke-effective-result-0]')!.textContent!.trim(), 'Effective result: Fail');
+      await act(async () => {
+        const form = ctx.getOrCreateSmokeAlarm(id);
+        ctx.updateSmokeAlarmForm(id, { alarmSchedule: form.alarmSchedule.map(a => ({ ...a, buttonTestPass: true })) });
+      });
+      assert.equal(result().value, manual);
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Print / PDF Preview'))!.click(); });
+      const previewRow = Array.from(container.querySelectorAll('table')).at(-1)!.querySelector('tbody tr')!;
+      assert.equal(previewRow.lastElementChild!.textContent, manual);
+      await act(async () => { Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Close Preview'))!.click(); });
+      await act(async () => { ctx.signOffSmokeAlarm(id); });
+      const signed = ctx.getOrCreateSmokeAlarm(id);
+      assert.equal(signed.signedOff, true);
+      const frozen = JSON.parse(signed.fullSnapshot!);
+      assert.equal(frozen.alarmSchedule[0].passFail, manual);
+      assert.equal(frozen.alarmSchedule[0].complianceStatusProvisional, manual);
+      assert.equal(frozen.limitationsAndRentalNotes.includes('NON-COMPLIANCE NOTICE'), manual === 'Fail');
+    });
+  });
+}

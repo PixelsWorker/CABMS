@@ -742,12 +742,32 @@ export const KNOWN_DEFAULT_COMPLIANCE_NOTES = [
   SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE,
 ] as const;
 
-export function stripAffirmativeComplianceNotes(notes: string): string {
-  let cleaned = notes;
+/** Derive the unsigned/snapshot result without changing the technician's stored selection. */
+export function effectiveElectricalResult(item: ElectricalCertData['testedWorkItems'][number]): 'Pass' | 'Fail' {
+  return item.polarityTest === 'Fail' || item.earthContinuity === 'Fail' ? 'Fail' : item.workResult;
+}
+
+/** Overlay failed tests on manual smoke-alarm results; retain manual Fail and Provisional values. */
+export function effectiveSmokeAlarmResults(alarm: SmokeAlarmCertData['alarmSchedule'][number]) {
+  const failed = alarm.passFail === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false;
+  return {
+    passFail: failed ? ('Fail' as const) : alarm.passFail,
+    complianceStatusProvisional: failed ? ('Fail' as const) : alarm.complianceStatusProvisional,
+  };
+}
+
+/** Match known assertions at note boundaries while preserving quotations in technician narratives. */
+function affirmativeCompliancePattern(): RegExp {
   const escapedNotes = KNOWN_DEFAULT_COMPLIANCE_NOTES
     .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|');
-  const regex = new RegExp(`(^|[•\\r\\n])\\s*(?:${escapedNotes})(?=\\s|•|$)`, 'g');
+  return new RegExp(`(^|[•\\r\\n])\\s*(?:${escapedNotes})(?=\\s|•|$)`, 'g');
+}
+
+/** Remove known default assertions only while preparing unsigned or newly finalized notes. */
+export function stripAffirmativeComplianceNotes(notes: string): string {
+  let cleaned = notes;
+  const regex = affirmativeCompliancePattern();
   let prev: string;
   do {
     prev = cleaned;
@@ -762,6 +782,7 @@ export function stripAffirmativeComplianceNotes(notes: string): string {
     .trim();
 }
 
+/** Validate frozen preview evidence without mutating or repairing its recorded contents. */
 export function validateSignedSnapshot(
   snapshotRaw?: string,
   expectedJobId?: string,
@@ -881,6 +902,11 @@ export function validateSignedSnapshot(
       (alarm.buttonTestPass === false || alarm.interconnectionPass === false || alarm.passFail === 'Fail')
     )) {
       return { valid: false, error: 'SMOKE_ALARM snapshot cannot record Pass status when recorded tests failed.' };
+    }
+    if (formType === 'SMOKE_ALARM' && parsed.alarmSchedule.some((alarm: Record<string, unknown>) =>
+      alarm.passFail === 'Fail' || alarm.complianceStatusProvisional === 'Fail' || alarm.buttonTestPass === false || alarm.interconnectionPass === false
+    ) && affirmativeCompliancePattern().test(parsed.limitationsAndRentalNotes)) {
+      return { valid: false, error: 'SMOKE_ALARM snapshot cannot retain affirmative compliance notes for a failed inspection.' };
     }
     if (formType === 'SMOKE_ALARM') {
       if (!['Owner', 'Property Manager', 'Tenant'].includes(parsed.issuedToRole as string)) {

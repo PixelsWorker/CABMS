@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../src/utils/g05PreviewReadiness.ts';
-import { DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE, STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE } from '../src/utils/cabmsLogic.ts';
+import { effectiveElectricalResult, effectiveSmokeAlarmResults, DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE, STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE } from '../src/utils/cabmsLogic.ts';
 import { INITIAL_ELECTRICAL_CERT, INITIAL_JSA_FORM, INITIAL_SMOKE_ALARM_CERT } from '../src/data/seedData.ts';
 
 test('preview reports only required forms without inventing requirements', () => {
@@ -95,6 +95,7 @@ test('preview readiness validates signed snapshots recording legitimate failed i
   baseSmoke.alarmSchedule[0].buttonTestPass = false;
   baseSmoke.alarmSchedule[0].interconnectionPass = false;
   baseSmoke.alarmSchedule[0].complianceStatusProvisional = 'Fail';
+  baseSmoke.limitationsAndRentalNotes = STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE;
   const smokeSnapshot = JSON.stringify(baseSmoke);
 
   const smokeValid = isValidPreviewSignOff('SMOKE_ALARM', INITIAL_SMOKE_ALARM_CERT.jobReference, true, smokeSnapshot);
@@ -245,4 +246,90 @@ test('smoke alarm sign-off strips repeated space-separated default and seeded co
     1,
     'statutory non-compliance notice appears exactly once',
   );
+});
+
+
+test('failed imported smoke snapshots with known affirmative notes are invalid and remain unchanged', () => {
+  const base = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+  for (const note of [DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE]) {
+    for (const suffix of ['', ` • Technician observation • ${STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE}`]) {
+      const snapshot = structuredClone(base);
+      Object.assign(snapshot.alarmSchedule[0], { passFail: 'Fail', buttonTestPass: false, complianceStatusProvisional: 'Fail' });
+      snapshot.limitationsAndRentalNotes = note + suffix;
+      const raw = JSON.stringify(snapshot);
+      assert.equal(isValidPreviewSignOff('SMOKE_ALARM', snapshot.jobReference, true, raw), false);
+      assert.equal(JSON.stringify(snapshot), raw, 'frozen evidence is not rewritten');
+      assert.deepEqual(getInvalidPreviewForms(['SMOKE_ALARM'], { SMOKE_ALARM: true }, { SMOKE_ALARM: false }), ['SMOKE_ALARM']);
+    }
+  }
+  const passing = JSON.stringify(base);
+  assert.equal(isValidPreviewSignOff('SMOKE_ALARM', base.jobReference, true, passing), true);
+  Object.assign(base.alarmSchedule[0], { passFail: 'Fail', buttonTestPass: false, complianceStatusProvisional: 'Fail' });
+  base.limitationsAndRentalNotes = `Technician observation • ${STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE}`;
+  assert.equal(isValidPreviewSignOff('SMOKE_ALARM', base.jobReference, true, JSON.stringify(base)), true);
+});
+
+
+test('effective results preserve stored intent, Provisional values and frozen input', () => {
+  const electrical = structuredClone(INITIAL_ELECTRICAL_CERT.testedWorkItems[0]);
+  const smoke = structuredClone(INITIAL_SMOKE_ALARM_CERT.alarmSchedule[0]);
+  for (const manual of ['Pass', 'Fail'] as const) {
+    for (const firstFails of [false, true]) for (const secondFails of [false, true]) {
+      const item = { ...electrical, workResult: manual, polarityTest: firstFails ? 'Fail' as const : 'Pass' as const, earthContinuity: secondFails ? 'Fail' as const : 'Pass' as const };
+      const alarm = { ...smoke, passFail: manual, complianceStatusProvisional: manual, buttonTestPass: !firstFails, interconnectionPass: !secondFails };
+      const before = JSON.stringify([item, alarm]);
+      const expected = firstFails || secondFails ? 'Fail' : manual;
+      assert.equal(effectiveElectricalResult(Object.freeze(item)), expected);
+      assert.deepEqual(effectiveSmokeAlarmResults(Object.freeze(alarm)), { passFail: expected, complianceStatusProvisional: expected });
+      assert.equal(JSON.stringify([item, alarm]), before);
+    }
+  }
+  assert.deepEqual(effectiveSmokeAlarmResults({ ...smoke, passFail: 'Pass', buttonTestPass: true, interconnectionPass: true, complianceStatusProvisional: 'Provisional' }), { passFail: 'Pass', complianceStatusProvisional: 'Provisional' });
+});
+
+test('mock adapter finalization matches effective results after test corrections and retains manual failures', async () => {
+  const { MockDataAdapter } = await import('../src/services/mockAdapter.ts');
+  for (const manual of ['Pass', 'Fail'] as const) for (const fails of [false, true]) {
+    const adapter = new MockDataAdapter();
+    await adapter.resetToBaseline();
+    const jobId = 'JOB-2026-102';
+    const signer = { signed_by_name: 'Synthetic Technician', signer_role: 'technician' as const, signed_timestamp: '2026-11-05T09:00:00.000Z' };
+    const smoke = structuredClone(INITIAL_SMOKE_ALARM_CERT);
+    Object.assign(smoke, { jobReference: jobId, signedOff: false, fullSnapshot: undefined });
+    smoke.alarmSchedule = smoke.alarmSchedule.map(a => ({ ...a, passFail: manual, complianceStatusProvisional: manual, buttonTestPass: true, interconnectionPass: false }));
+    await adapter.saveSmokeAlarmForm(jobId, smoke);
+    smoke.alarmSchedule = smoke.alarmSchedule.map(a => ({ ...a, interconnectionPass: !fails }));
+    await adapter.saveSmokeAlarmForm(jobId, smoke);
+    const signedSmoke = await adapter.signOffSmokeAlarmForm(jobId, signer);
+    const expected = fails ? 'Fail' : manual;
+    assert.equal(signedSmoke.alarmSchedule[0].passFail, expected);
+    assert.equal(JSON.parse(signedSmoke.fullSnapshot!).alarmSchedule[0].passFail, expected);
+    assert.equal(signedSmoke.limitationsAndRentalNotes.includes('NON-COMPLIANCE NOTICE'), expected === 'Fail');
+    await assert.rejects(adapter.saveSmokeAlarmForm(jobId, { limitationsAndRentalNotes: 'replacement' }), /cannot be modified/);
+    const electrical = structuredClone(INITIAL_ELECTRICAL_CERT);
+    Object.assign(electrical, { jobReference: jobId, signedOff: false, fullSnapshot: undefined });
+    electrical.testedWorkItems = electrical.testedWorkItems.map(a => ({ ...a, workResult: manual, polarityTest: 'Fail', earthContinuity: 'Pass' }));
+    await adapter.saveElectricalForm(jobId, electrical);
+    electrical.testedWorkItems = electrical.testedWorkItems.map(a => ({ ...a, polarityTest: fails ? 'Fail' : 'Pass' }));
+    await adapter.saveElectricalForm(jobId, electrical);
+    const signedElectrical = await adapter.signOffElectricalForm(jobId, signer);
+    assert.equal(signedElectrical.testedWorkItems[0].workResult, expected);
+    assert.equal(JSON.parse(signedElectrical.fullSnapshot!).testedWorkItems[0].workResult, expected);
+  }
+});
+
+
+test('historical quotations of default smoke compliance notes remain valid evidence', () => {
+  for (const note of [DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, SEEDED_SMOKE_ALARM_COMPLIANCE_NOTE]) {
+    const base = JSON.parse(INITIAL_SMOKE_ALARM_CERT.fullSnapshot!);
+    Object.assign(base.alarmSchedule[0], { passFail: 'Fail', buttonTestPass: false, complianceStatusProvisional: 'Fail' });
+    base.limitationsAndRentalNotes = `Previous certificate stated: ${note} Inspection found otherwise. • ${STATUTORY_SMOKE_ALARM_NON_COMPLIANCE_NOTICE}`;
+    const raw = JSON.stringify(base);
+    assert.equal(isValidPreviewSignOff('SMOKE_ALARM', base.jobReference, true, raw), true);
+    assert.equal(JSON.stringify(base), raw);
+    for (const separator of [' • ', '\n', '\r\n']) {
+      base.limitationsAndRentalNotes = `Technician observations${separator}${note}`;
+      assert.equal(isValidPreviewSignOff('SMOKE_ALARM', base.jobReference, true, JSON.stringify(base)), false, 'standalone assertion remains invalid');
+    }
+  }
 });

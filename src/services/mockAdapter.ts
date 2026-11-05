@@ -21,6 +21,7 @@ import {
   Tca1CertData,
   Tca2AuditRecord,
   Tca2CertData,
+  TemplateRevision,
   TemplateSetting,
   WebsiteEnquiry,
 } from '../types/cabms.ts';
@@ -42,6 +43,7 @@ import {
 } from './types.ts';
 
 import { INITIAL_BUSINESS_CLOCK, serializeBusinessInstant, calculateQuoteExpiration, calculateQuoteFollowUpDates } from '../utils/businessTime.ts';
+import { validateQuoteInput, calculateQuoteTotals, roundedLineTotalCents, amountInCents, processPublishTemplate } from '../utils/cabmsLogic.ts';
 
 // Direct fixture imports
 import brandsFixture from '../data/fixtures/brands.json';
@@ -54,6 +56,7 @@ import enquiriesFixture from '../data/fixtures/enquiries.json';
 import sampleAttachmentsFixture from '../data/fixtures/sampleAttachments.json';
 import complianceFormsFixture from '../data/fixtures/complianceForms.json';
 import tca2AuditsFixture from '../data/fixtures/tca2Audits.json';
+
 
 interface ComplianceStore {
   jsa: Record<string, JsaFormData>;
@@ -603,6 +606,17 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const job = this.jobs.find(j => j.id === jobId);
     if (!job) throw new NotFoundError('Job', jobId);
 
+    const validation = validateQuoteInput(title, lineItems);
+    if (!validation.valid) {
+      throw new ValidationError(validation.error || 'Cannot prepare quote: line items must have valid values and totals.');
+    }
+
+    // Editable preview content may be an unpublished draft; freeze the current
+    // published revision, matching the preview context's quote behavior.
+    const terms = this.templates.find(t => t.type === 'TERMS');
+    const publishedTerms = terms?.revisions.find(r => r.status === 'PUBLISHED' && r.version === terms.currentVersion);
+    if (!publishedTerms) throw new ValidationError('Cannot prepare quote: published terms are unavailable.');
+
     let issuedAt: string;
     let expiresAt: string;
     let dates: ReturnType<typeof calculateQuoteFollowUpDates>;
@@ -614,9 +628,7 @@ export class MockDataAdapter implements CabmsDataAdapter {
       if (!(error instanceof RangeError)) throw error;
       throw new ValidationError(`Cannot prepare quote: ${error.message}`);
     }
-    const subtotal = Math.round(lineItems.reduce((acc, item) => acc + item.total, 0) * 100) / 100;
-    const gst = Math.round(subtotal * 0.10 * 100) / 100;
-    const total = Math.round((subtotal + gst) * 100) / 100;
+    const { subtotal, gst, total } = calculateQuoteTotals(lineItems);
     const quoteId = `QUOTE-2026-${String(jobId).replace(/[^\d]/g, '')}`;
 
     const newQuote: Quote = {
@@ -630,8 +642,8 @@ export class MockDataAdapter implements CabmsDataAdapter {
       gst,
       total,
       lineItems: structuredClone(lineItems),
-      termsVersion: 'v2026.1',
-      termsContentSnapshot: 'Standard commercial service terms.',
+      termsVersion: publishedTerms.version,
+      termsContentSnapshot: publishedTerms.content,
       frozenIssuerSnapshot: this.brands[job.brandId]?.legalIssuerName || '',
       acceptanceStatus: 'SENT',
       linkScenario: 'valid',
@@ -747,7 +759,15 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
-    tpl.activeStatus = 'PUBLISHED';
+    if (tpl.activeStatus === 'PUBLISHED') {
+      return structuredClone(tpl);
+    }
+
+    const res = processPublishTemplate(tpl, 'super_admin', serializeBusinessInstant(this.clock()));
+    if (!res.success || !res.updatedTemplate) {
+      throw new ValidationError(res.error || 'Cannot publish template.');
+    }
+    Object.assign(tpl, res.updatedTemplate);
     return structuredClone(tpl);
   }
 
@@ -755,8 +775,17 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
+    const timestamp = serializeBusinessInstant(this.clock());
+    const draftRev: TemplateRevision = {
+      version: `${tpl.currentVersion}-draft`,
+      status: 'DRAFT',
+      content: newContent,
+      updatedAt: timestamp,
+      updatedBy: 'SUPER_ADMIN',
+    };
     tpl.content = newContent;
     tpl.activeStatus = 'DRAFT';
+    tpl.revisions = [draftRev, ...tpl.revisions];
     return structuredClone(tpl);
   }
 
@@ -764,7 +793,15 @@ export class MockDataAdapter implements CabmsDataAdapter {
     const tpl = this.templates.find(t => t.id === templateId);
     if (!tpl) throw new NotFoundError('Template', templateId);
 
+    if (tpl.revisions[0]?.status !== 'DRAFT') {
+      throw new ValidationError('Only a draft revision can be submitted for review.');
+    }
+
+    const timestamp = serializeBusinessInstant(this.clock());
     tpl.activeStatus = 'REVIEW';
+    tpl.revisions = tpl.revisions.map((r, idx) =>
+      idx === 0 ? { ...r, status: 'REVIEW', updatedAt: timestamp } : r
+    );
     return structuredClone(tpl);
   }
 

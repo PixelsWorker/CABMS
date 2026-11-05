@@ -5,6 +5,8 @@
  */
 
 import React, { useState } from 'react';
+import { useG01Session } from '../context/G01Session.tsx';
+import { G04AppointmentsView } from './G04AppointmentsView.tsx';
 import { formatBusinessTime, formatBusinessCalendarDate } from '../utils/businessTime.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -26,6 +28,22 @@ import {
 import { Job } from '../types/cabms.ts';
 
 export const ScheduleView: React.FC = () => {
+  const session = useG01Session();
+  const workspace = session?.workspaceId;
+  const role = session?.profile?.memberships.find(m => m.workspace_id === workspace)?.role;
+  const eligible = !!role && role !== 'technician';
+
+  return session && eligible ? (
+    <G04AppointmentsView
+      key={JSON.stringify([session.workspaceId, session.profile?.user.id])}
+      fallback={<SimulatedScheduleView />}
+    />
+  ) : (
+    <SimulatedScheduleView />
+  );
+};
+
+const SimulatedScheduleView: React.FC = () => {
   const {
     jobs,
     activeBrandId,
@@ -98,7 +116,7 @@ export const ScheduleView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs text-(--cabms-text-secondary) mt-1">
-              Primary and fleet calendar synchronization with automated email confirmations and reminder suppression.
+              Synthetic preview only. Calendar synchronization and email delivery are simulated.
             </p>
           </div>
 

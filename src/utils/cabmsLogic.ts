@@ -985,4 +985,112 @@ export function validateSignedSnapshot(
   }
 }
 
+export function roundedLineTotalCents(quantity: number, unitPrice: number): bigint {
+  const asFraction = (value: number): [bigint, bigint] => {
+    const [coefficient, exponentText] = value.toString().toLowerCase().split('e');
+    const [whole, fraction = ''] = coefficient.split('.');
+    const exponent = Number(exponentText || 0) - fraction.length;
+    const numerator = BigInt(`${whole}${fraction}`);
+    return exponent >= 0
+      ? [numerator * 10n ** BigInt(exponent), 1n]
+      : [numerator, 10n ** BigInt(-exponent)];
+  };
+  const [quantityNumerator, quantityDenominator] = asFraction(quantity);
+  const [priceNumerator, priceDenominator] = asFraction(unitPrice);
+  const numerator = quantityNumerator * priceNumerator * 100n;
+  const denominator = quantityDenominator * priceDenominator;
+  return (numerator * 2n + denominator) / (denominator * 2n);
+}
+
+export function amountInCents(amount: number): bigint {
+  const [coefficient, exponentText] = amount.toString().toLowerCase().split('e');
+  const [whole, fraction = ''] = coefficient.split('.');
+  const exponent = Number(exponentText || 0) - fraction.length + 2;
+  const numerator = BigInt(`${whole}${fraction}`);
+  return exponent >= 0
+    ? numerator * 10n ** BigInt(exponent)
+    : (numerator * 2n + 10n ** BigInt(-exponent)) / (2n * 10n ** BigInt(-exponent));
+}
+
+export interface QuoteValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
+export function validateQuoteInput(
+  title: unknown,
+  lineItems: unknown
+): QuoteValidationResult {
+  if (typeof title !== 'string' || !title.trim()) {
+    return { valid: false, error: 'Cannot prepare quote: title is required.' };
+  }
+  if (!Array.isArray(lineItems) || lineItems.length === 0) {
+    return { valid: false, error: 'Cannot prepare quote: line items must have valid values and totals.' };
+  }
+  for (const item of lineItems) {
+    if (
+      !item ||
+      typeof item !== 'object' ||
+      typeof item.id !== 'string' ||
+      !item.id.trim() ||
+      typeof item.description !== 'string' ||
+      !item.description.trim() ||
+      typeof item.quantity !== 'number' ||
+      !Number.isFinite(item.quantity) ||
+      item.quantity <= 0 ||
+      typeof item.unitPrice !== 'number' ||
+      !Number.isFinite(item.unitPrice) ||
+      item.unitPrice < 0 ||
+      Number(amountInCents(item.unitPrice)) / 100 !== item.unitPrice ||
+      typeof item.total !== 'number' ||
+      !Number.isFinite(item.total) ||
+      item.total < 0 ||
+      Number(amountInCents(item.total)) / 100 !== item.total ||
+      roundedLineTotalCents(item.quantity, item.unitPrice) !== amountInCents(item.total)
+    ) {
+      return { valid: false, error: 'Cannot prepare quote: line items must have valid values and totals.' };
+    }
+  }
+  try {
+    const totals = calculateQuoteTotals(lineItems as Array<{ total: number }>);
+    if (!Number.isFinite(totals.subtotal) || !Number.isFinite(totals.gst) || !Number.isFinite(totals.total)) {
+      return { valid: false, error: 'Cannot prepare quote: line items must have valid values and totals.' };
+    }
+  } catch {
+    return { valid: false, error: 'Cannot prepare quote: line items must have valid values and totals.' };
+  }
+  return { valid: true };
+}
+
+export function calculateQuoteTotals(lineItems: Array<{ total: number }>): {
+  subtotal: number;
+  gst: number;
+  total: number;
+} {
+  const subtotalCents = lineItems.reduce((acc, item) => acc + amountInCents(item.total), 0n);
+  const gstCents = (subtotalCents + 5n) / 10n;
+  const totalCents = subtotalCents + gstCents;
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+  if (subtotalCents > maxSafe || gstCents > maxSafe || totalCents > maxSafe) {
+    throw new RangeError('Cannot calculate quote totals: amounts exceed maximum representable currency range.');
+  }
+  const subtotal = Number(subtotalCents) / 100;
+  const gst = Number(gstCents) / 100;
+  const total = Number(totalCents) / 100;
+  if (!Number.isFinite(subtotal) || !Number.isFinite(gst) || !Number.isFinite(total)) {
+    throw new RangeError('Cannot calculate quote totals: amounts exceed maximum representable currency range.');
+  }
+  if (
+    amountInCents(subtotal) !== subtotalCents ||
+    amountInCents(gst) !== gstCents ||
+    amountInCents(total) !== totalCents
+  ) {
+    throw new RangeError('Cannot calculate quote totals: amounts exceed maximum representable currency range.');
+  }
+  return {
+    subtotal,
+    gst,
+    total,
+  };
+}
 

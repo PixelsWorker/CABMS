@@ -4,6 +4,13 @@ This file records evidence-backed CABMS development history. It follows a Keep a
 
 **Historical G00 documentation baseline:** 28 October 2026. The local integration baseline was `2b04f87bbb6dc4f81b65c6f2844d76488161e62d`, whose merge subject records PR #16. Entries dated 27 October below preserve historical observations and reported evidence; they are not current remote status. GitHub refresh was unavailable in that historical audit. Current G01 implementation continues on `feat/g01-identity-workspaces` / PR #17 as recorded below.
 
+## 5 November 2026 — post-merge delivery reconciliation (proposed)
+
+- **INSPECTED source:** G02 delivered a saved synthetic enquiry-to-job slice with a required review step; the broader customer/job model remains a draft.
+- **INSPECTED merge/tag records:** G03 merged a synthetic quotation/acceptance workflow; G04 merged local/test synthetic appointment scheduling; G05 merged simulated compliance preview and snapshot-readiness work. These milestones do not establish production integrations or whole-application acceptance.
+- **REPORTED independent audit ([issue #32](https://github.com/PixelsWorker/CABMS/issues/32)):** Independent post-merge review identified changes required, including privileged onboarding and access-denial recovery. Real-browser acceptance remains not run. PAAR and PAAR-Core are proposed; no implementation or deployment is authorized by this entry.
+- **INSPECTED draft:** G02's existing MYOB boundary is retained: MYOB accounting/contact master ownership and CABMS operational records are a proposed integration boundary, not proof of a live MYOB connection or approved production schema.
+
 ## 28 October 2026 — Safe Super Admin Bootstrap, Identity Revocation & Runtime Pinning (Proposals A–E)
 
 - **Proposal A (Safe Bootstrap & Historical Seed Remediation):** Replaced real domain email with `admin@chine.example.invalid` and removed synthetic `super_admin` memberships in `migrations/0002_g01_seed_synthetic_data.sql`. Added compensating migration `migrations/0003_g01_revoke_unauthorized_seed_super_admin.sql` to revoke unauthorized seed Super Admin roles and identity mappings while preserving user and audit records. Created operator bootstrap script `scripts/bootstrap_first_super_admin.sql` with double-checked placeholder guards (`NOT LIKE 'OPERATOR_FIREBASE_UID_%'`) for safe first-time Super Admin enrollment.

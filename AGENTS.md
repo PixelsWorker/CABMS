@@ -2,6 +2,10 @@
 
 ## Project Structure
 
+- `backend/`: Worker routes, authorization and repositories.
+- `contracts/`: API and shared contract definitions.
+- `migrations/`: reviewed database migrations.
+- `scripts/`: local and operator utilities; target-specific operations require approval.
 - `src/`: React and TypeScript application.
 - `src/components/`: shared interface components.
 - `src/views/`: application views.
@@ -19,12 +23,11 @@ The parent workspace has `evidence/` for reference originals and `worktree/` res
 Run commands from this directory (or active worktree). Both npm (Node `^22.22.2 || ^24.15.0`, as declared in `package.json` `engines`; `node:sqlite` is required for backend tests) and Bun (`bun.lock`) are supported via `package.json`:
 
 - `npm run dev` / `bun run dev`: start the Vite development server on port 3000 (UI development; requires `npx wrangler dev --port 8787` for local Worker API & D1 session proxying).
-- `npx wrangler dev --port 8787`: run local Cloudflare Worker and D1 database on port 8787 for authenticated local API requests.
+- `npx wrangler dev --port 8787`: run the local Cloudflare Worker and D1 database for authenticated local API requests. Wrangler serves `./dist`; build the frontend first on a clean checkout and use an authorized local environment.
 - `npm run build` / `bun run build`: build the production app.
 - `npm run lint` / `bun run lint`: run the TypeScript compiler without emitting files (`tsc --noEmit`).
 - `npm test` / `bun run test`: run the configured application and test suite via the package script.
 - Individual layers: `npm run test:layer1` through `npm run test:layer8` (or `bun run ...`).
-- Alternate loader fallback (local-environment override for constrained runners without native tsx support; not present in clean repository checkouts): `npm run build && node --import ../../graphify-out/audit-loader.mjs --test src/utils/cabmsLogic.test.ts tests/*.test.ts tests/s2/*.test.ts tests/bootstrap/*.test.ts`.
 
 Use `package.json` scripts as the source of truth if these commands change. Do not claim tests passed unless they were run and passed.
 
@@ -37,11 +40,13 @@ Use `package.json` scripts as the source of truth if these commands change. Do n
 
 ## Testing
 
-The repository includes layered tests and a test for `src/utils/cabmsLogic.ts`. Add or update focused tests for domain changes and preserve the layer boundaries. Check documentation against the actual implementation.
+The repository includes layered tests and a test for `src/utils/cabmsLogic.ts`. Add or update focused tests for domain changes and preserve the layer boundaries. Check documentation against the actual implementation. Until AUDIT-08 is fixed and verified, standalone Layer 1 can reuse existing `dist` and is not fresh-build evidence; `npm test` builds first.
 
 ## Git and Change Safety
 
-- Local development uses the `dev` branch. Preserve local and remote `main` histories until a reconciliation plan is authorized; do not force-push.
+- Local development uses `dev` or feature branches. Do not modify or force-push `main`; promotion from `dev` requires Rockson’s separate release approval.
 - Use imperative commit subjects, such as `Add initial project structure and repository guidelines`.
 - Review `git status -sb` and `git diff --check` before finishing; inspect staged changes with `git diff --cached` when applicable.
 - Architecture drafts and demo materials do not grant implementation, external integration, or publication authorization.
+
+- Obtain exact-file approval before modifying protected AGENTS or setup files, Wrangler configuration or migrations. Preserve existing migrations; propose new reviewed migrations instead. Operator utilities require approval for the exact target.

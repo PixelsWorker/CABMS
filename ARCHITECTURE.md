@@ -10,6 +10,14 @@
 
 This document preserves dated G00 evidence and records the owner-authorized G01 implementation on `feat/g01-identity-workspaces` / PR #17. Only the G01 decisions explicitly listed in section 14 are accepted; broader ADR topics remain proposed. Implementation authorization is distinct from final G01 acceptance, security-policy/migration approvals, publication, deployment and merge. FC-06 remains an absolute deployment hold.
 
+## 5 November 2026 — post-merge architecture reconciliation (proposed)
+
+At merged dev `335dfb1`, G02–G05 contain a mix of persistent synthetic slices and G00 simulation. Authenticated synthetic enquiries convert to saved jobs with an initial review step; local/test scheduling persists synthetic appointments. Quotes, compliance previews and many customer workflows remain simulated. These slices do not establish a durable end-to-end customer journey or production acceptance.
+
+**Proposed ownership clarification, not production-schema approval:** CABMS models workspace-authorized operational jobs, scheduling, workflow steps, compliance, evidence and completion independently of MYOB's internal database. MYOB remains the authoritative external system for customer/contact master records, quotations, invoices, payments and applicable accounting records. CABMS stores approved external identifiers, linkage metadata and minimal job-specific display snapshots where required. MYOB API documentation defines supported integration operations and synchronization contracts, not CABMS's entire relational schema. Whether CABMS or MYOB authors quotations, and how quotation synchronization operates, remain open owner decisions. Actual MYOB product access, company-file mappings, permissions and sync behavior remain subject to verification and separate approval.
+
+PAAR-Core is a proposed design activity to determine the smallest durable Customer → Enquiry → Job → Scheduling → Compliance → Completion connection on an authorized synthetic test environment. It is not authorization to build that connection or G06/G07 integrations. Browser acceptance, privacy and restore proof, owner acceptance and deployment remain separate gates.
+
 ## Historical G00 audit snapshot — 28 October 2026
 
 - **VERIFIED locally:** `CABMS` (`main`) and `worktree/dev` (`dev`) are both at `2b04f87`; local history records the merge of PR #16. Current GitHub PR/issue status could not be refreshed. Merge, browser receipts and owner acceptance are separate facts.

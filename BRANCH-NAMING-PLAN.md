@@ -2,6 +2,12 @@
 
 **Status:** Branch names remain proposals. Fact-checked 28 October 2026 to reflect the owner-approved Cloudflare hosting/delivery constraint; no feature branches are created by this plan.
 
+## 5 November 2026 — current-state addendum (proposed)
+
+The 28 October baseline and worktree paths below are historical. At the verified 5 November checkpoint, the canonical `CABMS/` checkout is on `dev`, and it is the only registered worktree. G03, G04 and G05 were merged and their feature tips preserved in annotated tags; the retired feature worktrees must not be recreated. Recheck actual refs, worktrees and status before proposing new work.
+
+A separate governance documentation branch and linked worktree may be proposed from verified current `dev`; creation, repository writes, publication and promotion to `main` require their applicable separate approvals. PAAR and PAAR-Core remain proposals pending owner scope decisions. Earlier branch names and group gates below are historical planning, not evidence that those branches remain active.
+
 ## Planning baseline
 
 - Repository: `PixelsWorker/CABMS`

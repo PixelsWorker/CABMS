@@ -158,10 +158,27 @@ export function verifyApprovalManifest(
     );
   }
 
-  const { manifest } = signed;
-  if (!manifest || typeof manifest !== 'object') {
+  const rawManifest = signed.manifest;
+  if (!rawManifest || typeof rawManifest !== 'object') {
     throw new ManifestValidationError('Manifest payload missing', 'MISSING_MANIFEST');
   }
+
+  // Create an immediate detached plain data snapshot to prevent getter manipulation or mutating accessors
+  const manifest: ApprovalManifest = {
+    operation_id: String((rawManifest as any).operation_id ?? ''),
+    nonce: String((rawManifest as any).nonce ?? ''),
+    target_id: String((rawManifest as any).target_id ?? ''),
+    operator_email: String((rawManifest as any).operator_email ?? ''),
+    operator_uid: String((rawManifest as any).operator_uid ?? ''),
+    workspace_scope: Array.isArray((rawManifest as any).workspace_scope)
+      ? [...(rawManifest as any).workspace_scope].map(String)
+      : (rawManifest as any).workspace_scope,
+    permitted_action: (rawManifest as any).permitted_action,
+    issued_at: String((rawManifest as any).issued_at ?? ''),
+    expires_at: String((rawManifest as any).expires_at ?? ''),
+    signing_key_id: String((rawManifest as any).signing_key_id ?? ''),
+    approval_identity: String((rawManifest as any).approval_identity ?? ''),
+  };
 
   // 2. Canonical JSON consistency check
   const recalculatedJson = canonicalizeJson(manifest);

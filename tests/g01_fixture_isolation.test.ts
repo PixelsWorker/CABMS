@@ -54,7 +54,7 @@ test('G01 fixture: batch rolls back on membership FK failure, installs identitie
   assert.deepEqual(await fixtureCounts(db), [4, 4, 6]);
 
   const rendered = renderG01TestAuthSql();
-  assert.equal((rendered.match(/^INSERT INTO /gm) ?? []).length, 5);
+  assert.equal((rendered.match(/^INSERT INTO /gm) ?? []).length, 7);
   assert.doesNotMatch(rendered, /\?/);
   assert.match(rendered, /test_g01_usr_super_admin/);
 });

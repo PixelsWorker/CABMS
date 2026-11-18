@@ -13,6 +13,7 @@ async function setup() {
   } catch (error) { db.getSqliteHandle().close(); throw error; }
 }
 const identity = "INSERT INTO g01_protected_super_admin(singleton,user_id,provider_id,provider_subject_id,assigned_at,assigned_by) VALUES (1,'schema_owner','firebase','original_uid','2026','operator')";
+const auditManifest = "INSERT INTO paar_p0_bootstrap_audit_manifests (id,operation_id,nonce,target_id,operator_email,operator_uid,workspace_scope,permitted_action,signing_key_id,signature_algorithm,signature_bytes,canonical_manifest_json,audit_reference,created_at) VALUES ('audit_schema','bootstrap_op','nonce_schema','target_schema','schema-owner@example.invalid','original_uid','solarcell','bootstrap_super_admin','key_schema','Ed25519','sig','{}','bootstrap_audit','2026')";
 const marker = "INSERT INTO g01_bootstrap_completion(singleton,original_firebase_uid,completed_at,completed_by,operation_id,request_id,audit_reference) VALUES (1,'original_uid','2026','operator','bootstrap_op','bootstrap_req','bootstrap_audit')";
 const conflictForms = (sql: string, update: string) => [
   sql, sql.replace('INSERT INTO', 'INSERT OR REPLACE INTO'), sql.replace('INSERT INTO', 'INSERT OR IGNORE INTO'),
@@ -34,7 +35,7 @@ async function databaseState(db: LocalD1Database) {
 }
 const securityErrors: Record<string, readonly string[]> = {
   g01_protected_super_admin: ['protected identity already exists', 'protected identity is immutable', 'protected authority cannot be deleted'],
-  g01_bootstrap_completion: ['bootstrap completion already exists', 'bootstrap identity mismatch', 'bootstrap completion is immutable'],
+  g01_bootstrap_completion: ['bootstrap completion already exists', 'bootstrap identity mismatch', 'bootstrap completion is immutable', 'bootstrap completion requires matching pre-inserted audit manifest'],
   g01_super_admin_recovery_events: ['invalid recovery data', 'recovery replay key already exists', 'bootstrap reference missing', 'invalid recovery sequence', 'invalid prior uid', 'recovery uid cannot be reused', 'recovery history is immutable'],
   privileged_identity_approvals: ['approval history key already exists', 'approval may only be revoked once', 'approval history cannot be deleted', 'super admin approval does not match protected identity'],
 };
@@ -65,6 +66,7 @@ test('protected identity and marker reject every replacement and conflict policy
     for (const sql of conflictForms(identity.replace('original_uid', 'other_uid'), "provider_subject_id = 'other_uid'")) await rejectedUnchanged(db, sql, 'g01_protected_super_admin');
     await rejectedUnchanged(db, "UPDATE g01_protected_super_admin SET provider_subject_id = 'other_uid'", 'g01_protected_super_admin');
     await rejectedUnchanged(db, 'DELETE FROM g01_protected_super_admin', 'g01_protected_super_admin');
+    await db.exec(auditManifest);
     await db.exec(marker);
     for (const sql of conflictForms(marker, "original_firebase_uid = 'other_uid'")) await rejectedUnchanged(db, sql, 'g01_bootstrap_completion');
     for (const sql of conflictForms(marker.replace('original_uid', 'other_uid'), "original_firebase_uid = 'other_uid'")) await rejectedUnchanged(db, sql, 'g01_bootstrap_completion');
@@ -79,6 +81,7 @@ test('recovery chain rejects malformed, conflicting and replayed transitions wit
   try {
     await db.exec(identity);
     await rejectedUnchanged(db, event(1, 0, 'original_uid', 'uid_1', 'op_1', 'req_1', 'audit_1'), 'g01_super_admin_recovery_events');
+    await db.exec(auditManifest);
     await db.exec(marker);
     await db.exec(event(1, 0, 'original_uid', 'uid_1', 'op_1', 'req_1', 'audit_1'));
     assert.equal(await effective(db), 'uid_1');

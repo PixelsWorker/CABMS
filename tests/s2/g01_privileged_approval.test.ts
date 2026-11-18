@@ -5,13 +5,12 @@ import { runLocalMigrations } from '../../backend/db/migrate.ts';
 import { createWorker } from '../../backend/index.ts';
 import { createAuthenticationService } from '../../backend/workers/auth.ts';
 import { createFirebaseFixture } from '../support/firebaseTokens.ts';
-import { G01_TEST_AUTH, installG01TestAuthFixtures } from '../support/g01SyntheticFixtures.ts';
+import { G01_TEST_AUTH, g01TestAuthStatementSpecs, installG01TestAuthFixtures } from '../support/g01SyntheticFixtures.ts';
 
 test('super admin recovery authorizes only the effective approved UID', async () => {
   const db = createLocalD1Database() as LocalD1Database;
   try {
     await runLocalMigrations(db, { disposableTest: true });
-    await installG01TestAuthFixtures(db);
     const actor = G01_TEST_AUTH.superAdmin;
     const replacement = 'test_recovered_super_admin_uid';
     const fixture = await createFirebaseFixture();
@@ -19,10 +18,25 @@ test('super admin recovery authorizes only the effective approved UID', async ()
     const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
     const call = async (uid: string, path: string) => worker.fetch(new Request(`http://localhost${path}`, { headers: { Authorization: `Bearer ${await fixture.token(uid, actor.email)}` } }), env);
     const memberships = async (uid: string) => (await (await call(uid, '/api/v1/auth/me')).json() as { memberships: Array<{workspace_id:string}> }).memberships;
-    assert.ok((await memberships(actor.uid)).some(m => m.workspace_id === 'solarcell'), 'original UID works before bootstrap completion');
-    await db.prepare("INSERT INTO g01_bootstrap_completion(singleton,original_firebase_uid,completed_at,completed_by,operation_id,request_id,audit_reference) VALUES (1,?,datetime('now'),'test','test_boot','test_boot_req','test_boot_audit')").bind(actor.uid).run();
-    assert.ok((await memberships(actor.uid)).some(m => m.workspace_id === 'solarcell'), 'original UID works after bootstrap completion');
-    await db.prepare("INSERT INTO g01_super_admin_recovery_events(seq,previous_seq,operation_id,request_id,prior_uid,replacement_uid,operator_identity,reason,occurred_at,bootstrap_operation_id,audit_reference) VALUES(1,0,'test_recovery','test_recovery_req',?,?,'test','synthetic recovery',datetime('now'),'test_boot','test_recovery_audit')").bind(actor.uid, replacement).run();
+
+    // Install identities, mappings, memberships, and approvals WITHOUT bootstrap completion
+    const specs = g01TestAuthStatementSpecs();
+    for (const spec of specs.slice(0, 5)) {
+      await db.prepare(spec.sql).bind(...spec.params).run();
+    }
+
+    // Explicit negative check: BEFORE bootstrap completion, Super Admin authority is strictly denied
+    assert.equal((await memberships(actor.uid)).length, 0, 'Super Admin must have 0 memberships before bootstrap completion');
+    assert.equal((await call(actor.uid, '/api/v1/workspaces/solarcell/settings')).status, 403, 'Super Admin protected route must return 403 before bootstrap completion');
+
+    // Complete bootstrap by inserting audit manifest and bootstrap completion
+    for (const spec of specs.slice(5)) {
+      await db.prepare(spec.sql).bind(...spec.params).run();
+    }
+
+    assert.ok((await memberships(actor.uid)).some(m => m.workspace_id === 'solarcell'), 'original UID works with bootstrap completion');
+    assert.equal((await call(actor.uid, '/api/v1/workspaces/solarcell/settings')).status, 200, 'Super Admin protected route returns 200 after bootstrap completion');
+    await db.prepare("INSERT INTO g01_super_admin_recovery_events(seq,previous_seq,operation_id,request_id,prior_uid,replacement_uid,operator_identity,reason,occurred_at,bootstrap_operation_id,audit_reference) VALUES(1,0,'test_recovery','test_recovery_req',?,?,'test','synthetic recovery',datetime('now'),'op_test_g01_fixture','test_recovery_audit')").bind(actor.uid, replacement).run();
     await db.prepare("INSERT INTO user_identity_mappings(id,user_id,provider_id,provider_subject_id,created_at) VALUES ('test_recovery_mapping',?,'firebase',?,datetime('now'))").bind(actor.userId, replacement).run();
     assert.equal((await memberships(actor.uid)).length, 0, 'old UID loses access even while its approval is active');
     assert.equal((await memberships(replacement)).length, 0, 'replacement requires an explicit approval');

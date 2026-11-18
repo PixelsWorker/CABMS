@@ -94,11 +94,7 @@ export function isSqliteConstraintOrTriggerAbort(error: unknown): boolean {
     return true;
   }
 
-  // Known migration trigger abort messages or test trigger prefixes (e.g. t6_ trigger aborts)
-  if (message.includes('t6_')) {
-    return true;
-  }
-
+  // Known migration trigger abort messages
   return KNOWN_TRIGGER_ABORT_MESSAGES.some(m => message.includes(m));
 }
 
@@ -220,6 +216,7 @@ export async function enrollFirstSuperAdmin(
   );
 
   // 9. Unconditional C03 NULL-safe failure-only postcondition assertions
+  const scopePlaceholders = scope.map(() => '?').join(',');
   statements.push(
     db.prepare(`
       INSERT INTO g01_security_assertions (value)
@@ -230,10 +227,14 @@ export async function enrollFirstSuperAdmin(
         AND (SELECT COUNT(*) FROM user_identity_mappings WHERE user_id = 'usr_primary_super_admin' AND provider_id = 'firebase' AND provider_subject_id = ?) = 1
         -- C03-03: Matching g01_protected_super_admin singleton with correct user_id and provider_subject_id
         AND (SELECT COUNT(*) FROM g01_protected_super_admin WHERE singleton = 1 AND user_id = 'usr_primary_super_admin' AND provider_subject_id = ?) = 1
-        -- C03-04: Exactly the approved workspace memberships with role = 'super_admin' and no extras
+        -- C03-04: Exactly the approved workspace memberships with role = 'super_admin' and exact scope set
         AND (SELECT COUNT(*) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin') = ?
-        -- C03-05: Exactly one active approval per approved workspace matching operator UID
+        AND (SELECT COUNT(*) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND workspace_id NOT IN (${scopePlaceholders})) = 0
+        AND (SELECT COUNT(DISTINCT workspace_id) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND workspace_id IN (${scopePlaceholders})) = ?
+        -- C03-05: Exactly one active approval per approved workspace matching operator UID and exact scope set
         AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_subject_id = ? AND revoked_at IS NULL) = ?
+        AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_subject_id = ? AND revoked_at IS NULL AND workspace_id NOT IN (${scopePlaceholders})) = 0
+        AND (SELECT COUNT(DISTINCT workspace_id) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_subject_id = ? AND revoked_at IS NULL AND workspace_id IN (${scopePlaceholders})) = ?
         -- C03-06: No prior revoked approvals for this user/role
         AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND revoked_at IS NOT NULL) = 0
         -- C03-07: Matching audit record with operation_id and audit_reference
@@ -249,7 +250,15 @@ export async function enrollFirstSuperAdmin(
       manifest.operator_uid,
       manifest.operator_uid,
       scope.length,
+      ...scope,
+      ...scope,
+      scope.length,
       manifest.operator_uid,
+      scope.length,
+      manifest.operator_uid,
+      ...scope,
+      manifest.operator_uid,
+      ...scope,
       scope.length,
       manifest.operation_id,
       audit_reference,
@@ -316,17 +325,42 @@ export async function reconcileEnrollmentStatus(
       .first<{ singleton: number; original_firebase_uid: string; operation_id: string; audit_reference: string }>();
 
     const auditRow = await db
-      .prepare('SELECT operation_id, operator_uid, audit_reference, workspace_scope FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?')
+      .prepare('SELECT operation_id, operator_uid, audit_reference, workspace_scope, canonical_manifest_json FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?')
       .bind(operationId)
-      .first<{ operation_id: string; operator_uid: string; audit_reference: string; workspace_scope: string }>();
+      .first<{ operation_id: string; operator_uid: string; audit_reference: string; workspace_scope: string; canonical_manifest_json: string }>();
+
+    const totalAuditCount = (
+      await db
+        .prepare('SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests')
+        .first<{ n: number }>()
+    )?.n ?? 0;
+
+    const effectiveUidRow = await db
+      .prepare('SELECT provider_subject_id FROM g01_effective_super_admin_uid')
+      .first<{ provider_subject_id: string | null }>();
+    const effectiveUid = effectiveUidRow?.provider_subject_id ?? null;
 
     const protectedRow = await db
       .prepare('SELECT singleton, user_id, provider_id, provider_subject_id FROM g01_protected_super_admin WHERE singleton = 1')
       .first<{ singleton: number; user_id: string; provider_id: string; provider_subject_id: string }>();
 
-    const userRow = await db
-      .prepare("SELECT id, disabled FROM users WHERE id = 'usr_primary_super_admin'")
-      .first<{ id: string; disabled: number }>();
+    // Atomic snapshot read for user and memberships via single read statement (SQLite statement snapshot isolation)
+    const userAndMembershipsRes = await db
+      .prepare(`
+        SELECT 'user' AS kind, u.id AS k1, CAST(u.disabled AS TEXT) AS k2
+        FROM users u WHERE u.id = 'usr_primary_super_admin'
+        UNION ALL
+        SELECT 'membership' AS kind, wm.workspace_id AS k1, wm.role AS k2
+        FROM workspace_memberships wm WHERE wm.user_id = 'usr_primary_super_admin'
+      `)
+      .all<{ kind: string; k1: string; k2: string }>();
+
+    const uAndMRows = userAndMembershipsRes.results ?? [];
+    const uRow = uAndMRows.find(r => r.kind === 'user');
+    const userRow = uRow ? { id: uRow.k1, disabled: Number(uRow.k2) } : undefined;
+    const membershipRows = uAndMRows
+      .filter(r => r.kind === 'membership')
+      .map(r => ({ workspace_id: r.k1, role: r.k2 }));
 
     const mappingCounts = await db
       .prepare(`
@@ -341,11 +375,6 @@ export async function reconcileEnrollmentStatus(
     const firebaseMappingCount = mappingCounts?.firebase_match ?? 0;
     const totalMappingCount = mappingCounts?.total ?? 0;
 
-    const membershipsRes = await db
-      .prepare("SELECT workspace_id, role FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'")
-      .all<{ workspace_id: string; role: string }>();
-    const membershipRows = membershipsRes.results ?? [];
-
     const approvalsRes = await db
       .prepare("SELECT workspace_id, role, provider_id FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND provider_subject_id = ? AND revoked_at IS NULL")
       .bind(expectedUid)
@@ -358,9 +387,21 @@ export async function reconcileEnrollmentStatus(
       callerExpectedWorkspaces = [...expectedScopeLengthOrList].sort();
     }
 
-    const auditWorkspaces = auditRow?.workspace_scope
-      ? auditRow.workspace_scope.split(',').map(s => s.trim()).filter(Boolean).sort()
-      : [];
+    // Read workspace IDs from lossless array in canonical_manifest_json when available
+    const auditWorkspaces = (() => {
+      if (!auditRow) return [];
+      if (auditRow.canonical_manifest_json) {
+        try {
+          const parsed = JSON.parse(auditRow.canonical_manifest_json) as Record<string, unknown>;
+          if (Array.isArray(parsed.workspace_scope)) {
+            return (parsed.workspace_scope as unknown[]).map(String).sort();
+          }
+        } catch {}
+      }
+      return auditRow.workspace_scope
+        ? auditRow.workspace_scope.split(',').map(s => s.trim()).filter(Boolean).sort()
+        : [];
+    })();
 
     const expectedWorkspaces = callerExpectedWorkspaces ?? auditWorkspaces;
 
@@ -409,6 +450,7 @@ export async function reconcileEnrollmentStatus(
       protectedRow.user_id === 'usr_primary_super_admin' &&
       protectedRow.provider_id === 'firebase' &&
       protectedRow.provider_subject_id === expectedUid &&
+      effectiveUid === expectedUid &&
       firebaseMappingCount === 1 &&
       totalMappingCount === 1 &&
       isScopeConsistent
@@ -420,6 +462,7 @@ export async function reconcileEnrollmentStatus(
     if (
       !compRow &&
       !auditRow &&
+      totalAuditCount === 0 &&
       !protectedRow &&
       !userRow &&
       totalMappingCount === 0 &&
@@ -433,6 +476,7 @@ export async function reconcileEnrollmentStatus(
     if (
       compRow ||
       auditRow ||
+      totalAuditCount > 0 ||
       protectedRow ||
       userRow ||
       totalMappingCount > 0 ||

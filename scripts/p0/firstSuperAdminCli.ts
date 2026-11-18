@@ -64,6 +64,9 @@ export class SecurityBoundaryError extends Error {
  * Rejects traversals, symlinks, junctions/reparse-point escapes.
  */
 export function createVerifiedTempDir(prefix: string): string {
+  if (!prefix || typeof prefix !== 'string' || prefix.includes('/') || prefix.includes('\\') || prefix.includes('..')) {
+    throw new SecurityBoundaryError(`Invalid disposable directory prefix: ${prefix}`);
+  }
   const osTempReal = fs.realpathSync(os.tmpdir());
   const freshDir = fs.mkdtempSync(path.join(osTempReal, prefix));
   const freshReal = fs.realpathSync(freshDir);
@@ -143,7 +146,7 @@ export function assertChildEnvAllowlist(childEnv: Record<string, string>): void 
  * Intercepts net.Socket connect attempts and records/blocks non-loopback destinations.
  */
 export class LoopbackTripwire {
-  private static globalActiveCount = 0;
+  private static activeInstances = new Set<LoopbackTripwire>();
   private static originalGlobalConnect = net.Socket.prototype.connect;
   public nonLoopbackAttempts: Array<{ host: string; port: number }> = [];
   public loopbackAttempts: Array<{ host: string; port: number }> = [];
@@ -152,94 +155,108 @@ export class LoopbackTripwire {
   public activate(): void {
     if (this.active) return;
     this.active = true;
-    LoopbackTripwire.globalActiveCount++;
-    const self = this;
+    LoopbackTripwire.activeInstances.add(this);
 
-    net.Socket.prototype.connect = function (...args: any[]) {
-      let host: string | undefined;
-      let port = 0;
+    if (LoopbackTripwire.activeInstances.size === 1) {
+      net.Socket.prototype.connect = function (...args: any[]) {
+        let host: string | undefined;
+        let port = 0;
 
-      let firstArg = args[0];
-      if (Array.isArray(firstArg)) {
-        firstArg = firstArg[0];
-      }
-
-      if (typeof firstArg === 'object' && firstArg !== null) {
-        host = firstArg.host || firstArg.path;
-        port = firstArg.port || 0;
-      } else if (typeof firstArg === 'number') {
-        port = firstArg;
-        if (typeof args[1] === 'string') {
-          host = args[1];
-        } else if (typeof args[1] === 'object' && args[1] !== null) {
-          host = args[1].host || args[1].path;
+        let firstArg = args[0];
+        if (Array.isArray(firstArg)) {
+          firstArg = firstArg[0];
         }
-      } else if (typeof firstArg === 'string') {
-        host = firstArg;
-      }
 
-      // If host and port cannot be identified (e.g. malformed options or array), fail closed immediately
-      if (!host && port === 0) {
-        host = 'malformed_unknown';
-      }
-
-      if (!host) {
-        host = '127.0.0.1';
-      }
-
-      // Normalize host string (case-insensitive, strip brackets, strip port suffix)
-      let normalizedHost = String(host).trim().toLowerCase();
-      if (normalizedHost.startsWith('[') && normalizedHost.endsWith(']')) {
-        normalizedHost = normalizedHost.slice(1, -1);
-      }
-      if (/^[^:]+:\d+$/.test(normalizedHost)) {
-        normalizedHost = normalizedHost.split(':')[0];
-      }
-
-      // Check loopback targets
-      const isNamedPipeOrUnixSocket = normalizedHost.startsWith('\\\\.\\pipe\\') || normalizedHost.startsWith('/');
-      const isNamedLoopback =
-        normalizedHost === 'localhost' ||
-        normalizedHost === 'ip6-localhost' ||
-        normalizedHost === 'ip6-loopback';
-      const isIpv6Loopback =
-        normalizedHost === '::1' ||
-        normalizedHost === '0:0:0:0:0:0:0:1' ||
-        normalizedHost === '::ffff:127.0.0.1';
-
-      // IPv4 loopback subnet 127.0.0.0/8 (127.0.0.0 - 127.255.255.255)
-      const ipv4Match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalizedHost);
-      const isIpv4Loopback = !!(
-        ipv4Match &&
-        Number(ipv4Match[1]) <= 255 &&
-        Number(ipv4Match[2]) <= 255 &&
-        Number(ipv4Match[3]) <= 255
-      );
-
-      const isLoopback = isNamedPipeOrUnixSocket || isNamedLoopback || isIpv6Loopback || isIpv4Loopback;
-
-      if (!isLoopback) {
-        self.nonLoopbackAttempts.push({ host, port });
-        const err = new Error(`LoopbackTripwire blocked non-loopback connection attempt to ${host}:${port}`);
-        if (typeof args[args.length - 1] === 'function') {
-          process.nextTick(() => args[args.length - 1](err));
+        if (typeof firstArg === 'object' && firstArg !== null) {
+          host = firstArg.host || firstArg.path;
+          port = firstArg.port || 0;
+        } else if (typeof firstArg === 'number') {
+          port = firstArg;
+          if (typeof args[1] === 'string') {
+            host = args[1];
+          } else if (typeof args[1] === 'object' && args[1] !== null) {
+            host = args[1].host || args[1].path;
+          }
+        } else if (typeof firstArg === 'string') {
+          host = firstArg;
         }
-        process.nextTick(() => {
-          this.destroy(err);
-        });
-        return this;
-      }
 
-      self.loopbackAttempts.push({ host, port });
-      return LoopbackTripwire.originalGlobalConnect.apply(this, args as any);
-    };
+        // If host and port cannot be identified (e.g. malformed options or array), fail closed immediately
+        if (!host && port === 0) {
+          host = 'malformed_unknown';
+        }
+
+        if (!host) {
+          host = '127.0.0.1';
+        }
+
+        // Normalize host string (case-insensitive, strip brackets, strip port suffix)
+        let normalizedHost = String(host).trim().toLowerCase();
+        if (normalizedHost.startsWith('[') && normalizedHost.endsWith(']')) {
+          normalizedHost = normalizedHost.slice(1, -1);
+        }
+        if (/^[^:]+:\d+$/.test(normalizedHost)) {
+          normalizedHost = normalizedHost.split(':')[0];
+        }
+
+        // Check loopback targets
+        const isNamedPipeOrUnixSocket = normalizedHost.startsWith('\\\\.\\pipe\\') || normalizedHost.startsWith('/');
+        const isNamedLoopback =
+          normalizedHost === 'localhost' ||
+          normalizedHost === 'ip6-localhost' ||
+          normalizedHost === 'ip6-loopback';
+        const isIpv6Loopback =
+          normalizedHost === '::1' ||
+          normalizedHost === '0:0:0:0:0:0:0:1' ||
+          normalizedHost === '::ffff:127.0.0.1';
+
+        // IPv4 loopback subnet 127.0.0.0/8 (127.0.0.0 - 127.255.255.255)
+        const ipv4Match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalizedHost);
+        const isIpv4Loopback = !!(
+          ipv4Match &&
+          Number(ipv4Match[1]) <= 255 &&
+          Number(ipv4Match[2]) <= 255 &&
+          Number(ipv4Match[3]) <= 255
+        );
+
+        const isLoopback = isNamedPipeOrUnixSocket || isNamedLoopback || isIpv6Loopback || isIpv4Loopback;
+
+        // Pin named loopback destination directly to loopback IP literal to eliminate DNS rebinding or unvalidated external resolver risk
+        if (isNamedLoopback) {
+          const literal = normalizedHost.startsWith('ip6') ? '::1' : '127.0.0.1';
+          if (typeof firstArg === 'object' && firstArg !== null) {
+            firstArg.host = literal;
+          } else if (typeof args[1] === 'string') {
+            args[1] = literal;
+          } else if (typeof firstArg === 'string') {
+            args[0] = literal;
+          }
+        }
+
+        if (!isLoopback) {
+          for (const inst of LoopbackTripwire.activeInstances) {
+            inst.nonLoopbackAttempts.push({ host, port });
+          }
+          const err = new Error(`LoopbackTripwire blocked non-loopback connection attempt to ${host}:${port}`);
+          process.nextTick(() => {
+            this.destroy(err);
+          });
+          return this;
+        }
+
+        for (const inst of LoopbackTripwire.activeInstances) {
+          inst.loopbackAttempts.push({ host, port });
+        }
+        return LoopbackTripwire.originalGlobalConnect.apply(this, args as any);
+      };
+    }
   }
 
   public deactivate(): void {
     if (!this.active) return;
     this.active = false;
-    LoopbackTripwire.globalActiveCount = Math.max(0, LoopbackTripwire.globalActiveCount - 1);
-    if (LoopbackTripwire.globalActiveCount === 0) {
+    LoopbackTripwire.activeInstances.delete(this);
+    if (LoopbackTripwire.activeInstances.size === 0) {
       net.Socket.prototype.connect = LoopbackTripwire.originalGlobalConnect;
     }
   }
@@ -295,7 +312,10 @@ export async function runModeACliEnrollment(
       throw new SecurityBoundaryError('Evidence directory path escapes approved boundary');
     }
     const approvedRootRaw = path.resolve(options.approvedEvidenceRoot ?? 'evidence/paar-p0-mode-a');
-    approvedRoot = fs.existsSync(approvedRootRaw) ? fs.realpathSync(approvedRootRaw) : approvedRootRaw;
+    if (!fs.existsSync(approvedRootRaw)) {
+      fs.mkdirSync(approvedRootRaw, { recursive: true });
+    }
+    approvedRoot = fs.realpathSync(approvedRootRaw);
     resolvedEvidenceDir = path.resolve(rawDir);
     const rel = path.relative(approvedRoot, resolvedEvidenceDir);
     if (rel.startsWith('..') || path.isAbsolute(rel)) {
@@ -317,6 +337,26 @@ export async function runModeACliEnrollment(
     }
   }
 
+  // 3.5 Strictly validate trusted public key asymmetric type as Ed25519
+  let validatedKeyObj: crypto.KeyObject;
+  if (typeof trustedPublicKey === 'string' || Buffer.isBuffer(trustedPublicKey)) {
+    try {
+      validatedKeyObj = crypto.createPublicKey(trustedPublicKey);
+    } catch (err) {
+      throw new SecurityBoundaryError(`Failed to parse trusted public key: ${(err as Error).message}`);
+    }
+  } else if (typeof trustedPublicKey === 'object' && trustedPublicKey !== null && 'asymmetricKeyType' in trustedPublicKey) {
+    validatedKeyObj = trustedPublicKey as crypto.KeyObject;
+  } else {
+    throw new SecurityBoundaryError('Invalid trusted public key format');
+  }
+
+  if (validatedKeyObj.asymmetricKeyType !== 'ed25519') {
+    throw new SecurityBoundaryError(
+      `Unsupported public key type '${validatedKeyObj.asymmetricKeyType}'. Mode A strictly pins Ed25519 keys.`
+    );
+  }
+
   // 4. Verify manifest, execute enrollment, and reconcile under active LoopbackTripwire
   const tripwire = new LoopbackTripwire();
   tripwire.activate();
@@ -327,7 +367,7 @@ export async function runModeACliEnrollment(
   try {
     verified = verifyApprovalManifest(
       signedManifest,
-      trustedPublicKey,
+      validatedKeyObj,
       {
         expectedTargetId: options.expectedTargetId,
         expectedOperatorUid: options.expectedOperatorUid,
@@ -404,36 +444,67 @@ export async function runModeACliEnrollment(
         recorded_at: new Date().toISOString(),
       };
 
-      // Atomic creation with exclusive 'wx' flag
-      fd = fs.openSync(auditReceiptPath, 'wx');
+      // Write full JSON to a secure temporary file first, then publish exclusively to prevent partial/truncated files
+      const tempFilename = `.tmp_p0_receipt_${verified.manifest.operation_id}_${crypto.randomUUID()}.json`;
+      const tempPath = path.join(resolvedEvidenceDir, tempFilename);
+
+      // Atomic creation of temp file with exclusive 'wx' flag
+      fd = fs.openSync(tempPath, 'wx');
 
       // Post-creation canonical containment revalidation while holding descriptor
       // Closes TOCTOU directory swap race before writing content
       if (approvedRoot) {
-        const realFile = fs.realpathSync(auditReceiptPath);
-        const relFile = path.relative(approvedRoot, realFile);
-        if (relFile.startsWith('..') || path.isAbsolute(relFile)) {
+        const realTemp = fs.realpathSync(tempPath);
+        const relTemp = path.relative(approvedRoot, realTemp);
+        if (relTemp.startsWith('..') || path.isAbsolute(relTemp)) {
           throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
         }
 
-        const realParent = fs.realpathSync(path.dirname(auditReceiptPath));
+        const realParent = fs.realpathSync(path.dirname(tempPath));
         const expectedParent = fs.realpathSync(resolvedEvidenceDir);
         if (realParent !== expectedParent) {
           throw new SecurityBoundaryError('Receipt parent directory was swapped during file creation');
         }
       }
 
-      // Write content to open descriptor
+      // Write complete JSON content to open descriptor
       fs.writeSync(fd, JSON.stringify(receipt, null, 2), null, 'utf8');
       fs.closeSync(fd);
       fd = undefined;
+
+      // Atomically publish via exclusive copy (strictly prohibits overwriting existing receipt)
+      fs.copyFileSync(tempPath, auditReceiptPath, fs.constants.COPYFILE_EXCL);
+      try { fs.unlinkSync(tempPath); } catch {}
+
+      // Post-publication canonical containment verification to eliminate any post-check write/copy gap
+      if (approvedRoot) {
+        const realPublished = fs.realpathSync(auditReceiptPath);
+        const relPublished = path.relative(approvedRoot, realPublished);
+        if (relPublished.startsWith('..') || path.isAbsolute(relPublished)) {
+          try { fs.unlinkSync(auditReceiptPath); } catch {}
+          throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
+        }
+        const realParent = fs.realpathSync(path.dirname(auditReceiptPath));
+        const expectedParent = fs.realpathSync(resolvedEvidenceDir);
+        if (realParent !== expectedParent) {
+          try { fs.unlinkSync(auditReceiptPath); } catch {}
+          throw new SecurityBoundaryError('Receipt parent directory was swapped during file publication');
+        }
+      }
     } catch (err) {
       if (fd !== undefined) {
         try { fs.closeSync(fd); } catch {}
         fd = undefined;
-        if (auditReceiptPath && fs.existsSync(auditReceiptPath)) {
-          try { fs.unlinkSync(auditReceiptPath); } catch {}
-        }
+      }
+      if (resolvedEvidenceDir && fs.existsSync(resolvedEvidenceDir)) {
+        try {
+          const files = fs.readdirSync(resolvedEvidenceDir);
+          for (const f of files) {
+            if (f.startsWith(`.tmp_p0_receipt_${verified.manifest.operation_id}`)) {
+              try { fs.unlinkSync(path.join(resolvedEvidenceDir, f)); } catch {}
+            }
+          }
+        } catch {}
       }
       receiptExportError = (err as Error).message;
       auditReceiptPath = undefined;

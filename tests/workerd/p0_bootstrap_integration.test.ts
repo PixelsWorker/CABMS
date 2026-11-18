@@ -290,12 +290,15 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       const db = createLocalD1Database();
       await runLocalMigrations(db, { disposableTest: true });
 
+      // Insert valid workspace 'finance' outside signed scope to ensure assertion triggers rather than UNIQUE key constraint
+      await db.exec("INSERT INTO workspaces (id, name, slug, created_at, updated_at) VALUES ('finance', 'Finance', 'finance', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z');");
+
       await db.exec(`
         CREATE TRIGGER t5_extra_membership AFTER INSERT ON workspace_memberships
         WHEN NEW.workspace_id = 'solarcell'
         BEGIN
           INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
-          VALUES ('extra_mem_id', 'solarcell', NEW.user_id, 'super_admin', datetime('now'), datetime('now'));
+          VALUES ('extra_mem_id', 'finance', NEW.user_id, 'super_admin', datetime('now'), datetime('now'));
         END;
       `);
 
@@ -372,8 +375,9 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
         // Completion stage failure
         await db.exec("CREATE TRIGGER t6_fail_comp BEFORE INSERT ON g01_bootstrap_completion BEGIN SELECT RAISE(ABORT, 't6_comp_fail'); END;");
       } else if (stage === 9) {
-        // Final assertion failure: insert extra membership on completion to violate C03 cardinality
-        await db.exec("CREATE TRIGGER t6_fail_assert AFTER INSERT ON g01_bootstrap_completion BEGIN INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at) VALUES ('extra_m_t6', 'solarcell', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')); END;");
+        // Final assertion failure: insert extra membership on completion to violate C03 cardinality using valid workspace 'finance' outside signed scope
+        await db.exec("INSERT INTO workspaces (id, name, slug, created_at, updated_at) VALUES ('finance', 'Finance', 'finance', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z');");
+        await db.exec("CREATE TRIGGER t6_fail_assert AFTER INSERT ON g01_bootstrap_completion BEGIN INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at) VALUES ('extra_m_t6', 'finance', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now')); END;");
       }
 
       const manifest = createValidSyntheticManifest();
@@ -973,43 +977,73 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
   });
 
   it('T5 Gap: SQL NULL and missing join row trigger assertion rollback', async () => {
-    const db = createLocalD1Database();
-    await runLocalMigrations(db, { disposableTest: true });
+    // Case A: Missing join row trigger: delete user mapping before assertion
+    {
+      const db = createLocalD1Database();
+      await runLocalMigrations(db, { disposableTest: true });
 
-    // Missing join row trigger: delete user mapping before assertion
-    await db.exec(`
-      CREATE TRIGGER t5_gap_delete_map AFTER INSERT ON user_identity_mappings
-      BEGIN
-        DELETE FROM user_identity_mappings WHERE user_id = NEW.user_id;
-      END;
-    `);
+      await db.exec(`
+        CREATE TRIGGER t5_gap_delete_map AFTER INSERT ON user_identity_mappings
+        BEGIN
+          DELETE FROM user_identity_mappings WHERE user_id = NEW.user_id;
+        END;
+      `);
 
-    const manifest = createValidSyntheticManifest();
-    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
-    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, {
-      expectedTargetId: SYNTHETIC_TARGET,
-      expectedOperatorUid: SYNTHETIC_UID,
-      expectedOperatorEmail: SYNTHETIC_EMAIL,
-    });
+      const manifest = createValidSyntheticManifest();
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+      const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, {
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
 
-    const outcome = await enrollFirstSuperAdmin(db, verified);
-    assert.equal(outcome.status, 'NOT_ENROLLED');
-    assert.equal(outcome.rollbackProven, true);
+      const outcome = await enrollFirstSuperAdmin(db, verified);
+      assert.equal(outcome.status, 'NOT_ENROLLED');
+      assert.equal(outcome.rollbackProven, true);
 
-    const userCount = (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
-    assert.equal(userCount, 0);
+      const userCount = (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+      assert.equal(userCount, 0);
+    }
+
+    // Case B: Effective-UID view evaluates to SQL NULL while other postconditions hold
+    {
+      const db = createLocalD1Database();
+      await runLocalMigrations(db, { disposableTest: true });
+
+      // Redefine effective-UID view to return SQL NULL (verifies COALESCE handling in C03-09 assertion)
+      await db.exec(`
+        DROP VIEW g01_effective_super_admin_uid;
+        CREATE VIEW g01_effective_super_admin_uid AS
+        SELECT CAST(NULL AS TEXT) AS provider_subject_id;
+      `);
+
+      const manifest = createValidSyntheticManifest();
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+      const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, {
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      const outcome = await enrollFirstSuperAdmin(db, verified);
+      assert.equal(outcome.status, 'NOT_ENROLLED');
+      assert.equal(outcome.rollbackProven, true);
+
+      const userCount = (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+      assert.equal(userCount, 0);
+    }
   });
 
   it('T12 Gap: unapproved-role assignment triggers failure and denial', async () => {
+    // 1. Enrollment assertion rollback when role is altered to another valid role ('owner_admin')
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
-    // Attempt to inject unapproved role into memberships
     await db.exec(`
       CREATE TRIGGER t12_gap_unapproved_role AFTER INSERT ON workspace_memberships
       WHEN NEW.workspace_id = 'solarcell'
       BEGIN
-        UPDATE workspace_memberships SET role = 'viewer' WHERE id = NEW.id;
+        UPDATE workspace_memberships SET role = 'owner_admin' WHERE id = NEW.id;
       END;
     `);
 
@@ -1024,6 +1058,30 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const outcome = await enrollFirstSuperAdmin(db, verified);
     assert.equal(outcome.status, 'NOT_ENROLLED');
     assert.equal(outcome.rollbackProven, true);
+
+    // 2. Worker authorization denial: mapped user with privileged owner_admin role but no active approval returns 403
+    const dbAuth = createLocalD1Database();
+    await runLocalMigrations(dbAuth, { disposableTest: true });
+    await dbAuth.exec(`
+      INSERT INTO users (id, email, display_name, created_at, updated_at)
+      VALUES ('usr_unapproved_owner', 'unapproved_owner@example.invalid', 'Unapproved Owner', datetime('now'), datetime('now'));
+      INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at)
+      VALUES ('map_unapproved_owner', 'usr_unapproved_owner', 'firebase', 'uid_unapproved_owner', datetime('now'));
+      INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
+      VALUES ('mem_unapproved_owner', 'solarcell', 'usr_unapproved_owner', 'owner_admin', datetime('now'), datetime('now'));
+    `);
+
+    const authService = createAuthenticationService(firebaseFixture.transport);
+    const worker = createWorker(authService);
+    const token = await firebaseFixture.token('uid_unapproved_owner', 'unapproved_owner@example.invalid');
+
+    const res = await worker.fetch(
+      new Request('http://localhost/api/v1/workspaces/solarcell/settings', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      { DB: dbAuth, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }
+    );
+    assert.equal(res.status, 403);
   });
 
   // --- Regression F-01-B: Replacement under both recursive_triggers OFF and ON ---
@@ -1403,6 +1461,49 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       try {
         fs.rmSync(outsideTargetDir, { recursive: true, force: true });
       } catch {}
+    }
+
+    // 3. Controlled filesystem race test: destination created after existsSync preflight
+    // Proves COPYFILE_EXCL kernel exclusivity and preserves competing file
+    {
+      const dbRace = createLocalD1Database();
+      await runLocalMigrations(dbRace, { disposableTest: true });
+      const manifestRace = createValidSyntheticManifest();
+      const signedRace = signApprovalManifest(manifestRace, ephemeralKeyPair.privateKey);
+      const raceReceiptPath = path.join(testEvidenceDir, `p0_audit_receipt_${manifestRace.operation_id}.json`);
+
+      const origOpenSync = fs.openSync;
+      let raceInjected = false;
+      (fs as any).openSync = (...args: any[]) => {
+        const fd = (origOpenSync as any)(...args);
+        if (!raceInjected && typeof args[0] === 'string' && args[0].includes('.tmp_p0_receipt_')) {
+          raceInjected = true;
+          // Race condition injection: create target receipt file after preflight check passed
+          fs.writeFileSync(raceReceiptPath, '{"created_after_preflight": true}', 'utf8');
+        }
+        return fd;
+      };
+
+      try {
+        const raceResult = await runModeACliEnrollment(dbRace, signedRace, ephemeralKeyPair.publicKey, {
+          evidenceDir: testEvidenceDir,
+          approvedEvidenceRoot: testEvidenceDir,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+        });
+
+        assert.equal(raceResult.outcome.status, 'SUCCESS');
+        assert.equal(raceResult.auditReceiptPath, undefined);
+        assert.ok(raceResult.receiptExportError);
+        assert.match(raceResult.receiptExportError, /file already exists|EEXIST/i);
+
+        const raceContent = fs.readFileSync(raceReceiptPath, 'utf8');
+        assert.equal(raceContent, '{"created_after_preflight": true}', 'File created during race must be preserved by COPYFILE_EXCL');
+      } finally {
+        fs.openSync = origOpenSync;
+        try { fs.unlinkSync(raceReceiptPath); } catch {}
+      }
     }
   });
 

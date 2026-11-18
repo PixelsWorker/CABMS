@@ -29,6 +29,17 @@ test('super admin recovery authorizes only the effective approved UID', async ()
     assert.equal((await memberships(actor.uid)).length, 0, 'Super Admin must have 0 memberships before bootstrap completion');
     assert.equal((await call(actor.uid, '/api/v1/workspaces/solarcell/settings')).status, 403, 'Super Admin protected route must return 403 before bootstrap completion');
 
+    // Positive control: approved owner_admin accesses solarcell settings with HTTP 200 even before bootstrap completion
+    const ownerActor = G01_TEST_AUTH.ownerAdmin;
+    const ownerToken = await fixture.token(ownerActor.uid, ownerActor.email);
+    const ownerRes = await worker.fetch(
+      new Request('http://localhost/api/v1/workspaces/solarcell/settings', {
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      }),
+      env
+    );
+    assert.equal(ownerRes.status, 200, 'Approved owner_admin must have HTTP 200 access before bootstrap completion');
+
     // Complete bootstrap by inserting audit manifest and bootstrap completion
     for (const spec of specs.slice(5)) {
       await db.prepare(spec.sql).bind(...spec.params).run();

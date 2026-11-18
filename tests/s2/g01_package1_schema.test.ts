@@ -60,12 +60,22 @@ async function effective(db: LocalD1Database) {
 test('protected identity and marker reject every replacement and conflict policy', async () => {
   const db = await setup();
   try {
-    await rejectedUnchanged(db, marker, 'g01_bootstrap_completion');
     await db.exec(identity);
     for (const sql of conflictForms(identity, "provider_subject_id = 'other_uid'")) await rejectedUnchanged(db, sql, 'g01_protected_super_admin');
     for (const sql of conflictForms(identity.replace('original_uid', 'other_uid'), "provider_subject_id = 'other_uid'")) await rejectedUnchanged(db, sql, 'g01_protected_super_admin');
     await rejectedUnchanged(db, "UPDATE g01_protected_super_admin SET provider_subject_id = 'other_uid'", 'g01_protected_super_admin');
     await rejectedUnchanged(db, 'DELETE FROM g01_protected_super_admin', 'g01_protected_super_admin');
+
+    // Attempting marker with protected identity present but audit manifest missing asserts exact error
+    await assert.rejects(
+      () => db.exec(marker),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes('bootstrap completion requires matching pre-inserted audit manifest'));
+        return true;
+      }
+    );
+
     await db.exec(auditManifest);
     await db.exec(marker);
     for (const sql of conflictForms(marker, "original_firebase_uid = 'other_uid'")) await rejectedUnchanged(db, sql, 'g01_bootstrap_completion');

@@ -49,19 +49,44 @@ export class ManifestValidationError extends Error {
 
 /**
  * Deterministic JSON serialization with sorted keys and compact spacing.
+ * Enforces RFC 8785 JSON Canonicalization Scheme (JCS) invariants:
+ * rejects undefined values, non-finite numbers, and lone surrogates.
  */
 export function canonicalizeJson(obj: unknown): string {
-  if (obj === null || typeof obj !== 'object') {
+  if (obj === undefined) {
+    throw new ManifestValidationError('Undefined values not permitted in canonical JSON', 'INVALID_JSON_VALUE');
+  }
+  if (typeof obj === 'number') {
+    if (!Number.isFinite(obj)) {
+      throw new ManifestValidationError('Non-finite numbers not permitted in canonical JSON', 'INVALID_JSON_VALUE');
+    }
+    return JSON.stringify(obj);
+  }
+  if (typeof obj === 'string') {
+    if (typeof (obj as any).toWellFormed === 'function' && (obj as any).toWellFormed() !== obj) {
+      throw new ManifestValidationError('Strings containing lone surrogates not permitted in canonical JSON', 'INVALID_JSON_VALUE');
+    }
+    return JSON.stringify(obj);
+  }
+  if (obj === null || typeof obj === 'boolean') {
     return JSON.stringify(obj);
   }
   if (Array.isArray(obj)) {
     return `[${obj.map(canonicalizeJson).join(',')}]`;
   }
-  const keys = Object.keys(obj as Record<string, unknown>).sort();
-  const pairs = keys.map(
-    key => `${JSON.stringify(key)}:${canonicalizeJson((obj as Record<string, unknown>)[key])}`
-  );
-  return `{${pairs.join(',')}}`;
+  if (typeof obj === 'object') {
+    const keys = Object.keys(obj as Record<string, unknown>).sort();
+    for (const key of keys) {
+      if ((obj as Record<string, unknown>)[key] === undefined) {
+        throw new ManifestValidationError(`Property '${key}' has undefined value`, 'INVALID_JSON_VALUE');
+      }
+    }
+    const pairs = keys.map(
+      key => `${JSON.stringify(key)}:${canonicalizeJson((obj as Record<string, unknown>)[key])}`
+    );
+    return `{${pairs.join(',')}}`;
+  }
+  throw new ManifestValidationError(`Unsupported JSON type: ${typeof obj}`, 'INVALID_JSON_VALUE');
 }
 
 /**
@@ -158,6 +183,11 @@ export function verifyApprovalManifest(
     );
   }
 
+  // Snapshot envelope fields into primitives to prevent getter-based TOCTOU
+  const envelopeSignatureBytes = String(signed.signature_bytes ?? '');
+  const envelopeSigningKeyId = String(signed.signing_key_id ?? '');
+  const envelopeCanonicalJson = String(signed.canonical_manifest_json ?? '');
+
   const rawManifest = signed.manifest;
   if (!rawManifest || typeof rawManifest !== 'object') {
     throw new ManifestValidationError('Manifest payload missing', 'MISSING_MANIFEST');
@@ -182,7 +212,7 @@ export function verifyApprovalManifest(
 
   // 2. Canonical JSON consistency check
   const recalculatedJson = canonicalizeJson(manifest);
-  if (signed.canonical_manifest_json !== recalculatedJson) {
+  if (envelopeCanonicalJson !== recalculatedJson) {
     throw new ManifestValidationError(
       'canonical_manifest_json does not match canonical serialization of manifest',
       'CANONICALIZATION_MISMATCH'
@@ -213,9 +243,17 @@ export function verifyApprovalManifest(
   const canonicalBytes = Buffer.from(recalculatedJson, 'utf8');
   let signatureBuffer: Buffer;
   try {
-    signatureBuffer = Buffer.from(signed.signature_bytes, 'base64url');
+    signatureBuffer = Buffer.from(envelopeSignatureBytes, 'base64url');
   } catch {
     throw new ManifestValidationError('Invalid signature encoding', 'INVALID_SIGNATURE_ENCODING');
+  }
+
+  // Strictly enforce canonical, unpadded base64url representation
+  if (signatureBuffer.toString('base64url') !== envelopeSignatureBytes) {
+    throw new ManifestValidationError(
+      'Signature must be canonical unpadded base64url without whitespace or padding',
+      'NON_CANONICAL_SIGNATURE_ENCODING'
+    );
   }
 
   let signatureValid = false;
@@ -233,14 +271,17 @@ export function verifyApprovalManifest(
   }
 
   // 4. Signing key ID match
-  if (signed.signing_key_id !== manifest.signing_key_id) {
+  if (envelopeSigningKeyId !== manifest.signing_key_id) {
     throw new ManifestValidationError(
       'Manifest signing_key_id does not match envelope signing_key_id',
       'KEY_ID_MISMATCH'
     );
   }
 
-  // 5. Expiry check
+  // 5. Expiry check with strict finite clock validation
+  if (options.nowMs !== undefined && (!Number.isFinite(options.nowMs) || Number.isNaN(options.nowMs))) {
+    throw new ManifestValidationError('nowMs option must be a finite number', 'INVALID_CLOCK');
+  }
   const now = options.nowMs ?? Date.now();
   const expiresAt = Date.parse(manifest.expires_at);
   if (Number.isNaN(expiresAt) || expiresAt <= now) {
@@ -293,14 +334,20 @@ export function verifyApprovalManifest(
   if (!manifest.nonce || !manifest.nonce.trim()) {
     throw new ManifestValidationError('Missing nonce', 'MISSING_NONCE');
   }
-  if (!manifest.operator_uid || manifest.operator_uid.length > 128) {
-    throw new ManifestValidationError('Invalid operator_uid length', 'INVALID_UID_LENGTH');
+  if (!manifest.operator_uid || !manifest.operator_uid.trim() || manifest.operator_uid.length > 128) {
+    throw new ManifestValidationError(
+      'operator_uid must be non-empty, non-whitespace, and at most 128 chars',
+      'INVALID_UID_LENGTH'
+    );
+  }
+  if (!manifest.signing_key_id || !manifest.signing_key_id.trim()) {
+    throw new ManifestValidationError('signing_key_id must be non-empty string', 'MISSING_SIGNING_KEY_ID');
   }
   if (!Array.isArray(manifest.workspace_scope) || manifest.workspace_scope.length === 0) {
     throw new ManifestValidationError('workspace_scope must be non-empty array', 'INVALID_WORKSPACE_SCOPE');
   }
 
-  const auditReference = computeAuditReference(recalculatedJson, signed.signature_bytes);
+  const auditReference = computeAuditReference(recalculatedJson, envelopeSignatureBytes);
 
   // Return deeply frozen immutable detached snapshot
   const frozenManifest: ApprovalManifest = Object.freeze({
@@ -320,8 +367,8 @@ export function verifyApprovalManifest(
   return Object.freeze({
     manifest: frozenManifest,
     signature_algorithm: 'Ed25519' as const,
-    signature_bytes: signed.signature_bytes,
-    signing_key_id: signed.signing_key_id,
+    signature_bytes: envelopeSignatureBytes,
+    signing_key_id: envelopeSigningKeyId,
     canonical_manifest_json: recalculatedJson,
     audit_reference: auditReference,
   });

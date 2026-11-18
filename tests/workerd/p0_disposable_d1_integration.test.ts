@@ -23,9 +23,9 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-import { loadVerifiedMigrations } from '../../backend/db/migrate.ts';
+import { loadVerifiedMigrations, runLocalMigrations } from '../../backend/db/migrate.ts';
 import { createFirebaseFixture } from '../support/firebaseTokens.ts';
-import { isDisposableInMemoryD1, type D1Database } from '../../backend/db/d1.ts';
+import { createLocalD1Database, isDisposableInMemoryD1, type D1Database } from '../../backend/db/d1.ts';
 import {
   signApprovalManifest,
   verifyApprovalManifest,
@@ -159,14 +159,20 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     }
 
     if (isolationReal && fs.existsSync(isolationReal)) {
-      // Windows file-lock retry loop
+      // Windows file-lock retry loop with final error reporting
+      let lastError: unknown;
       for (let attempt = 0; attempt < 10; attempt++) {
         try {
           fs.rmSync(isolationReal, { recursive: true, force: true });
+          lastError = undefined;
           break;
-        } catch {
+        } catch (err) {
+          lastError = err;
           await new Promise((r) => setTimeout(r, 100));
         }
+      }
+      if (lastError && fs.existsSync(isolationReal)) {
+        console.error(`Failed to remove disposable isolation directory '${isolationReal}':`, lastError);
       }
     }
   });
@@ -206,17 +212,27 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
 
   // --- Scenario 2: Protected self-link denial on workerd ---
   it('W2: protected first-admin automatic self-link is blocked with synthetic claim on workerd', async () => {
-    const fakeToken = await firebaseFixture.token('uninvited_attacker_uid', PROTECTED_EMAIL);
-    const res = await fetch(`${workerUrl.origin}/api/v1/auth/me`, {
-      headers: { Authorization: `Bearer ${fakeToken}` },
-    });
-    assert.equal(res.status, 401);
+    // Seed enabled user with PROTECTED_EMAIL without identity mappings or privileged memberships
+    await realD1.prepare(`
+      INSERT INTO users (id, email, display_name, disabled, created_at, updated_at)
+      VALUES ('usr_w2_victim', ?, 'Victim Operator', 0, datetime('now'), datetime('now'))
+    `).bind(PROTECTED_EMAIL).run();
 
-    // Verify 0 rows in user_identity_mappings on real D1
-    const count = await realD1
-      .prepare("SELECT COUNT(*) AS n FROM user_identity_mappings WHERE provider_subject_id = 'uninvited_attacker_uid'")
-      .first<{ n: number }>();
-    assert.equal(count?.n, 0);
+    try {
+      const fakeToken = await firebaseFixture.token('uninvited_attacker_uid', PROTECTED_EMAIL);
+      const res = await fetch(`${workerUrl.origin}/api/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${fakeToken}` },
+      });
+      assert.equal(res.status, 401);
+
+      // Verify 0 rows in user_identity_mappings on real D1
+      const count = await realD1
+        .prepare("SELECT COUNT(*) AS n FROM user_identity_mappings WHERE provider_subject_id = 'uninvited_attacker_uid'")
+        .first<{ n: number }>();
+      assert.equal(count?.n, 0);
+    } finally {
+      await realD1.prepare("DELETE FROM users WHERE id = 'usr_w2_victim'").run();
+    }
   });
 
   // --- Scenario 3: CLI defense-in-depth rejects workerd D1 binding ---
@@ -288,7 +304,7 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
 
   // --- Scenario 6: Real D1 audit triggers enforce immutability & reject replacement ---
   it('W6: real D1 audit triggers block INSERT OR REPLACE, UPDATE, and DELETE', async () => {
-    // 1. Verify BEFORE INSERT trigger blocks INSERT OR REPLACE with conflicting unique keys
+    // 1a. Verify BEFORE INSERT trigger blocks duplicate operation_id with fresh nonce and audit reference
     await assert.rejects(
       () =>
         realD1
@@ -297,11 +313,11 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
               id, operation_id, nonce, target_id, operator_email, operator_uid,
               workspace_scope, permitted_action, signing_key_id, signature_algorithm,
               signature_bytes, canonical_manifest_json, audit_reference, created_at
-            ) VALUES ('audit_workerd_replace', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'diff_ref', datetime('now'))`
+            ) VALUES ('audit_workerd_replace_op', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
           )
           .bind(
-            verifiedEnrolledManifest.manifest.operation_id,
-            verifiedEnrolledManifest.manifest.nonce,
+            verifiedEnrolledManifest.manifest.operation_id, // reuse operation_id only
+            `nonce_fresh_${crypto.randomUUID()}`, // fresh nonce
             verifiedEnrolledManifest.manifest.target_id,
             verifiedEnrolledManifest.manifest.operator_email,
             verifiedEnrolledManifest.manifest.operator_uid,
@@ -310,10 +326,40 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
             verifiedEnrolledManifest.signing_key_id,
             verifiedEnrolledManifest.signature_algorithm,
             verifiedEnrolledManifest.signature_bytes,
-            verifiedEnrolledManifest.canonical_manifest_json
+            verifiedEnrolledManifest.canonical_manifest_json,
+            `ref_fresh_${crypto.randomUUID()}` // fresh audit_reference
           )
           .run(),
-      /audit manifest records cannot be replaced|UNIQUE constraint failed/
+      /audit manifest records cannot be replaced/
+    );
+
+    // 1b. Verify BEFORE INSERT trigger blocks duplicate nonce with fresh operation_id and audit reference
+    await assert.rejects(
+      () =>
+        realD1
+          .prepare(
+            `INSERT OR REPLACE INTO paar_p0_bootstrap_audit_manifests (
+              id, operation_id, nonce, target_id, operator_email, operator_uid,
+              workspace_scope, permitted_action, signing_key_id, signature_algorithm,
+              signature_bytes, canonical_manifest_json, audit_reference, created_at
+            ) VALUES ('audit_workerd_replace_nonce', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+          )
+          .bind(
+            `op_fresh_${crypto.randomUUID()}`, // fresh operation_id
+            verifiedEnrolledManifest.manifest.nonce, // reuse nonce only
+            verifiedEnrolledManifest.manifest.target_id,
+            verifiedEnrolledManifest.manifest.operator_email,
+            verifiedEnrolledManifest.manifest.operator_uid,
+            verifiedEnrolledManifest.manifest.workspace_scope.join(','),
+            verifiedEnrolledManifest.manifest.permitted_action,
+            verifiedEnrolledManifest.signing_key_id,
+            verifiedEnrolledManifest.signature_algorithm,
+            verifiedEnrolledManifest.signature_bytes,
+            verifiedEnrolledManifest.canonical_manifest_json,
+            `ref_fresh_${crypto.randomUUID()}` // fresh audit_reference
+          )
+          .run(),
+      /audit manifest records cannot be replaced/
     );
 
     // 2. Verify BEFORE UPDATE trigger aborts mutation on real D1
@@ -337,12 +383,12 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
 
   // --- Scenario 7: Replay protection & precondition assertion rollback proof ---
   it('W7: replaying enrollment or running with existing bootstrap records triggers stage-1 rollback', async () => {
-    // Replay attempt with exact same manifest
+    // 1. Replay attempt with exact same manifest
     const replayedOutcome = await enrollFirstSuperAdmin(realD1, verifiedEnrolledManifest);
     assert.equal(replayedOutcome.status, 'NOT_ENROLLED');
     assert.equal(replayedOutcome.rollbackProven, true);
 
-    // Attempt with fresh new manifest against already-bootstrapped real D1
+    // 2. Attempt with fresh new manifest against already-bootstrapped real D1
     const freshManifest = createValidSyntheticManifest();
     const signedFresh = signApprovalManifest(freshManifest, ephemeralKeyPair.privateKey);
     const verifiedFresh = verifyApprovalManifest(signedFresh, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
@@ -350,6 +396,38 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     const freshOutcome = await enrollFirstSuperAdmin(realD1, verifiedFresh);
     assert.equal(freshOutcome.status, 'NOT_ENROLLED');
     assert.equal(freshOutcome.rollbackProven, true);
+
+    // 3. Fresh disposable D1 rollback proof: abort at completion insertion rolls back all earlier writes
+    const freshD1 = createLocalD1Database();
+    await runLocalMigrations(freshD1, { disposableTest: true });
+
+    // Inject trigger to abort at completion insertion
+    await freshD1.exec("CREATE TRIGGER w7_fail_completion BEFORE INSERT ON g01_bootstrap_completion BEGIN SELECT RAISE(ABORT, 'w7_simulated_completion_failure'); END;");
+
+    const manifestW7 = createValidSyntheticManifest();
+    const signedW7 = signApprovalManifest(manifestW7, ephemeralKeyPair.privateKey);
+    const verifiedW7 = verifyApprovalManifest(signedW7, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const failedOutcome = await enrollFirstSuperAdmin(freshD1, verifiedW7);
+    assert.equal(failedOutcome.status, 'NOT_ENROLLED');
+    assert.equal(failedOutcome.rollbackProven, true);
+
+    // Verify all prior writes were rolled back cleanly
+    const userCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    assert.equal(userCount, 0, 'Users table must have rolled back');
+    const mapCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM user_identity_mappings WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    assert.equal(mapCount, 0, 'Identity mappings must have rolled back');
+    const memCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    assert.equal(memCount, 0, 'Workspace memberships must have rolled back');
+    const apprCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    assert.equal(apprCount, 0, 'Approvals must have rolled back');
+    const auditCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?").bind(manifestW7.operation_id).first<{ n: number }>())?.n;
+    assert.equal(auditCount, 0, 'Audit record must have rolled back');
+
+    // Remove failure trigger and confirm enrollment now succeeds
+    await freshD1.exec("DROP TRIGGER w7_fail_completion;");
+    const retryOutcome = await enrollFirstSuperAdmin(freshD1, verifiedW7);
+    assert.equal(retryOutcome.status, 'SUCCESS');
   });
 
   // --- Scenario 8: Real D1 primary key replacement conflict rejection (CR-01) ---
@@ -390,7 +468,43 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
             freshAuditRef
           )
           .run(),
-      /audit manifest records cannot be replaced|UNIQUE constraint failed/
+      /audit manifest records cannot be replaced/
     );
+  });
+
+  // --- Scenario 9: Incomplete-state privilege denial on disposable D1 fixture ---
+  it('W9: incomplete-state on disposable D1 fixture (protected identity + active approval without completion) denies super_admin privilege', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const incompleteUid = 'workerd_incomplete_super_admin_uid';
+    await db.exec(`
+      INSERT INTO users (id, email, display_name, disabled, created_at, updated_at)
+      VALUES ('usr_primary_super_admin', '${PROTECTED_EMAIL}', 'Primary Super Admin', 0, datetime('now'), datetime('now'));
+      INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at)
+      VALUES ('map_incomplete_workerd', 'usr_primary_super_admin', 'firebase', '${incompleteUid}', datetime('now'));
+      INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
+      VALUES ('mem_incomplete_workerd', 'solarcell', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now'));
+      INSERT INTO g01_protected_super_admin (singleton, user_id, provider_id, provider_subject_id, assigned_at, assigned_by)
+      VALUES (1, 'usr_primary_super_admin', 'firebase', '${incompleteUid}', datetime('now'), 'test');
+      INSERT INTO privileged_identity_approvals (id, user_id, provider_id, provider_subject_id, workspace_id, role, granted_at, granted_by)
+      VALUES ('appr_incomplete_workerd', 'usr_primary_super_admin', 'firebase', '${incompleteUid}', 'solarcell', 'super_admin', datetime('now'), 'test');
+    `);
+
+    const { createAuthenticationService } = await import('../../backend/workers/auth.ts');
+    const { createWorker } = await import('../../backend/index.ts');
+    const authService = createAuthenticationService(firebaseFixture.transport);
+    const workerInst = createWorker(authService);
+    const token = await firebaseFixture.token(incompleteUid, PROTECTED_EMAIL);
+
+    const res = await workerInst.fetch(
+      new Request('http://localhost/api/v1/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      }),
+      { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }
+    );
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { memberships: unknown[] };
+    assert.equal(body.memberships.length, 0, 'Incomplete state on disposable D1 fixture must not expose super_admin membership');
   });
 });

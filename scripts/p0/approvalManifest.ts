@@ -83,11 +83,31 @@ export function signApprovalManifest(
   manifest: ApprovalManifest,
   privateKey: crypto.KeyObject | string
 ): SignedApprovalManifest {
+  let keyObj: crypto.KeyObject;
+  if (typeof privateKey === 'string' || Buffer.isBuffer(privateKey)) {
+    try {
+      keyObj = crypto.createPrivateKey(privateKey);
+    } catch (err) {
+      throw new ManifestValidationError(`Failed to parse private key: ${(err as Error).message}`, 'INVALID_PRIVATE_KEY');
+    }
+  } else if (typeof privateKey === 'object' && privateKey !== null && 'asymmetricKeyType' in privateKey) {
+    keyObj = privateKey as crypto.KeyObject;
+  } else {
+    throw new ManifestValidationError('Invalid private key format', 'INVALID_PRIVATE_KEY');
+  }
+
+  if (keyObj.asymmetricKeyType !== 'ed25519') {
+    throw new ManifestValidationError(
+      `Unsupported private key type '${keyObj.asymmetricKeyType}'. Mode A strictly pins Ed25519 keys.`,
+      'KEY_TYPE_REJECTED'
+    );
+  }
+
   const canonicalJson = canonicalizeJson(manifest);
   const canonicalBytes = Buffer.from(canonicalJson, 'utf8');
 
   // In Node.js, Ed25519 requires null digest algorithm
-  const signature = crypto.sign(null, canonicalBytes, privateKey);
+  const signature = crypto.sign(null, canonicalBytes, keyObj);
   const signatureBytes = signature.toString('base64url');
 
   return {
@@ -152,7 +172,27 @@ export function verifyApprovalManifest(
     );
   }
 
-  // 3. Cryptographic signature verification
+  // 3. Cryptographic signature verification with strict Ed25519 key type enforcement
+  let keyObj: crypto.KeyObject;
+  if (typeof trustedPublicKey === 'string' || Buffer.isBuffer(trustedPublicKey)) {
+    try {
+      keyObj = crypto.createPublicKey(trustedPublicKey);
+    } catch (err) {
+      throw new ManifestValidationError(`Failed to parse public key: ${(err as Error).message}`, 'INVALID_PUBLIC_KEY');
+    }
+  } else if (typeof trustedPublicKey === 'object' && trustedPublicKey !== null && 'asymmetricKeyType' in trustedPublicKey) {
+    keyObj = trustedPublicKey as crypto.KeyObject;
+  } else {
+    throw new ManifestValidationError('Invalid public key format', 'INVALID_PUBLIC_KEY');
+  }
+
+  if (keyObj.asymmetricKeyType !== 'ed25519') {
+    throw new ManifestValidationError(
+      `Unsupported public key type '${keyObj.asymmetricKeyType}'. Mode A strictly pins Ed25519 keys.`,
+      'KEY_TYPE_REJECTED'
+    );
+  }
+
   const canonicalBytes = Buffer.from(recalculatedJson, 'utf8');
   let signatureBuffer: Buffer;
   try {
@@ -163,7 +203,7 @@ export function verifyApprovalManifest(
 
   let signatureValid = false;
   try {
-    signatureValid = crypto.verify(null, canonicalBytes, trustedPublicKey, signatureBuffer);
+    signatureValid = crypto.verify(null, canonicalBytes, keyObj, signatureBuffer);
   } catch (err) {
     throw new ManifestValidationError(
       `Signature verification threw error: ${(err as Error).message}`,

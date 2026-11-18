@@ -1487,4 +1487,188 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       'Reconciliation must return INCONSISTENT when caller expected scope does not match database audit record'
     );
   });
+
+  // --- Regression CR-09: Ed25519 Key Type Enforcement ---
+  it('Regression CR-09: signApprovalManifest and verifyApprovalManifest strictly reject non-Ed25519 keys (RSA, ECDSA)', () => {
+    const manifest = createValidSyntheticManifest();
+
+    // 1. RSA keys must be rejected by signApprovalManifest with KEY_TYPE_REJECTED
+    const rsaPair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    assert.throws(
+      () => signApprovalManifest(manifest, rsaPair.privateKey),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'KEY_TYPE_REJECTED'
+    );
+
+    // 2. ECDSA keys must be rejected by signApprovalManifest with KEY_TYPE_REJECTED
+    const ecdsaPair = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    assert.throws(
+      () => signApprovalManifest(manifest, ecdsaPair.privateKey),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'KEY_TYPE_REJECTED'
+    );
+
+    // 3. Valid signed manifest verified with RSA public key must be rejected with KEY_TYPE_REJECTED
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signed, rsaPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'KEY_TYPE_REJECTED'
+    );
+
+    // 4. Valid signed manifest verified with ECDSA public key must be rejected with KEY_TYPE_REJECTED
+    assert.throws(
+      () => verifyApprovalManifest(signed, ecdsaPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'KEY_TYPE_REJECTED'
+    );
+
+    // 5. Raw PEM strings of RSA/ECDSA keys must also be parsed and rejected with KEY_TYPE_REJECTED
+    const rsaPubPem = rsaPair.publicKey.export({ type: 'spki', format: 'pem' }) as string;
+    assert.throws(
+      () => verifyApprovalManifest(signed, rsaPubPem, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'KEY_TYPE_REJECTED'
+    );
+  });
+
+  // --- Regression CR-10: Firebase Provider Enforcement in Reconciliation ---
+  it('Regression CR-10: reconcileEnrollmentStatus strictly rejects non-firebase or contradictory provider mappings', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'SUCCESS');
+
+    // Positive control: reconciliation succeeds for pristine state
+    const cleanRecon = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      manifest.workspace_scope
+    );
+    assert.equal(cleanRecon, 'CONFIRMED_ENROLLED');
+
+    // Case A: Identity mapping altered to non-firebase provider (e.g. 'google')
+    await db.prepare("UPDATE user_identity_mappings SET provider_id = 'google' WHERE user_id = 'usr_primary_super_admin'").run();
+    const nonFirebaseRecon = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      manifest.workspace_scope
+    );
+    assert.equal(nonFirebaseRecon, 'INCONSISTENT', 'Reconciliation must return INCONSISTENT when provider_id is not firebase');
+
+    // Case B: Contradictory second mapping inserted (total > 1)
+    await db.prepare("UPDATE user_identity_mappings SET provider_id = 'firebase' WHERE user_id = 'usr_primary_super_admin'").run();
+    await db.prepare("INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES ('map_extra_t10', 'usr_primary_super_admin', 'google', 'extra_sub', datetime('now'))").run();
+    const extraMappingRecon = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      manifest.workspace_scope
+    );
+    assert.equal(extraMappingRecon, 'INCONSISTENT', 'Reconciliation must return INCONSISTENT when multiple identity mappings exist');
+  });
+
+  // --- Regression CR-11: Active LoopbackTripwire during Mode A CLI execution ---
+  it('Regression CR-11: runModeACliEnrollment executes under active LoopbackTripwire and fails closed on non-loopback egress', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    // Install a DB trigger that simulates an inadvertent or malicious outbound network socket call during enrollment
+    await db.exec(`
+      CREATE TRIGGER test_simulate_outbound_egress AFTER INSERT ON g01_bootstrap_completion
+      BEGIN
+        SELECT 1;
+      END;
+    `);
+
+    // We can simulate an outbound socket attempt during execution by hooking D1Database.prepare or intercepting
+    const originalPrepare = db.prepare.bind(db);
+    let tripwireCheckedDuringCall = false;
+    (db as any).prepare = (query: string) => {
+      // During execution of one statement, attempt a non-loopback connect
+      if (query.includes('g01_bootstrap_completion') && !tripwireCheckedDuringCall) {
+        tripwireCheckedDuringCall = true;
+        const sock = new net.Socket();
+        sock.on('error', () => {});
+        sock.connect({ host: '203.0.113.1', port: 80 }); // RFC 5737 TEST-NET-3
+      }
+      return originalPrepare(query);
+    };
+
+    try {
+      await assert.rejects(
+        () =>
+          runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+            expectedTargetId: SYNTHETIC_TARGET,
+            expectedOperatorUid: SYNTHETIC_UID,
+            expectedOperatorEmail: SYNTHETIC_EMAIL,
+          }),
+        (err: any) =>
+          err instanceof SecurityBoundaryError &&
+          err.message.includes('Egress tripwire triggered during Mode A execution')
+      );
+    } finally {
+      (db as any).prepare = originalPrepare;
+    }
+  });
+
+  // --- Regression CR-12: Directory-Swap TOCTOU Closure on Audit Receipt Export ---
+  it('Regression CR-12: runModeACliEnrollment detects directory-swap / junction escape on receipt write and unlinks leaked files', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    // Setup an approved evidence root and an outside target directory
+    const approvedDir = createVerifiedTempDir('cabms-p0-cr12-approved-');
+    const outsideDir = createVerifiedTempDir('cabms-p0-cr12-outside-');
+
+    const swappedSubdir = path.join(approvedDir, 'swapped_receipts');
+    // Hook db.prepare so that during enrollment (after initial step 3 boundary check has passed),
+    // a competing process swaps swappedSubdir with a junction pointing to outsideDir
+    const originalPrepare = db.prepare.bind(db);
+    let swapped = false;
+    (db as any).prepare = (query: string) => {
+      if (!swapped && query.includes('INSERT INTO users')) {
+        swapped = true;
+        const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+        fs.symlinkSync(outsideDir, swappedSubdir, linkType);
+      }
+      return originalPrepare(query);
+    };
+
+    try {
+      const result = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir: swappedSubdir,
+        approvedEvidenceRoot: approvedDir,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      // Enrollment must be successful in DB
+      assert.equal(result.outcome.status, 'SUCCESS');
+      // But receipt export must fail closed and record error
+      assert.equal(result.auditReceiptPath, undefined);
+      assert.ok(result.receiptExportError, 'receiptExportError must be set');
+      assert.match(result.receiptExportError, /canonical realpath escapes approved root boundary/);
+
+      // Verify no leaked receipt file remains in the outside directory
+      const outsideFiles = fs.readdirSync(outsideDir);
+      assert.equal(outsideFiles.length, 0, 'No files must be left in the outside directory after escape detection');
+    } finally {
+      (db as any).prepare = originalPrepare;
+      try { fs.rmSync(approvedDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(outsideDir, { recursive: true, force: true }); } catch {}
+    }
+  });
 });

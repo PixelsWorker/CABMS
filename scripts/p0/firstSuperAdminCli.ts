@@ -317,39 +317,55 @@ export async function runModeACliEnrollment(
     }
   }
 
-  // 4. Verify manifest
-  const verified: VerifiedApprovalManifest = verifyApprovalManifest(
-    signedManifest,
-    trustedPublicKey,
-    {
-      expectedTargetId: options.expectedTargetId,
-      expectedOperatorUid: options.expectedOperatorUid,
-      expectedOperatorEmail: options.expectedOperatorEmail,
-    }
-  );
-
-  // 5. Execute enrollment
-  const outcome = await enrollFirstSuperAdmin(db, verified);
-
-  // 6. Handle indeterminate reconciliation if required (CR-08: pass full array)
+  // 4. Verify manifest, execute enrollment, and reconcile under active LoopbackTripwire
+  const tripwire = new LoopbackTripwire();
+  tripwire.activate();
+  let verified: VerifiedApprovalManifest;
+  let outcome: EnrollmentOutcome;
   let reconciliation: ReconciliationOutcome | undefined;
-  if (outcome.status === 'INDETERMINATE') {
-    reconciliation = await reconcileEnrollmentStatus(
-      db,
-      verified.manifest.operation_id,
-      verified.manifest.operator_uid,
-      verified.audit_reference,
-      verified.manifest.workspace_scope
+
+  try {
+    verified = verifyApprovalManifest(
+      signedManifest,
+      trustedPublicKey,
+      {
+        expectedTargetId: options.expectedTargetId,
+        expectedOperatorUid: options.expectedOperatorUid,
+        expectedOperatorEmail: options.expectedOperatorEmail,
+      }
     );
+
+    // 5. Execute enrollment
+    outcome = await enrollFirstSuperAdmin(db, verified);
+
+    // 6. Handle indeterminate reconciliation if required (CR-08: pass full array)
+    if (outcome.status === 'INDETERMINATE') {
+      reconciliation = await reconcileEnrollmentStatus(
+        db,
+        verified.manifest.operation_id,
+        verified.manifest.operator_uid,
+        verified.audit_reference,
+        verified.manifest.workspace_scope
+      );
+    }
+
+    if (tripwire.nonLoopbackAttempts.length > 0) {
+      throw new SecurityBoundaryError(
+        `Egress tripwire triggered during Mode A execution: ${JSON.stringify(tripwire.nonLoopbackAttempts)}`
+      );
+    }
+  } finally {
+    tripwire.deactivate();
   }
 
-  // 7. Export non-secret signed audit receipt (CR-02 & CR-04)
+  // 7. Export non-secret signed audit receipt (CR-02, CR-04 & Directory-Swap TOCTOU hardening)
   let auditReceiptPath: string | undefined;
   let receiptExportError: string | undefined;
   const isConfirmedEnrolled =
     outcome.status === 'SUCCESS' || reconciliation === 'CONFIRMED_ENROLLED';
 
   if (isConfirmedEnrolled && resolvedEvidenceDir) {
+    let fd: number | undefined;
     try {
       if (!OPERATION_ID_UUID_REGEX.test(verified.manifest.operation_id)) {
         throw new SecurityBoundaryError('operation_id must strictly match agreed format op_<UUID>');
@@ -387,8 +403,38 @@ export async function runModeACliEnrollment(
         canonical_manifest_json: verified.canonical_manifest_json,
         recorded_at: new Date().toISOString(),
       };
-      fs.writeFileSync(auditReceiptPath, JSON.stringify(receipt, null, 2), { encoding: 'utf8', flag: 'wx' });
+
+      // Atomic creation with exclusive 'wx' flag
+      fd = fs.openSync(auditReceiptPath, 'wx');
+
+      // Post-creation canonical containment revalidation while holding descriptor
+      // Closes TOCTOU directory swap race before writing content
+      if (approvedRoot) {
+        const realFile = fs.realpathSync(auditReceiptPath);
+        const relFile = path.relative(approvedRoot, realFile);
+        if (relFile.startsWith('..') || path.isAbsolute(relFile)) {
+          throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
+        }
+
+        const realParent = fs.realpathSync(path.dirname(auditReceiptPath));
+        const expectedParent = fs.realpathSync(resolvedEvidenceDir);
+        if (realParent !== expectedParent) {
+          throw new SecurityBoundaryError('Receipt parent directory was swapped during file creation');
+        }
+      }
+
+      // Write content to open descriptor
+      fs.writeSync(fd, JSON.stringify(receipt, null, 2), null, 'utf8');
+      fs.closeSync(fd);
+      fd = undefined;
     } catch (err) {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch {}
+        fd = undefined;
+        if (auditReceiptPath && fs.existsSync(auditReceiptPath)) {
+          try { fs.unlinkSync(auditReceiptPath); } catch {}
+        }
+      }
       receiptExportError = (err as Error).message;
       auditReceiptPath = undefined;
     }

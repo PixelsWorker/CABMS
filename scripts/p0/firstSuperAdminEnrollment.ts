@@ -321,19 +321,25 @@ export async function reconcileEnrollmentStatus(
       .first<{ operation_id: string; operator_uid: string; audit_reference: string; workspace_scope: string }>();
 
     const protectedRow = await db
-      .prepare('SELECT singleton, user_id, provider_subject_id FROM g01_protected_super_admin WHERE singleton = 1')
-      .first<{ singleton: number; user_id: string; provider_subject_id: string }>();
+      .prepare('SELECT singleton, user_id, provider_id, provider_subject_id FROM g01_protected_super_admin WHERE singleton = 1')
+      .first<{ singleton: number; user_id: string; provider_id: string; provider_subject_id: string }>();
 
     const userRow = await db
       .prepare("SELECT id, disabled FROM users WHERE id = 'usr_primary_super_admin'")
       .first<{ id: string; disabled: number }>();
 
-    const mappingCount = (
-      await db
-        .prepare("SELECT COUNT(*) AS n FROM user_identity_mappings WHERE user_id = 'usr_primary_super_admin' AND provider_subject_id = ?")
-        .bind(expectedUid)
-        .first<{ n: number }>()
-    )?.n ?? 0;
+    const mappingCounts = await db
+      .prepare(`
+        SELECT
+          COUNT(CASE WHEN provider_id = 'firebase' AND provider_subject_id = ? THEN 1 END) AS firebase_match,
+          COUNT(*) AS total
+        FROM user_identity_mappings
+        WHERE user_id = 'usr_primary_super_admin'
+      `)
+      .bind(expectedUid)
+      .first<{ firebase_match: number; total: number }>();
+    const firebaseMappingCount = mappingCounts?.firebase_match ?? 0;
+    const totalMappingCount = mappingCounts?.total ?? 0;
 
     const membershipsRes = await db
       .prepare("SELECT workspace_id, role FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'")
@@ -341,9 +347,9 @@ export async function reconcileEnrollmentStatus(
     const membershipRows = membershipsRes.results ?? [];
 
     const approvalsRes = await db
-      .prepare("SELECT workspace_id, role FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND provider_subject_id = ? AND revoked_at IS NULL")
+      .prepare("SELECT workspace_id, role, provider_id FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND provider_subject_id = ? AND revoked_at IS NULL")
       .bind(expectedUid)
-      .all<{ workspace_id: string; role: string }>();
+      .all<{ workspace_id: string; role: string; provider_id: string }>();
     const approvalRows = approvalsRes.results ?? [];
 
     // Derive approved workspace set (CR-08: Caller's verified expectedScopeList is strictly authoritative)
@@ -386,7 +392,7 @@ export async function reconcileEnrollmentStatus(
       membershipRows.length === expectedLength &&
       approvalRows.length === expectedLength &&
       membershipRows.every(m => m.role === 'super_admin') &&
-      approvalRows.every(a => a.role === 'super_admin');
+      approvalRows.every(a => a.role === 'super_admin' && a.provider_id === 'firebase');
 
     // Case 1: Complete, active user, and fully consistent
     if (
@@ -401,8 +407,10 @@ export async function reconcileEnrollmentStatus(
       auditRow.operator_uid === expectedUid &&
       auditRow.audit_reference === expectedAuditRef &&
       protectedRow.user_id === 'usr_primary_super_admin' &&
+      protectedRow.provider_id === 'firebase' &&
       protectedRow.provider_subject_id === expectedUid &&
-      mappingCount === 1 &&
+      firebaseMappingCount === 1 &&
+      totalMappingCount === 1 &&
       isScopeConsistent
     ) {
       return 'CONFIRMED_ENROLLED';
@@ -414,7 +422,7 @@ export async function reconcileEnrollmentStatus(
       !auditRow &&
       !protectedRow &&
       !userRow &&
-      mappingCount === 0 &&
+      totalMappingCount === 0 &&
       membershipRows.length === 0 &&
       approvalRows.length === 0
     ) {
@@ -427,7 +435,7 @@ export async function reconcileEnrollmentStatus(
       auditRow ||
       protectedRow ||
       userRow ||
-      mappingCount > 0 ||
+      totalMappingCount > 0 ||
       membershipRows.length > 0 ||
       approvalRows.length > 0
     ) {

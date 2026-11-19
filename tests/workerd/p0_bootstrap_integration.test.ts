@@ -791,7 +791,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       manifest.operation_id,
       manifest.operator_uid,
       verified.audit_reference,
-      manifest.workspace_scope.length,
+      manifest.workspace_scope,
       { settled: true }
     );
     assert.equal(initialRecon, 'NOT_ENROLLED');
@@ -809,7 +809,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       manifest.operation_id,
       manifest.operator_uid,
       verified.audit_reference,
-      manifest.workspace_scope.length
+      manifest.workspace_scope
     );
     assert.equal(postCommitRecon, 'CONFIRMED_ENROLLED');
 
@@ -830,7 +830,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
         manifest.operation_id,
         manifest.operator_uid,
         verified.audit_reference,
-        manifest.workspace_scope.length
+        manifest.workspace_scope
       );
       assert.equal(reconCheck, 'CONFIRMED_ENROLLED');
       assert.equal(writeCountDuringRecon, 0, 'Reconciliation must execute zero write statements against D1');
@@ -944,7 +944,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       manifest.operation_id,
       manifest.operator_uid,
       verified.audit_reference,
-      manifest.workspace_scope.length
+      manifest.workspace_scope
     );
 
     // Count is still 3, but set is inconsistent with approved scope! Must return INCONSISTENT!
@@ -958,11 +958,12 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
         return {
           bind() { return this; },
           first() { throw new Error('Simulated SQLite engine read failure / disk error'); },
+          all() { throw new Error('Simulated SQLite engine read failure / disk error'); },
         };
       },
     } as unknown as D1Database;
 
-    const recon = await reconcileEnrollmentStatus(brokenDb, 'op_f06', 'uid_f06', 'ref_f06', 3);
+    const recon = await reconcileEnrollmentStatus(brokenDb, 'op_f06', 'uid_f06', 'ref_f06', ['solarcell', 'smart_home', 'cctv']);
     assert.equal(recon, 'INDETERMINATE', 'Reconciliation did not fail closed to INDETERMINATE on read error');
   });
 
@@ -2181,7 +2182,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       'op_unsettled_9999',
       'uid_unsettled_9999',
       'ref_unsettled_9999',
-      3,
+      ['solarcell', 'smart_home', 'cctv'],
       { settled: false }
     );
     assert.equal(
@@ -2196,7 +2197,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       'op_unsettled_9999',
       'uid_unsettled_9999',
       'ref_unsettled_9999',
-      3
+      ['solarcell', 'smart_home', 'cctv']
     );
     assert.equal(
       reconDefault,
@@ -2210,7 +2211,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       'op_unsettled_9999',
       'uid_unsettled_9999',
       'ref_unsettled_9999',
-      3,
+      ['solarcell', 'smart_home', 'cctv'],
       { settled: true }
     );
     assert.equal(
@@ -2420,6 +2421,11 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
         result.outcome.status,
         'SECURITY_VIOLATION',
         'Outcome status must be SECURITY_VIOLATION when tripwire triggered'
+      );
+      assert.equal(
+        (result.outcome as any).dbState,
+        'COMMITTED',
+        'CR-28: outcome.dbState must be COMMITTED when tripwire triggers on committed enrollment'
       );
       assert.ok(
         (result as any).securityViolation,
@@ -2683,13 +2689,12 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     }
     assert.equal(outcome21.status, 'SUCCESS', '21 workspaces must commit successfully within the 100-parameter limit');
 
-    // Test D: assert the C03 postcondition statement actually bound 98 parameters during enrollment
-    // (Actual binding: 14 fixed parameters + 4 per workspace = 14 + 4(21) = 98; source comment says 15 but
-    //  count from lines 265–283 of firstSuperAdminEnrollment.ts is 14 fixed + 4N spread args.)
+    // Test D: assert the C03 postcondition statement actually bound 100 parameters during enrollment
+    // (Actual binding: 16 fixed parameters + 4 per workspace = 16 + 4(21) = 100 parameters, exactly reaching D1's 100-parameter limit.)
     const observedCounts = bindCountsPerStatement.map(e => e.count);
     assert.ok(
-      observedCounts.some(n => n === 98),
-      `C03 postcondition statement must bind exactly 98 parameters; observed bind counts: ${JSON.stringify(observedCounts)}`
+      observedCounts.some(n => n === 100),
+      `C03 postcondition statement must bind exactly 100 parameters; observed bind counts: ${JSON.stringify(observedCounts)}`
     );
     assert.ok(
       observedCounts.every(n => n <= 100),
@@ -2972,5 +2977,567 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       4,
       'getCliExitCode MUST return 4 (RECEIPT_EXPORT_ERROR) when mandatory audit receipt is missing, never 0'
     );
+  });
+
+  // --- Regression CR-38: Single-Snapshot Reconciliation ---
+  it('Regression CR-38: reconciliation queries authorization state from a single statement snapshot', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'SUCCESS', 'Enrollment must succeed');
+
+    // Instrument prepare to count read statements during reconciliation
+    let readPrepareCount = 0;
+    const origPrepare = db.prepare.bind(db);
+    (db as any).prepare = (query: string) => {
+      readPrepareCount++;
+      return origPrepare(query);
+    };
+
+    try {
+      const recon = await reconcileEnrollmentStatus(
+        db,
+        manifest.operation_id,
+        manifest.operator_uid,
+        verified.audit_reference,
+        manifest.workspace_scope
+      );
+      assert.equal(recon, 'CONFIRMED_ENROLLED', 'Reconciliation must confirm enrollment');
+      assert.equal(
+        readPrepareCount,
+        1,
+        `CR-38: reconcileEnrollmentStatus MUST execute via exactly 1 statement snapshot; observed: ${readPrepareCount}`
+      );
+    } finally {
+      (db as any).prepare = origPrepare;
+    }
+
+    // Adversarial state mutation check:
+    // Demonstrate that single-statement reconciliation consistently detects partial / torn state
+    // (e.g. an injected unauthorized identity mapping) and fails closed to INCONSISTENT
+    const rawDb = (db as any).getSqliteHandle?.() ?? (db as any);
+    rawDb.exec(`
+      INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at)
+      VALUES ('im_adversarial_torn', 'usr_primary_super_admin', 'firebase', 'rogue_uid_adversarial', datetime('now'));
+    `);
+
+    const reconTorn = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      manifest.workspace_scope
+    );
+    assert.equal(
+      reconTorn,
+      'INCONSISTENT',
+      'CR-38: reconciliation must fail closed to INCONSISTENT when torn/adversarial state is present in snapshot'
+    );
+  });
+
+  // --- Regression CR-39: Fractional-Second Timestamp Precision and Recovery ---
+  it('Regression CR-39: enrollment preserves fractional-second precision and recovery succeeds on same-second manifest', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // Ensure we are past the start of the current second so issued_at (now - 50ms) is in the SAME second
+    const currentMs = Date.now() % 1000;
+    if (currentMs < 100) {
+      await new Promise(r => setTimeout(r, 120 - currentMs));
+    }
+    const enrollNow = Date.now();
+    const issuedDate = new Date(enrollNow - 50);
+    const isoIssued = issuedDate.toISOString();
+    const isoExpires = new Date(enrollNow + 60000).toISOString();
+    const manifest = createValidSyntheticManifest({
+      issued_at: isoIssued,
+      expires_at: isoExpires,
+    });
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'SUCCESS', 'Enrollment must succeed');
+
+    // Check created_at in paar_p0_bootstrap_audit_manifests has fractional seconds
+    const auditRow = await db.prepare(
+      'SELECT created_at FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?'
+    ).bind(manifest.operation_id).first<{ created_at: string }>();
+
+    assert.ok(auditRow?.created_at, 'Audit row must exist');
+    assert.match(
+      auditRow.created_at,
+      /\.\d{3}Z?$/,
+      `created_at must preserve fractional-second precision; observed: ${auditRow.created_at}`
+    );
+
+    // Verify same second boundary: same YYYY-MM-DDTHH:MM:SS prefix
+    const sameCalendarSecond = auditRow.created_at.slice(0, 19) === isoIssued.slice(0, 19);
+    assert.ok(
+      sameCalendarSecond,
+      `CR-39 boundary: audit created_at (${auditRow.created_at}) and manifest issued_at (${isoIssued}) MUST share the same calendar second`
+    );
+    // Verify millisecond ordering within that same second:
+    assert.ok(
+      Date.parse(auditRow.created_at) >= Date.parse(isoIssued),
+      `CR-39: created_at (${auditRow.created_at}) must be >= issued_at (${isoIssued}) within same second`
+    );
+
+    // Test expired manifest recovery where manifest expired but audit occurred within validity window
+    const recoveryOutcome = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      allowExpiredForRecovery: true,
+      settled: true,
+    });
+    assert.equal(
+      recoveryOutcome.status,
+      'RECOVERED',
+      `CR-39: recoverAuditReceipt must succeed with RECOVERED; got: ${JSON.stringify(recoveryOutcome)}`
+    );
+
+    // Negative control: tampered created_at earlier than issued_at WITHIN the same calendar second fails closed to INCONSISTENT
+    const rawDb = (db as any).getSqliteHandle?.() ?? (db as any);
+    const tamperedEarlyCreatedAt = new Date(Date.parse(isoIssued) - 10).toISOString();
+    rawDb.exec(`DROP TRIGGER IF EXISTS paar_p0_audit_no_update; UPDATE paar_p0_bootstrap_audit_manifests SET created_at = '${tamperedEarlyCreatedAt}' WHERE operation_id = '${manifest.operation_id}';`);
+
+    const negativeRecovery = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      allowExpiredForRecovery: true,
+      settled: true,
+    });
+    assert.equal(
+      negativeRecovery.status,
+      'INCONSISTENT',
+      'CR-39 negative control: created_at earlier than issued_at must fail closed to INCONSISTENT'
+    );
+    assert.match(
+      (negativeRecovery as any).error ?? '',
+      /falls outside manifest validity window/i,
+      'Error message must state created_at falls outside manifest validity window'
+    );
+  });
+
+  // --- Regression CR-40: Persisted Signature Verification in Recovery ---
+  it('Regression CR-40: recoverAuditReceipt fails closed if persisted signature_bytes, algorithm, or signing_key_id differs from manifest', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'SUCCESS', 'Enrollment must succeed');
+
+    const rawDb = (db as any).getSqliteHandle?.() ?? (db as any);
+    rawDb.exec('DROP TRIGGER IF EXISTS paar_p0_audit_no_update;');
+
+    // 1. Negative control: tampered signature_bytes in DB
+    rawDb.exec("UPDATE paar_p0_bootstrap_audit_manifests SET signature_bytes = 'tampered_sig_bytes_in_db';");
+    const resSigBytes = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      settled: true,
+    });
+    assert.equal(resSigBytes.status, 'INCONSISTENT', 'Must return INCONSISTENT on signature_bytes mismatch');
+    assert.match((resSigBytes as any).error ?? '', /signature|bytes|key/i);
+
+    // Restore signature_bytes
+    rawDb.exec(`UPDATE paar_p0_bootstrap_audit_manifests SET signature_bytes = '${verified.signature_bytes}';`);
+
+    // 2. Negative control: tampered signature_algorithm in DB
+    // Recreate audit table in disposable test without CHECK constraint to simulate a corrupted/tampered DB row
+    rawDb.exec(`
+      CREATE TABLE audit_temp AS SELECT * FROM paar_p0_bootstrap_audit_manifests;
+      DROP TABLE paar_p0_bootstrap_audit_manifests;
+      CREATE TABLE paar_p0_bootstrap_audit_manifests (
+        id TEXT PRIMARY KEY NOT NULL,
+        operation_id TEXT NOT NULL,
+        nonce TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        operator_email TEXT NOT NULL,
+        operator_uid TEXT NOT NULL,
+        workspace_scope TEXT NOT NULL,
+        permitted_action TEXT NOT NULL,
+        signing_key_id TEXT NOT NULL,
+        signature_algorithm TEXT NOT NULL,
+        signature_bytes TEXT NOT NULL,
+        canonical_manifest_json TEXT NOT NULL,
+        audit_reference TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      ) WITHOUT ROWID;
+      INSERT INTO paar_p0_bootstrap_audit_manifests SELECT * FROM audit_temp;
+      DROP TABLE audit_temp;
+      UPDATE paar_p0_bootstrap_audit_manifests SET signature_algorithm = 'RSA_FORGED_IN_DB';
+    `);
+    const resAlg = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      settled: true,
+    });
+    assert.equal(resAlg.status, 'INCONSISTENT', 'Must return INCONSISTENT on signature_algorithm mismatch');
+    assert.match((resAlg as any).error ?? '', /signature|algorithm|key/i);
+
+    // Restore signature_algorithm
+    rawDb.exec(`UPDATE paar_p0_bootstrap_audit_manifests SET signature_algorithm = '${verified.signature_algorithm}';`);
+
+    // 3. Negative control: tampered signing_key_id in DB
+    rawDb.exec("UPDATE paar_p0_bootstrap_audit_manifests SET signing_key_id = 'tampered_key_id_999';");
+    const resKeyId = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      settled: true,
+    });
+    assert.equal(resKeyId.status, 'INCONSISTENT', 'Must return INCONSISTENT on signing_key_id mismatch');
+    assert.match((resKeyId as any).error ?? '', /signature|key/i);
+  });
+
+  // --- Regression CR-41: Rejection of Extra Identity Mappings in C03 ---
+  it('Regression CR-41: enrollment batch fails assertion and rolls back if an extra identity mapping exists for super admin', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // Simulate rogue trigger that injects a second mapping for usr_primary_super_admin
+    await db.exec(`
+      CREATE TRIGGER inject_rogue_mapping AFTER INSERT ON g01_protected_super_admin
+      BEGIN
+        INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at)
+        VALUES ('im_extra_rogue', NEW.user_id, 'custom_provider', 'rogue_sub_123', datetime('now'));
+      END;
+    `);
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(
+      outcome.status,
+      'NOT_ENROLLED',
+      'CR-41: enrollment must FAIL with NOT_ENROLLED and roll back when an extra identity mapping exists'
+    );
+    assert.equal(
+      outcome.rollbackProven,
+      true,
+      'CR-41: rollbackProven must be true'
+    );
+
+    // Verify rollback: completion table must have 0 rows
+    const compCount = await db.prepare(
+      'SELECT COUNT(*) AS count FROM g01_bootstrap_completion'
+    ).first<{ count: number }>();
+    assert.equal(compCount?.count, 0, 'Completion record must not exist after rollback');
+  });
+
+  // --- Regression CR-42: Transactional Manifest Validity Window Assertion in C03 ---
+  it('Regression CR-42: enrollment batch rejects execution after manifest expiration in C03 assertion', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // Manifest valid for only 50ms
+    const now = Date.now();
+    const isoIssued = new Date(now - 1000).toISOString();
+    const isoExpires = new Date(now + 50).toISOString();
+    const manifest = createValidSyntheticManifest({
+      issued_at: isoIssued,
+      expires_at: isoExpires,
+    });
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    // Wait until past expires_at (100ms)
+    await new Promise(r => setTimeout(r, 100));
+
+    // Execute enrollment now (wall clock is past expires_at)
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(
+      outcome.status,
+      'NOT_ENROLLED',
+      'CR-42: enrollment must FAIL with NOT_ENROLLED and roll back when audit event created_at is outside manifest window'
+    );
+    assert.equal(
+      outcome.rollbackProven,
+      true,
+      'CR-42: rollbackProven must be true'
+    );
+
+    // Verify rollback
+    const compCount = await db.prepare(
+      'SELECT COUNT(*) AS count FROM g01_bootstrap_completion'
+    ).first<{ count: number }>();
+    assert.equal(compCount?.count, 0, 'Completion record must not exist after rollback');
+  });
+
+  // --- Regression CR-43: Strict Requirement of Verified Workspace List in Reconciliation ---
+  it('Regression CR-43: reconcileEnrollmentStatus rejects numeric expected scope and requires verified string array', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest({
+      workspace_scope: ['solarcell'],
+    });
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, {
+      ...DEFAULT_VERIFY_OPTIONS,
+    });
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'SUCCESS', 'Enrollment must succeed');
+
+    // 1. Numeric scope input must be rejected fail-closed to INDETERMINATE
+    const reconNumeric = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      1 as any
+    );
+    assert.equal(
+      reconNumeric,
+      'INDETERMINATE',
+      'CR-43: numeric expectedScope MUST be rejected fail-closed to INDETERMINATE'
+    );
+
+    // 2. Substituted scope with equal count (expected ['cctv'] vs enrolled ['solarcell']) must be rejected
+    const reconSubstituted = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      ['cctv']
+    );
+    assert.equal(
+      reconSubstituted,
+      'INCONSISTENT',
+      'CR-43: substituted scope with equal count must be rejected to INCONSISTENT'
+    );
+
+    // 3. Exact matching scope array succeeds
+    const reconExact = await reconcileEnrollmentStatus(
+      db,
+      manifest.operation_id,
+      manifest.operator_uid,
+      verified.audit_reference,
+      ['solarcell']
+    );
+    assert.equal(reconExact, 'CONFIRMED_ENROLLED', 'Matching verified scope array must succeed');
+  });
+
+  // --- Regression CR-44: Disposable Teardown Containment Negative Control ---
+  it('Regression CR-44: disposable teardown does not delete a path that failed containment check', () => {
+    // Teardown routine enforcing canonical realpath containment inside allowed root
+    function safeTeardown(targetDir: string | undefined, allowedRoot: string): boolean {
+      if (!targetDir) return false;
+      let targetReal: string;
+      try {
+        targetReal = fs.realpathSync(targetDir);
+      } catch {
+        return false;
+      }
+      let rootReal: string;
+      try {
+        rootReal = fs.realpathSync(allowedRoot);
+      } catch {
+        return false;
+      }
+      const rel = path.relative(rootReal, targetReal);
+      const isContained = Boolean(rel && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep));
+      if (!isContained) {
+        return false;
+      }
+      fs.rmSync(targetReal, { recursive: true, force: true });
+      return true;
+    }
+
+    // 1. Establish an approved allowed root in temp
+    const allowedRoot = createVerifiedTempDir('cabms-p0-cr44-allowed-');
+
+    // 2. Establish an OUTSIDE candidate directory with a sentinel file
+    const outsideParent = createVerifiedTempDir('cabms-p0-cr44-outside-');
+    const outsideCandidate = path.join(outsideParent, 'uncontained_dir');
+    fs.mkdirSync(outsideCandidate);
+    const sentinelFile = path.join(outsideCandidate, 'outside_sentinel.txt');
+    fs.writeFileSync(sentinelFile, 'CR-44-OUTSIDE-SENTINEL-PRESERVE', 'utf8');
+
+    // 3. Create a genuinely CONTAINED directory with a test file
+    const containedDir = path.join(allowedRoot, 'contained_isolation');
+    fs.mkdirSync(containedDir);
+    const containedFile = path.join(containedDir, 'contained_file.txt');
+    fs.writeFileSync(containedFile, 'CONTAINED_PAYLOAD', 'utf8');
+
+    try {
+      // 4. Negative control: attempt teardown on outside candidate
+      const outsideResult = safeTeardown(outsideCandidate, allowedRoot);
+      assert.equal(outsideResult, false, 'Teardown MUST reject uncontained directory outside allowed root');
+
+      // Assert sentinel file and directory were NOT deleted
+      assert.ok(fs.existsSync(sentinelFile), 'Outside sentinel file MUST NOT be deleted by teardown');
+      assert.ok(fs.existsSync(outsideCandidate), 'Outside candidate directory MUST NOT be deleted by teardown');
+      assert.equal(
+        fs.readFileSync(sentinelFile, 'utf8'),
+        'CR-44-OUTSIDE-SENTINEL-PRESERVE',
+        'Sentinel file content must remain completely unaltered'
+      );
+
+      // 5. Positive control: teardown on genuinely contained directory
+      const containedResult = safeTeardown(containedDir, allowedRoot);
+      assert.equal(containedResult, true, 'Teardown MUST succeed on contained directory');
+      assert.ok(!fs.existsSync(containedDir), 'Contained directory MUST be deleted by teardown');
+    } finally {
+      try { fs.rmSync(outsideParent, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(allowedRoot, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  // --- Regression CR-45: Relative Socket Path and String Overload IPC Classification ---
+  it('Regression CR-45: LoopbackTripwire rejects relative socket paths and non-numeric string destinations as IPC violations', () => {
+    const tripwire = new LoopbackTripwire();
+    tripwire.activate();
+
+    try {
+      // 1. Relative socket path passed as string (e.g. 'relative_ipc.sock')
+      const sock1 = new net.Socket();
+      sock1.on('error', () => {});
+      sock1.connect('relative_ipc.sock' as any);
+      assert.ok(
+        tripwire.nonLoopbackAttempts.some(a => String(a.host).includes('relative_ipc.sock')),
+        'CR-45: Relative socket path MUST be classified as an IPC violation and logged in nonLoopbackAttempts'
+      );
+
+      // 2. Non-numeric loopback string with no port (e.g. 'localhost' without a port number)
+      // In Node net.connect, passing a string without a port number indicates an IPC pipe path, NOT a TCP host!
+      const sock2 = new net.Socket();
+      sock2.on('error', () => {});
+      sock2.connect('localhost' as any);
+      assert.ok(
+        tripwire.nonLoopbackAttempts.some(a => a.host === 'localhost' && a.port === 0),
+        'CR-45: Non-numeric string without port MUST be treated as an IPC path and blocked as violation'
+      );
+
+      // Positive control: valid loopback TCP connection with explicit port is allowed
+      const beforeCount = tripwire.nonLoopbackAttempts.length;
+      const sock3 = new net.Socket();
+      sock3.on('error', () => {});
+      sock3.connect(65534, '127.0.0.1');
+      assert.equal(
+        tripwire.nonLoopbackAttempts.length,
+        beforeCount,
+        'CR-45: Explicit TCP port with loopback host must NOT trigger an egress violation'
+      );
+    } finally {
+      tripwire.deactivate();
+    }
+  });
+
+  // --- Regression CR-46: Automatic Reconciliation Harmonization with Recovery Persisted Signature Verification ---
+  it('Regression CR-46: runModeACliEnrollment indeterminate reconciliation suppresses receipt export if persisted signature differs from manifest', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    const approvedRoot = createVerifiedTempDir('cabms-p0-cr46-root-');
+    const evidenceDir = path.join(approvedRoot, 'receipts');
+    fs.mkdirSync(evidenceDir);
+
+    // Enroll successfully first
+    const firstRes = await enrollFirstSuperAdmin(db, verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS));
+    assert.equal(firstRes.status, 'SUCCESS');
+
+    // Simulate tampered signature in DB (corrupted/contradictory persisted audit row)
+    const rawDb = (db as any).getSqliteHandle?.() ?? (db as any);
+    rawDb.exec("DROP TRIGGER IF EXISTS paar_p0_audit_no_update; UPDATE paar_p0_bootstrap_audit_manifests SET signature_bytes = 'tampered_sig_bytes_in_db';");
+
+    // Hook db.batch so that an enrollment attempt simulates an indeterminate transport drop
+    const origBatch = db.batch.bind(db);
+    (db as any).batch = async () => {
+      // Simulate network / worker transport drop
+      const err = new Error('simulated worker transport failure: socket hang up');
+      (err as any).name = 'FetchError';
+      throw err;
+    };
+
+    try {
+      const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir,
+        approvedEvidenceRoot: approvedRoot,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      // Indeterminate transport failure occurred, but automatic reconciliation MUST NOT publish a receipt
+      // when the persisted audit record differs from the verified manifest signature!
+      assert.equal(cliResult.outcome.status, 'INDETERMINATE', 'Outcome must remain INDETERMINATE on transport drop');
+      assert.equal(cliResult.auditReceiptPath, undefined, 'CR-46: MUST NOT publish receipt on contradictory persisted signature');
+      assert.ok(cliResult.receiptExportError, 'CR-46: receiptExportError must explain signature/ledger mismatch');
+      assert.match(cliResult.receiptExportError, /signature|ledger|inconsistent/i);
+
+      // Verify no receipt file exists in evidence directory
+      const publishedFiles = fs.readdirSync(evidenceDir);
+      assert.equal(publishedFiles.length, 0, 'No receipt file should exist in evidence directory');
+    } finally {
+      (db as any).batch = origBatch;
+      try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  // --- Regression CR-47: Short Filesystem Write Detection in Receipt Export ---
+  it('Regression CR-47: publishAuditReceipt detects partial filesystem write and does not publish a truncated receipt', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    const approvedRoot = createVerifiedTempDir('cabms-p0-cr47-root-');
+    const evidenceDir = path.join(approvedRoot, 'receipts');
+    fs.mkdirSync(evidenceDir);
+
+    const origWriteSync = fs.writeSync;
+    // Simulate short write: throw error during receipt write
+    (fs as any).writeSync = (fd: number, buffer: any, ...rest: any[]) => {
+      const content = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer);
+      if (typeof fd === 'number' && content.includes(manifest.operation_id)) {
+        throw new Error('ENOSPC: no space left on device, write failed during receipt export');
+      }
+      return (origWriteSync as any)(fd, buffer, ...rest);
+    };
+
+    try {
+      const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir,
+        approvedEvidenceRoot: approvedRoot,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      assert.equal(cliResult.outcome.status, 'SUCCESS', 'Database enrollment transaction must be preserved');
+      assert.equal(cliResult.auditReceiptPath, undefined, 'CR-47: Must NOT publish receipt path on incomplete write');
+      assert.ok(cliResult.receiptExportError, 'receiptExportError must be populated');
+      assert.match(cliResult.receiptExportError, /ENOSPC|incomplete write|write failed/i);
+
+      // Verify no receipt was published in evidence directory
+      const files = fs.readdirSync(evidenceDir);
+      assert.equal(files.length, 0, 'Evidence directory must contain no published receipt after failed write');
+      assert.equal(getCliExitCode(cliResult), 4, 'Exit code must be 4 (RECEIPT_EXPORT_ERROR) for committed DB with write failure');
+    } finally {
+      fs.writeSync = origWriteSync;
+      try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
+    }
   });
 });

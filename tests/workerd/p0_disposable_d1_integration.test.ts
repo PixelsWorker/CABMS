@@ -46,6 +46,47 @@ const rootDir = path.resolve(__dirname, '../..');
 const require = createRequire(import.meta.url);
 const { createTestHarness } = require('wrangler');
 
+/**
+ * Safely removes a disposable isolation directory after validating that its canonical
+ * path is strictly contained within the allowed root directory.
+ * Returns true if contained and successfully deleted, false otherwise.
+ */
+export function safeTeardownDisposableDirectory(targetDir: string | undefined, allowedRoot: string): boolean {
+  if (!targetDir) return false;
+  let targetReal: string;
+  try {
+    targetReal = fs.realpathSync(targetDir);
+  } catch {
+    return false;
+  }
+  let rootReal: string;
+  try {
+    rootReal = fs.realpathSync(allowedRoot);
+  } catch {
+    return false;
+  }
+  const rel = path.relative(rootReal, targetReal);
+  const isContained = Boolean(rel && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep));
+  if (!isContained) {
+    return false;
+  }
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      fs.rmSync(targetReal, { recursive: true, force: true });
+      lastError = undefined;
+      break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  if (lastError && fs.existsSync(targetReal)) {
+    console.error(`Failed to remove disposable isolation directory '${targetReal}':`, lastError);
+    return false;
+  }
+  return true;
+}
+
 describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
   let server: any;
   let worker: any;
@@ -55,6 +96,8 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
   let w7D1: D1Database;
   let workerW9: any;
   let w9D1: D1Database;
+  let workerW11: any;
+  let w11D1: D1Database;
   let isolationDir: string;
   let isolationReal: string;
   let tempReal: string;
@@ -195,12 +238,40 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
       })
     );
 
+    // Dedicated W11 worker with isolated D1 binding for real D1 N=21 100-parameter boundary proof
+    const configPathW11 = path.join(isolationReal, 'wrangler-w11.json');
+    fs.writeFileSync(
+      configPathW11,
+      JSON.stringify({
+        name: 'cabms-p0-workerd-w11-worker',
+        main: workerEntryPath,
+        compatibility_date: '2026-10-28',
+        compatibility_flags: ['nodejs_compat'],
+        d1_databases: [
+          {
+            binding: 'DB',
+            database_name: 'cabms-d1-w11',
+            database_id: 'local-w11-only',
+            migrations_dir: migrationDir,
+          },
+        ],
+        vars: {
+          ENVIRONMENT: 'test',
+          FIREBASE_PROJECT_ID: 'cabms-test',
+          TEST_PUBLIC_JWKS: JSON.stringify(jwks),
+          TEST_RUN_ID: runId,
+          TEST_SETUP_SECRET: setupSecret,
+        },
+      })
+    );
+
     // 4. Launch disposable test harness via pinned Wrangler createTestHarness
     server = createTestHarness({
       workers: [
         { configPath: configPathMain },
         { configPath: configPathW7 },
         { configPath: configPathW9 },
+        { configPath: configPathW11 },
       ],
     });
 
@@ -209,11 +280,13 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     worker = server.getWorker('cabms-p0-workerd-worker');
     workerW7 = server.getWorker('cabms-p0-workerd-w7-worker');
     workerW9 = server.getWorker('cabms-p0-workerd-w9-worker');
+    workerW11 = server.getWorker('cabms-p0-workerd-w11-worker');
 
     // 5. Apply migrations 0001 through 0011 to real D1 instances
     await worker.applyD1Migrations('DB');
     await workerW7.applyD1Migrations('DB');
     await workerW9.applyD1Migrations('DB');
+    await workerW11.applyD1Migrations('DB');
 
     // 6. Obtain real D1 bindings for test verification
     const env = await worker.getEnv();
@@ -224,6 +297,9 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
 
     const envW9 = await workerW9.getEnv();
     w9D1 = envW9.DB;
+
+    const envW11 = await workerW11.getEnv();
+    w11D1 = envW11.DB;
   });
 
   after(async () => {
@@ -235,22 +311,8 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
       }
     }
 
-    if (isolationReal && fs.existsSync(isolationReal)) {
-      // Windows file-lock retry loop with final error reporting
-      let lastError: unknown;
-      for (let attempt = 0; attempt < 10; attempt++) {
-        try {
-          fs.rmSync(isolationReal, { recursive: true, force: true });
-          lastError = undefined;
-          break;
-        } catch (err) {
-          lastError = err;
-          await new Promise((r) => setTimeout(r, 100));
-        }
-      }
-      if (lastError && fs.existsSync(isolationReal)) {
-        console.error(`Failed to remove disposable isolation directory '${isolationReal}':`, lastError);
-      }
+    if (isolationReal && tempReal) {
+      safeTeardownDisposableDirectory(isolationReal, tempReal);
     }
   });
 
@@ -628,5 +690,83 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
 
     assert.equal(origAfter?.n, 1, 'Original audit record MUST remain intact in real D1 ledger');
     assert.equal(repAfter?.n, 0, 'Replacement audit record MUST NOT exist in real D1 ledger');
+  });
+
+  // --- Scenario 11: Real D1 parameter limit boundary check (N=21 positive, N=22 negative) ---
+  it('W11: real D1 binding executes N=21 enrollment (100 parameters) and rejects N=22 before dispatch', async () => {
+    // 1. Positive test: N=21 workspaces exercises the exact 100-bound-parameter statement against real D1
+    const scope21 = Array.from({ length: 21 }, (_, i) => `ws_real_21_${i}`);
+    for (const ws of scope21) {
+      await w11D1
+        .prepare("INSERT INTO workspaces (id, name, slug, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))")
+        .bind(ws, ws, ws)
+        .run();
+    }
+    const manifest21: ApprovalManifest = {
+      operation_id: `op_${crypto.randomUUID()}`,
+      nonce: `nonce_w11_21_${crypto.randomUUID()}`,
+      target_id: SYNTHETIC_TARGET,
+      operator_email: PROTECTED_EMAIL,
+      operator_uid: SYNTHETIC_OPERATOR_UID,
+      workspace_scope: scope21,
+      permitted_action: 'bootstrap_super_admin',
+      approval_identity: 'test-w11-identity-21',
+      signing_key_id: 'ephemeral_p0_key_01',
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+    };
+    const signed21 = signApprovalManifest(manifest21, ephemeralKeyPair.privateKey);
+    const verified21 = verifyApprovalManifest(signed21, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome21 = await enrollFirstSuperAdmin(w11D1, verified21);
+    assert.equal(
+      outcome21.status,
+      'SUCCESS',
+      `W11: N=21 real D1 enrollment MUST succeed; got: ${JSON.stringify(outcome21)}`
+    );
+
+    // Verify all 21 memberships and approvals are persisted in real workerd D1
+    const membersCount = await w11D1
+      .prepare('SELECT COUNT(*) AS n FROM workspace_memberships WHERE user_id = ?')
+      .bind('usr_primary_super_admin')
+      .first<{ n: number }>();
+    assert.equal(membersCount?.n, 21, 'All 21 workspace memberships MUST exist in real D1');
+
+    const approvalsCount = await w11D1
+      .prepare('SELECT COUNT(*) AS n FROM privileged_identity_approvals WHERE user_id = ? AND revoked_at IS NULL')
+      .bind('usr_primary_super_admin')
+      .first<{ n: number }>();
+    assert.equal(approvalsCount?.n, 21, 'All 21 privileged approvals MUST exist in real D1');
+
+    // 2. Negative boundary test: N=22 workspaces rejected upfront before dispatch
+    const scope22 = Array.from({ length: 22 }, (_, i) => `ws_${i}`);
+    const manifest22: ApprovalManifest = {
+      operation_id: `op_${crypto.randomUUID()}`,
+      nonce: `nonce_w11_22_${crypto.randomUUID()}`,
+      target_id: SYNTHETIC_TARGET,
+      operator_email: PROTECTED_EMAIL,
+      operator_uid: SYNTHETIC_OPERATOR_UID,
+      workspace_scope: scope22,
+      permitted_action: 'bootstrap_super_admin',
+      approval_identity: 'test-w11-identity',
+      signing_key_id: 'ephemeral_p0_key_01',
+      issued_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+    };
+    const signed22 = signApprovalManifest(manifest22, ephemeralKeyPair.privateKey);
+    const bypassedVerified22 = {
+      manifest: manifest22,
+      signature_algorithm: 'Ed25519' as const,
+      signature_bytes: signed22.signature_bytes,
+      signing_key_id: signed22.signing_key_id,
+      canonical_manifest_json: signed22.canonical_manifest_json,
+      audit_reference: 'ref_w11_22',
+    };
+
+    const outcome22 = await enrollFirstSuperAdmin(w11D1, bypassedVerified22);
+    assert.equal(outcome22.status, 'NOT_ENROLLED');
+    assert.equal(outcome22.rollbackProven, false);
+    assert.equal(outcome22.writeAttempted, false);
+    assert.match(outcome22.error, /parameter limit/i);
   });
 });

@@ -165,6 +165,7 @@ export class LoopbackTripwire {
       net.Socket.prototype.connect = function (...args: any[]) {
         let host: string | undefined;
         let port = 0;
+        let isIpc = false;
 
         let firstArg = args[0];
         if (Array.isArray(firstArg)) {
@@ -172,17 +173,42 @@ export class LoopbackTripwire {
         }
 
         if (typeof firstArg === 'object' && firstArg !== null) {
-          host = firstArg.host || firstArg.path;
-          port = firstArg.port || 0;
+          if ('path' in firstArg && typeof (firstArg as any).path === 'string') {
+            isIpc = true;
+            host = (firstArg as any).path;
+            port = 0;
+          } else {
+            host = firstArg.host || firstArg.path;
+            port = firstArg.port || 0;
+          }
         } else if (typeof firstArg === 'number') {
           port = firstArg;
           if (typeof args[1] === 'string') {
             host = args[1];
           } else if (typeof args[1] === 'object' && args[1] !== null) {
-            host = args[1].host || args[1].path;
+            if ('path' in args[1] && typeof (args[1] as any).path === 'string') {
+              isIpc = true;
+              host = (args[1] as any).path;
+              port = 0;
+            } else {
+              host = args[1].host || args[1].path;
+            }
           }
         } else if (typeof firstArg === 'string') {
-          host = firstArg;
+          const trimmed = firstArg.trim();
+          if (/^\d+$/.test(trimmed)) {
+            port = parseInt(trimmed, 10);
+            if (typeof args[1] === 'string') {
+              host = args[1];
+            } else if (typeof args[1] === 'object' && args[1] !== null) {
+              host = args[1].host || args[1].path;
+            }
+          } else {
+            // Under Node net.connect conventions, non-numeric strings are IPC paths
+            isIpc = true;
+            host = firstArg;
+            port = 0;
+          }
         }
 
         // If host and port cannot be identified (e.g. malformed options or array), fail closed immediately
@@ -205,14 +231,15 @@ export class LoopbackTripwire {
 
         // Check IPC destinations (Unix domain sockets, Windows named pipes, and options.path)
         // Mode A rejects IPC destinations by default to prevent socket-based proxy/egress bypass
-        const isIpc =
-          (typeof firstArg === 'object' && firstArg !== null && 'path' in firstArg) ||
+        if (
+          isIpc ||
           normalizedHost.startsWith('\\\\.\\pipe\\') ||
-          normalizedHost.startsWith('/');
-
-        if (isIpc) {
+          normalizedHost.startsWith('/') ||
+          normalizedHost.includes('.sock') ||
+          (typeof firstArg === 'object' && firstArg !== null && 'path' in firstArg)
+        ) {
           for (const inst of LoopbackTripwire.activeInstances) {
-            inst.nonLoopbackAttempts.push({ host, port });
+            inst.nonLoopbackAttempts.push({ host, port: 0 });
           }
           const err = new Error(`LoopbackTripwire blocked IPC destination attempt to ${host}`);
           process.nextTick(() => {
@@ -341,6 +368,8 @@ function publishAuditReceipt(
   let auditReceiptPath: string | undefined;
   let receiptExportError: string | undefined;
   let receiptExportWarning: string | undefined;
+  let initialFdStat: fs.Stats | undefined;
+  let initialParentStat: fs.Stats | undefined;
 
   try {
     if (!OPERATION_ID_UUID_REGEX.test(verified.manifest.operation_id)) {
@@ -384,6 +413,8 @@ function publishAuditReceipt(
 
     fd = fs.openSync(tempPath, 'wx');
     ownedTempPath = tempPath;
+    initialFdStat = fs.fstatSync(fd);
+    initialParentStat = fs.statSync(resolvedEvidenceDir);
 
     if (approvedRoot) {
       let realParent: string;
@@ -412,9 +443,32 @@ function publishAuditReceipt(
       }
     }
 
-    fs.writeSync(fd, JSON.stringify(receipt, null, 2), null, 'utf8');
+    const contentBuffer = Buffer.from(JSON.stringify(receipt, null, 2), 'utf8');
+    let offset = 0;
+    while (offset < contentBuffer.length) {
+      const written = fs.writeSync(fd, contentBuffer, offset, contentBuffer.length - offset);
+      if (typeof written !== 'number' || written <= 0) {
+        throw new Error(`Incomplete write during receipt export: wrote ${offset} of ${contentBuffer.length} bytes`);
+      }
+      offset += written;
+    }
+    fs.fsyncSync(fd);
     fs.closeSync(fd);
     fd = undefined;
+
+    // Pinning verification: ensure evidence directory and tempPath were not swapped
+    const preLinkParentStat = fs.statSync(resolvedEvidenceDir);
+    if (preLinkParentStat.ino !== 0 && initialParentStat.ino !== 0) {
+      if (preLinkParentStat.ino !== initialParentStat.ino || preLinkParentStat.dev !== initialParentStat.dev) {
+        throw new SecurityBoundaryError('Evidence directory inode changed before receipt publication (directory swapped)');
+      }
+    }
+    const preLinkTempStat = fs.statSync(tempPath);
+    if (preLinkTempStat.ino !== 0 && initialFdStat.ino !== 0) {
+      if (preLinkTempStat.ino !== initialFdStat.ino || preLinkTempStat.dev !== initialFdStat.dev) {
+        throw new SecurityBoundaryError('Receipt temporary file inode changed before publication (file swapped)');
+      }
+    }
 
     if (approvedRoot) {
       const realDestDir = fs.realpathSync(resolvedEvidenceDir);
@@ -427,7 +481,25 @@ function publishAuditReceipt(
     // Exclusive atomic publication via linkSync (fails if destination exists; never falls back to renameSync)
     fs.linkSync(tempPath, auditReceiptPath);
 
+    // Verify published file has identical inode/dev to initial file descriptor
+    const postLinkDestStat = fs.statSync(auditReceiptPath);
+    if (postLinkDestStat.ino !== 0 && initialFdStat.ino !== 0) {
+      if (postLinkDestStat.ino !== initialFdStat.ino || postLinkDestStat.dev !== initialFdStat.dev) {
+        try { fs.unlinkSync(auditReceiptPath); } catch {}
+        throw new SecurityBoundaryError('Published receipt inode does not match created file descriptor (publication swapped)');
+      }
+    }
+
     try {
+      // Pinning before unlinking tempPath: verify tempPath still matches initialFdStat before unlinking
+      const preUnlinkTempStat = fs.statSync(tempPath);
+      if (
+        preUnlinkTempStat.ino !== 0 &&
+        initialFdStat.ino !== 0 &&
+        (preUnlinkTempStat.ino !== initialFdStat.ino || preUnlinkTempStat.dev !== initialFdStat.dev)
+      ) {
+        throw new SecurityBoundaryError('Temporary file inode changed before unlink: aborting cleanup to avoid unlinking foreign file');
+      }
       fs.unlinkSync(tempPath);
       ownedTempPath = undefined;
     } catch (cleanErr) {
@@ -456,7 +528,16 @@ function publishAuditReceipt(
       fd = undefined;
     }
     if (ownedTempPath && fs.existsSync(ownedTempPath)) {
-      try { fs.unlinkSync(ownedTempPath); } catch {}
+      try {
+        if (initialFdStat && initialFdStat.ino !== 0) {
+          const stat = fs.statSync(ownedTempPath);
+          if (stat.ino === initialFdStat.ino && stat.dev === initialFdStat.dev) {
+            fs.unlinkSync(ownedTempPath);
+          }
+        } else {
+          fs.unlinkSync(ownedTempPath);
+        }
+      } catch {}
     }
     receiptExportError = (err as Error).message;
     return { receiptExportError };
@@ -562,7 +643,15 @@ export async function recoverAuditReceipt(
       verified.manifest.operator_uid,
       verified.audit_reference,
       verified.manifest.workspace_scope,
-      { settled: options.settled === true }
+      {
+        settled: options.settled === true,
+        verifiedManifest: {
+          signature_bytes: verified.signature_bytes,
+          signature_algorithm: verified.signature_algorithm,
+          signing_key_id: verified.signing_key_id,
+          canonical_manifest_json: verified.canonical_manifest_json,
+        },
+      }
     );
 
     if (tripwire.nonLoopbackAttempts.length > 0) {
@@ -581,25 +670,36 @@ export async function recoverAuditReceipt(
       error:
         reconStatus === 'INDETERMINATE'
           ? 'Receipt recovery rejected: database is empty or uncommitted, and operator settlement was not attested'
-          : `Receipt recovery rejected: database status is ${reconStatus}`,
+          : `Receipt recovery rejected: database status is ${reconStatus} (manifest, ledger, or signature mismatch)`,
     };
   }
 
-  // 6.5 Re-verify persisted audit row fields match verified manifest exactly
+  // 6.5 Re-verify persisted audit row fields match verified manifest exactly (Finding C: verify persisted signature, algorithm, and key ID)
   const persistedAudit = await db
-    .prepare('SELECT operation_id, audit_reference, canonical_manifest_json, created_at FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?')
+    .prepare('SELECT operation_id, audit_reference, canonical_manifest_json, created_at, signature_bytes, signature_algorithm, signing_key_id FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?')
     .bind(verified.manifest.operation_id)
-    .first<{ operation_id: string; audit_reference: string; canonical_manifest_json: string; created_at: string }>();
+    .first<{
+      operation_id: string;
+      audit_reference: string;
+      canonical_manifest_json: string;
+      created_at: string;
+      signature_bytes: string;
+      signature_algorithm: string;
+      signing_key_id: string;
+    }>();
 
   if (
     !persistedAudit ||
     persistedAudit.operation_id !== verified.manifest.operation_id ||
     persistedAudit.audit_reference !== verified.audit_reference ||
-    persistedAudit.canonical_manifest_json !== verified.canonical_manifest_json
+    persistedAudit.canonical_manifest_json !== verified.canonical_manifest_json ||
+    persistedAudit.signature_bytes !== verified.signature_bytes ||
+    persistedAudit.signature_algorithm !== verified.signature_algorithm ||
+    persistedAudit.signing_key_id !== verified.signing_key_id
   ) {
     return {
       status: 'INCONSISTENT',
-      error: 'Persisted audit record does not match authenticated manifest signature or canonical bytes',
+      error: 'Persisted audit record does not match authenticated manifest signature, algorithm, key ID, or canonical bytes',
     };
   }
 
@@ -736,6 +836,9 @@ export async function runModeACliEnrollment(
   let outcome: CliEnrollmentOutcome;
   let reconciliation: ReconciliationOutcome | undefined;
   let securityViolation: string | undefined;
+  let auditReceiptPath: string | undefined;
+  let receiptExportError: string | undefined;
+  let receiptExportWarning: string | undefined;
 
   try {
     verified = verifyApprovalManifest(
@@ -758,8 +861,19 @@ export async function runModeACliEnrollment(
         verified.manifest.operation_id,
         verified.manifest.operator_uid,
         verified.audit_reference,
-        verified.manifest.workspace_scope
+        verified.manifest.workspace_scope,
+        {
+          verifiedManifest: {
+            signature_bytes: verified.signature_bytes,
+            signature_algorithm: verified.signature_algorithm,
+            signing_key_id: verified.signing_key_id,
+            canonical_manifest_json: verified.canonical_manifest_json,
+          },
+        }
       );
+      if (reconciliation === 'INCONSISTENT') {
+        receiptExportError = 'Automatic reconciliation detected contradictory persisted ledger record or signature mismatch';
+      }
     }
 
     if (tripwire.nonLoopbackAttempts.length > 0) {
@@ -780,11 +894,9 @@ export async function runModeACliEnrollment(
   }
 
   // 7. Export non-secret signed audit receipt (linkSync publication)
-  let auditReceiptPath: string | undefined;
-  let receiptExportError: string | undefined;
-  let receiptExportWarning: string | undefined;
   const isConfirmedEnrolled =
     !securityViolation &&
+    !receiptExportError &&
     (outcome.status === 'SUCCESS' || reconciliation === 'CONFIRMED_ENROLLED');
 
   if (isConfirmedEnrolled && resolvedEvidenceDir) {

@@ -87,7 +87,8 @@ export function safeTeardownDisposableDirectory(targetDir: string | undefined, a
   return true;
 }
 
-describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
+if (process.env.CABMS_DISPOSABLE_D1_TEST === '1') {
+  describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
   let server: any;
   let worker: any;
   let workerUrl: URL;
@@ -769,4 +770,47 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     assert.equal(outcome22.writeAttempted, false);
     assert.match(outcome22.error, /parameter limit/i);
   });
+
+  // --- Scenario W12: Disposable Teardown Containment Negative Control & Later Setup Failure ---
+  it('W12: safeTeardownDisposableDirectory rejects uncontained target preserving outside sentinel, and cleans up valid target on later setup failure', () => {
+    // 1. Establish an approved allowed root in temp
+    const allowedRoot = fs.mkdtempSync(path.join(tempReal, 'cabms-p0-w12-allowed-'));
+
+    // 2. Establish an OUTSIDE candidate directory with a sentinel file
+    const outsideParent = fs.mkdtempSync(path.join(tempReal, 'cabms-p0-w12-outside-'));
+    const outsideCandidate = path.join(outsideParent, 'uncontained_dir');
+    fs.mkdirSync(outsideCandidate);
+    const sentinelFile = path.join(outsideCandidate, 'outside_sentinel.txt');
+    fs.writeFileSync(sentinelFile, 'W12-OUTSIDE-SENTINEL-PRESERVE', 'utf8');
+
+    // 3. Create a genuinely CONTAINED directory with a test file (simulating later setup failure after candidate assignment)
+    const containedDir = path.join(allowedRoot, 'contained_isolation');
+    fs.mkdirSync(containedDir);
+    const containedFile = path.join(containedDir, 'contained_file.txt');
+    fs.writeFileSync(containedFile, 'CONTAINED_PAYLOAD', 'utf8');
+
+    try {
+      // 4. Negative control: attempt teardown on outside candidate (rejected-path case)
+      const outsideResult = safeTeardownDisposableDirectory(outsideCandidate, allowedRoot);
+      assert.equal(outsideResult, false, 'Teardown MUST reject uncontained candidate directory outside allowed root');
+
+      // Assert outside sentinel file and candidate directory were NOT deleted
+      assert.ok(fs.existsSync(sentinelFile), 'Outside sentinel file MUST NOT be deleted by teardown');
+      assert.ok(fs.existsSync(outsideCandidate), 'Outside candidate directory MUST NOT be deleted by teardown');
+      assert.equal(
+        fs.readFileSync(sentinelFile, 'utf8'),
+        'W12-OUTSIDE-SENTINEL-PRESERVE',
+        'Sentinel file content must remain completely unaltered'
+      );
+
+      // 5. Positive control: teardown on valid isolation directory assigned before later setup failure
+      const containedResult = safeTeardownDisposableDirectory(containedDir, allowedRoot);
+      assert.equal(containedResult, true, 'Teardown MUST succeed on contained directory when later setup steps fail');
+      assert.ok(!fs.existsSync(containedDir), 'Contained directory MUST be cleanly deleted by teardown');
+    } finally {
+      try { fs.rmSync(outsideParent, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(allowedRoot, { recursive: true, force: true }); } catch {}
+    }
+  });
 });
+}

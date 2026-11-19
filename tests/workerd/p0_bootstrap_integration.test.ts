@@ -59,6 +59,7 @@ import {
   getCliExitCode,
   SecurityBoundaryError,
 } from '../../scripts/p0/firstSuperAdminCli.ts';
+import { safeTeardownDisposableDirectory } from './p0_disposable_d1_integration.test.ts';
 
 describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
   let ephemeralKeyPair: ReturnType<typeof crypto.generateKeyPairSync>;
@@ -3337,30 +3338,6 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
 
   // --- Regression CR-44: Disposable Teardown Containment Negative Control ---
   it('Regression CR-44: disposable teardown does not delete a path that failed containment check', () => {
-    // Teardown routine enforcing canonical realpath containment inside allowed root
-    function safeTeardown(targetDir: string | undefined, allowedRoot: string): boolean {
-      if (!targetDir) return false;
-      let targetReal: string;
-      try {
-        targetReal = fs.realpathSync(targetDir);
-      } catch {
-        return false;
-      }
-      let rootReal: string;
-      try {
-        rootReal = fs.realpathSync(allowedRoot);
-      } catch {
-        return false;
-      }
-      const rel = path.relative(rootReal, targetReal);
-      const isContained = Boolean(rel && !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + path.sep));
-      if (!isContained) {
-        return false;
-      }
-      fs.rmSync(targetReal, { recursive: true, force: true });
-      return true;
-    }
-
     // 1. Establish an approved allowed root in temp
     const allowedRoot = createVerifiedTempDir('cabms-p0-cr44-allowed-');
 
@@ -3379,7 +3356,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
 
     try {
       // 4. Negative control: attempt teardown on outside candidate
-      const outsideResult = safeTeardown(outsideCandidate, allowedRoot);
+      const outsideResult = safeTeardownDisposableDirectory(outsideCandidate, allowedRoot);
       assert.equal(outsideResult, false, 'Teardown MUST reject uncontained directory outside allowed root');
 
       // Assert sentinel file and directory were NOT deleted
@@ -3392,7 +3369,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       );
 
       // 5. Positive control: teardown on genuinely contained directory
-      const containedResult = safeTeardown(containedDir, allowedRoot);
+      const containedResult = safeTeardownDisposableDirectory(containedDir, allowedRoot);
       assert.equal(containedResult, true, 'Teardown MUST succeed on contained directory');
       assert.ok(!fs.existsSync(containedDir), 'Contained directory MUST be deleted by teardown');
     } finally {

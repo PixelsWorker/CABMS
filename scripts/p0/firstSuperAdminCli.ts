@@ -411,7 +411,7 @@ function publishAuditReceipt(
     const tempFilename = `.tmp_p0_receipt_${verified.manifest.operation_id}_${crypto.randomUUID()}.json`;
     const tempPath = path.join(resolvedEvidenceDir, tempFilename);
 
-    fd = fs.openSync(tempPath, 'wx');
+    fd = fs.openSync(tempPath, 'wx', 0o600);
     ownedTempPath = tempPath;
     initialFdStat = fs.fstatSync(fd);
     initialParentStat = fs.statSync(resolvedEvidenceDir);

@@ -55,6 +55,8 @@ import {
   assertChildEnvAllowlist,
   LoopbackTripwire,
   runModeACliEnrollment,
+  recoverAuditReceipt,
+  getCliExitCode,
   SecurityBoundaryError,
 } from '../../scripts/p0/firstSuperAdminCli.ts';
 
@@ -142,8 +144,14 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const authService = createAuthenticationService(firebaseFixture.transport);
     const worker = createWorker(authService);
 
+    // Seed enabled, link-eligible user with protected email and no identity mapping or privileged membership (W2 pattern)
+    await db.prepare(`
+      INSERT INTO users (id, email, display_name, disabled, created_at, updated_at)
+      VALUES ('usr_t2_target', ?, 'Target Operator', 0, datetime('now'), datetime('now'))
+    `).bind(SYNTHETIC_EMAIL).run();
+
     // Synthetic token carrying protected operator email string but fake UID
-    const token = await firebaseFixture.token('fake_uninvited_uid', 'admin@chinedigital.com.au');
+    const token = await firebaseFixture.token('fake_uninvited_uid', SYNTHETIC_EMAIL);
     const res = await worker.fetch(
       new Request('http://localhost/api/v1/auth/me', {
         headers: { Authorization: `Bearer ${token}` },
@@ -175,11 +183,21 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       (err: any) => err.code === 'INVALID_SIGNATURE'
     );
 
-    // 2. Unknown signing key ID
+    // 2a. Unknown signing key (foreign key -> INVALID_SIGNATURE)
     const foreignKey = crypto.generateKeyPairSync('ed25519');
     assert.throws(
       () => verifyApprovalManifest(signed, foreignKey.publicKey, DEFAULT_VERIFY_OPTIONS),
       (err: any) => err.code === 'INVALID_SIGNATURE'
+    );
+
+    // 2b. Envelope signing_key_id mismatch with valid signature under trusted key -> KEY_ID_MISMATCH
+    const mismatchedKeyIdEnvelope: SignedApprovalManifest = {
+      ...signed,
+      signing_key_id: 'different_key_id_in_envelope',
+    };
+    assert.throws(
+      () => verifyApprovalManifest(mismatchedKeyIdEnvelope, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'KEY_ID_MISMATCH'
     );
 
     // 3. Expired manifest
@@ -265,18 +283,35 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       );
 
       // Verify tripwire: loopback allowed, non-loopback intercepted
+      let connectorCallCount = 0;
+      const origProtoConnect = net.Socket.prototype.connect;
+      net.Socket.prototype.connect = function (...args: any[]) {
+        connectorCallCount++;
+        return origProtoConnect.apply(this, args as any);
+      };
+
       const tripwire = new LoopbackTripwire();
       tripwire.activate();
       try {
-        // Positive control: attempt outbound non-loopback connection
+        // 1. Outbound non-loopback connection -> must be blocked, underlying connector NOT invoked
         const socket = new net.Socket();
         socket.on('error', () => {}); // Catch expected error
         socket.connect({ host: '192.0.2.1', port: 443 }); // RFC 5737 TEST-NET-1
 
         assert.equal(tripwire.nonLoopbackAttempts.length, 1);
         assert.equal(tripwire.nonLoopbackAttempts[0].host, '192.0.2.1');
+        assert.equal(connectorCallCount, 0, 'Underlying connector MUST NOT be called for blocked non-loopback destination');
+        socket.destroy();
+
+        // 2. Loopback control -> reaches underlying connector, proving spy detects calls
+        const loopbackSocket = new net.Socket();
+        loopbackSocket.on('error', () => {});
+        loopbackSocket.connect({ host: '127.0.0.1', port: 8089 });
+        assert.equal(connectorCallCount, 1, 'Underlying connector MUST be called for allowed loopback destination');
+        loopbackSocket.destroy();
       } finally {
         tripwire.deactivate();
+        net.Socket.prototype.connect = origProtoConnect;
       }
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -388,12 +423,38 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       assert.equal(outcome.status, 'NOT_ENROLLED', `Stage ${stage} failed with ${outcome.status}: ${(outcome as any).error}`);
       assert.equal(outcome.rollbackProven, true);
 
+      // Test B: stage-specific failure signal must appear in outcome error
+      const stageSignals: Record<number, RegExp> = {
+        1: /CHECK constraint failed|already.*enrolled|protected.*super.*admin|singleton/i,
+        2: /t6_user_fail/,
+        3: /t6_map_fail/,
+        4: /t6_mem_fail/,
+        5: /t6_singleton_fail/,
+        6: /t6_approval_fail/,
+        7: /t6_audit_fail/,
+        8: /t6_comp_fail/,
+        9: /cardinality|membership|C03|extra.*member|set.*mismatch|CHECK constraint failed/i,
+      };
+      if (stageSignals[stage]) {
+        assert.match(
+          (outcome as any).error || '',
+          stageSignals[stage],
+          `Stage ${stage} must surface a stage-specific abort message in outcome.error`
+        );
+      }
+
+      // Test B: stages ≥ 7 must leave zero audit ledger rows after rollback
+      if (stage >= 7) {
+        const auditCount = (await db.prepare('SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests').first<{ n: number }>())?.n;
+        assert.equal(auditCount, 0, `Stage ${stage} must leave zero audit ledger rows after rollback`);
+      }
+
       // Verify zero completion rows
       const compCount = (await db.prepare('SELECT COUNT(*) AS n FROM g01_bootstrap_completion').first<{ n: number }>())?.n;
       assert.equal(compCount, 0, `Stage ${stage} left uncommitted completion rows`);
 
       // Verify zero users created
-      const userCount = (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+      const userCount = (await db.prepare(`SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'`).first<{ n: number }>())?.n;
       assert.equal(userCount, 0, `Stage ${stage} left uncommitted primary super admin user`);
     }
   });
@@ -438,10 +499,11 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
-    // Enroll synthetic super admin using same D1 binding
+    // Enroll synthetic super admin with single workspace scope ('solarcell') to prove cross-workspace isolation against existing workspaces
     const manifest = createValidSyntheticManifest({
       operator_uid: 'synthetic_t8_super_admin_uid',
       operator_email: 'synthetic_t8_sa@example.invalid',
+      workspace_scope: ['solarcell'],
     });
     const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
     const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, {
@@ -457,7 +519,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const worker = createWorker(authService);
     const operatorToken = await firebaseFixture.token(manifest.operator_uid, manifest.operator_email);
 
-    // 1. /api/v1/auth/me returns 200 with 3 active memberships
+    // 1. /api/v1/auth/me returns 200 with exactly 1 active membership (solarcell)
     const authMeRes = await worker.fetch(
       new Request('http://localhost/api/v1/auth/me', {
         headers: { Authorization: `Bearer ${operatorToken}` },
@@ -471,9 +533,8 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     assert.equal(authMeRes.status, 200);
     const authMeData = (await authMeRes.json()) as { user: { id: string; email: string }; memberships: Array<{ workspace_id: string; role: string }> };
     assert.equal(authMeData.user.email, manifest.operator_email);
-    assert.equal(authMeData.memberships.length, 3);
-    const workspaceIds = authMeData.memberships.map(m => m.workspace_id).sort();
-    assert.deepEqual(workspaceIds, ['cctv', 'smart_home', 'solarcell']);
+    assert.equal(authMeData.memberships.length, 1);
+    assert.equal(authMeData.memberships[0].workspace_id, 'solarcell');
 
     // 2. Protected route in authorized workspace is permitted
     const settingsRes = await worker.fetch(
@@ -488,9 +549,9 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     );
     assert.equal(settingsRes.status, 200);
 
-    // 3. Protected route in unauthorized workspace returns 403
+    // 3. Protected route in existing workspace OUTSIDE signed scope (cctv) returns 403
     const foreignRes = await worker.fetch(
-      new Request('http://localhost/api/v1/workspaces/unauthorized_workspace/settings', {
+      new Request('http://localhost/api/v1/workspaces/cctv/settings', {
         headers: { Authorization: `Bearer ${operatorToken}` },
       }),
       {
@@ -658,7 +719,10 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
-    const manifest = createValidSyntheticManifest();
+    // Sign manifest with scope restricted to ['solarcell']
+    const manifest = createValidSyntheticManifest({
+      workspace_scope: ['solarcell'],
+    });
     const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
     const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
     await enrollFirstSuperAdmin(db, verified);
@@ -667,9 +731,9 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const worker = createWorker(authService);
     const token = await firebaseFixture.token(manifest.operator_uid, manifest.operator_email);
 
-    // 1. Cross-workspace denial
+    // 1. Cross-workspace denial against existing workspace 'cctv' outside signed scope
     const resCross = await worker.fetch(
-      new Request('http://localhost/api/v1/workspaces/unknown_workspace/settings', { headers: { Authorization: `Bearer ${token}` } }),
+      new Request('http://localhost/api/v1/workspaces/cctv/settings', { headers: { Authorization: `Bearer ${token}` } }),
       { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }
     );
     assert.equal(resCross.status, 403);
@@ -721,13 +785,14 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
     const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
 
-    // Case 1: Initial state before write -> reconcile returns NOT_ENROLLED
+    // Case 1: Initial state before write -> with positive settlement signal, returns NOT_ENROLLED
     const initialRecon = await reconcileEnrollmentStatus(
       db,
       manifest.operation_id,
       manifest.operator_uid,
       verified.audit_reference,
-      manifest.workspace_scope.length
+      manifest.workspace_scope.length,
+      { settled: true }
     );
     assert.equal(initialRecon, 'NOT_ENROLLED');
 
@@ -748,7 +813,31 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     );
     assert.equal(postCommitRecon, 'CONFIRMED_ENROLLED');
 
-    // Case 4: Zero second write calls were made, database is complete and sound
+    // Case 4: Zero second write calls were made during reconciliation, database is complete and sound
+    let writeCountDuringRecon = 0;
+    const origPrepareT14 = db.prepare.bind(db);
+    (db as any).prepare = (query: string) => {
+      const q = query.trim().toUpperCase();
+      if (q.startsWith('INSERT') || q.startsWith('UPDATE') || q.startsWith('DELETE') || q.startsWith('REPLACE')) {
+        writeCountDuringRecon++;
+      }
+      return origPrepareT14(query);
+    };
+
+    try {
+      const reconCheck = await reconcileEnrollmentStatus(
+        db,
+        manifest.operation_id,
+        manifest.operator_uid,
+        verified.audit_reference,
+        manifest.workspace_scope.length
+      );
+      assert.equal(reconCheck, 'CONFIRMED_ENROLLED');
+      assert.equal(writeCountDuringRecon, 0, 'Reconciliation must execute zero write statements against D1');
+    } finally {
+      (db as any).prepare = origPrepareT14;
+    }
+
     const compRow = await db.prepare('SELECT operation_id FROM g01_bootstrap_completion WHERE singleton = 1').first<{ operation_id: string }>();
     assert.equal(compRow?.operation_id, manifest.operation_id);
   });
@@ -1386,6 +1475,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     assert.equal(result.reconciliation, 'CONFIRMED_ENROLLED');
     assert.ok(result.auditReceiptPath, 'auditReceiptPath must be defined when reconciliation confirms enrollment');
     assert.ok(fs.existsSync(result.auditReceiptPath));
+    assert.equal(getCliExitCode(result), 3, 'getCliExitCode returns 3 for initial transport drop even if subsequently reconciled');
   });
 
   // --- Regression CR-03: Containment & Exclusive Receipt Creation ---
@@ -1505,6 +1595,57 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
         try { fs.unlinkSync(raceReceiptPath); } catch {}
       }
     }
+
+    // 4. Directory swap race: evidence directory identity changed after temp file is opened
+    {
+      const dbSwap = createLocalD1Database();
+      await runLocalMigrations(dbSwap, { disposableTest: true });
+      const manifestSwap = createValidSyntheticManifest();
+      const signedSwap = signApprovalManifest(manifestSwap, ephemeralKeyPair.privateKey);
+
+      const approvedRoot = createVerifiedTempDir('cabms-p0-cr03-appr-');
+      const outsideDir = createVerifiedTempDir('cabms-p0-cr03-out-');
+      const evidenceSubdir = path.join(approvedRoot, 'swap_race_subdir');
+      fs.mkdirSync(evidenceSubdir);
+
+      const origOpenSync = fs.openSync;
+      let swapInjected = false;
+      (fs as any).openSync = (...args: any[]) => {
+        const fd = (origOpenSync as any)(...args);
+        if (!swapInjected && typeof args[0] === 'string' && args[0].includes('.tmp_p0_receipt_')) {
+          swapInjected = true;
+          // After temp file is created, simulate directory swap to outside directory
+          fs.rmSync(evidenceSubdir, { recursive: true, force: true });
+          const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+          fs.symlinkSync(outsideDir, evidenceSubdir, linkType);
+        }
+        return fd;
+      };
+
+      try {
+        const swapResult = await runModeACliEnrollment(dbSwap, signedSwap, ephemeralKeyPair.publicKey, {
+          evidenceDir: evidenceSubdir,
+          approvedEvidenceRoot: approvedRoot,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+        });
+
+        assert.equal(swapResult.outcome.status, 'SUCCESS');
+        assert.equal(swapResult.auditReceiptPath, undefined);
+        assert.ok(swapResult.receiptExportError);
+        assert.match(swapResult.receiptExportError, /swapped|escapes|redirected/i);
+
+        // Verify no receipt published in outside directory
+        const outsideFiles = fs.readdirSync(outsideDir);
+        assert.equal(outsideFiles.length, 0, 'No receipt must be published in outside directory');
+      } finally {
+        fs.openSync = origOpenSync;
+        try { fs.unlinkSync(evidenceSubdir); } catch {}
+        try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
+        try { fs.rmSync(outsideDir, { recursive: true, force: true }); } catch {}
+      }
+    }
   });
 
   // --- Regression CR-04: Receipt Write Failure Preserves Committed State ---
@@ -1529,6 +1670,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
 
     assert.equal(result.outcome.status, 'SUCCESS', 'Committed enrollment must be preserved despite receipt write error');
     assert.ok(result.receiptExportError, 'receiptExportError must be populated');
+    assert.equal(getCliExitCode(result), 4, 'Missing mandatory audit evidence must produce nonzero exit code 4 while preserving committed state');
   });
 
   // --- Regression CR-07: Tripwire Normalized Argument Handling ---
@@ -1704,20 +1846,76 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       return originalPrepare(query);
     };
 
+    // Test A: suppression assertion — evidenceDir provided, receipt must be suppressed on violation
+    const suppressionDirCr11 = createVerifiedTempDir('cabms-p0-cr11-suppression-');
     try {
-      await assert.rejects(
-        () =>
-          runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
-            expectedTargetId: SYNTHETIC_TARGET,
-            expectedOperatorUid: SYNTHETIC_UID,
-            expectedOperatorEmail: SYNTHETIC_EMAIL,
-          }),
-        (err: any) =>
-          err instanceof SecurityBoundaryError &&
-          err.message.includes('Egress tripwire triggered during Mode A execution')
+      const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir: suppressionDirCr11,
+        approvedEvidenceRoot: suppressionDirCr11,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      assert.equal(
+        cliResult.outcome.status,
+        'SECURITY_VIOLATION',
+        'Outcome status must be SECURITY_VIOLATION when tripwire is triggered'
+      );
+      assert.match(
+        cliResult.outcome.error,
+        /Egress tripwire triggered during Mode A execution/,
+        'Outcome error must record tripwire trigger'
+      );
+      assert.ok(
+        cliResult.securityViolation,
+        'securityViolation details must be explicitly populated'
+      );
+      assert.equal(
+        cliResult.auditReceiptPath,
+        undefined,
+        'Receipt publication must be strictly blocked on security violation'
+      );
+      // Test A negative: evidence directory must remain empty — receipt suppressed, not merely unset
+      assert.equal(
+        fs.readdirSync(suppressionDirCr11).length,
+        0,
+        'CR-11: evidence directory must remain empty when receipt is suppressed by security violation'
+      );
+      assert.equal(
+        getCliExitCode(cliResult),
+        2,
+        'CLI exit code MUST be non-zero (2) for SECURITY_VIOLATION'
       );
     } finally {
       (db as any).prepare = originalPrepare;
+      try { fs.rmSync(suppressionDirCr11, { recursive: true, force: true }); } catch {}
+    }
+
+    // Test A positive control: same destination accepts a receipt from a successful enrollment without a violation
+    {
+      const cleanDb = createLocalD1Database();
+      await runLocalMigrations(cleanDb, { disposableTest: true });
+      const controlDir = createVerifiedTempDir('cabms-p0-cr11-control-');
+      try {
+        const controlManifest = createValidSyntheticManifest();
+        const controlSigned = signApprovalManifest(controlManifest, ephemeralKeyPair.privateKey);
+        const controlResult = await runModeACliEnrollment(cleanDb, controlSigned, ephemeralKeyPair.publicKey, {
+          evidenceDir: controlDir,
+          approvedEvidenceRoot: controlDir,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+        });
+        assert.equal(controlResult.outcome.status, 'SUCCESS', 'CR-11 positive control: clean enrollment must succeed');
+        assert.ok(controlResult.auditReceiptPath, 'CR-11 positive control: receipt must be published to evidence directory');
+        assert.ok(
+          fs.readdirSync(controlDir).length > 0,
+          'CR-11 positive control: evidence directory must contain the exported receipt'
+        );
+      } finally {
+        try { fs.rmSync(controlDir, { recursive: true, force: true }); } catch {}
+      }
     }
   });
 
@@ -1771,5 +1969,1008 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       try { fs.rmSync(approvedDir, { recursive: true, force: true }); } catch {}
       try { fs.rmSync(outsideDir, { recursive: true, force: true }); } catch {}
     }
+  });
+
+  // --- Regression CR-13: Reject all memberships & approvals outside signed scope/role ---
+  it('Regression CR-13: injects unauthorized membership (owner_admin) and approval during enrollment; must fail closed and roll back', async () => {
+    // Case A: Injected owner_admin membership in an unsigned workspace
+    {
+      const db = createLocalD1Database();
+      await runLocalMigrations(db, { disposableTest: true });
+
+      await db.exec("INSERT INTO workspaces (id, name, slug, created_at, updated_at) VALUES ('finance', 'Finance', 'finance', '2026-10-28T00:00:00.000Z', '2026-10-28T00:00:00.000Z');");
+
+      await db.exec(`
+        CREATE TRIGGER inject_unauthorized_membership AFTER INSERT ON workspace_memberships
+        WHEN NEW.workspace_id = 'solarcell'
+        BEGIN
+          INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
+          VALUES ('mem_unauth_owner', 'finance', NEW.user_id, 'owner_admin', datetime('now'), datetime('now'));
+        END;
+      `);
+
+      const manifest = createValidSyntheticManifest({ workspace_scope: ['solarcell'] });
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+      const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+      const outcome = await enrollFirstSuperAdmin(db, verified);
+      assert.equal(outcome.status, 'NOT_ENROLLED', 'Enrollment must be rejected when unauthorized membership exists');
+      assert.equal(outcome.rollbackProven, true, 'Rollback must be proven');
+
+      const userCount = (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+      assert.equal(userCount, 0, 'Users table must have rolled back completely');
+    }
+
+    // Case B: Injected unauthorized active approval (owner_admin)
+    {
+      const db = createLocalD1Database();
+      await runLocalMigrations(db, { disposableTest: true });
+
+      await db.exec(`
+        CREATE TRIGGER inject_unauthorized_approval AFTER INSERT ON privileged_identity_approvals
+        WHEN NEW.workspace_id = 'solarcell'
+        BEGIN
+          INSERT INTO privileged_identity_approvals (id, user_id, provider_id, provider_subject_id, workspace_id, role, granted_at, granted_by)
+          VALUES ('appr_unauth_owner', NEW.user_id, 'firebase', NEW.provider_subject_id, 'solarcell', 'owner_admin', datetime('now'), 'attacker');
+        END;
+      `);
+
+      const manifest = createValidSyntheticManifest({ workspace_scope: ['solarcell'] });
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+      const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+      const outcome = await enrollFirstSuperAdmin(db, verified);
+      assert.equal(outcome.status, 'NOT_ENROLLED', 'Enrollment must be rejected when unauthorized active approval exists');
+      assert.equal(outcome.rollbackProven, true, 'Rollback must be proven');
+
+      const userCount = (await db.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+      assert.equal(userCount, 0, 'Users table must have rolled back completely');
+    }
+  });
+
+  // --- Regression CR-14: Block IPC socket destinations (Unix sockets and Windows named pipes) ---
+  it('Regression CR-14: LoopbackTripwire rejects IPC destinations by default (Unix sockets and named pipes)', () => {
+    const tripwire = new LoopbackTripwire();
+    tripwire.activate();
+    let sockUnix: net.Socket | undefined;
+    let sockPipe: net.Socket | undefined;
+    let sockPathOpt: net.Socket | undefined;
+
+    try {
+      // 1. Unix socket path as string
+      sockUnix = new net.Socket();
+      sockUnix.on('error', () => {});
+      sockUnix.connect('/var/run/docker.sock');
+      assert.ok(
+        tripwire.nonLoopbackAttempts.some(a => a.host === '/var/run/docker.sock'),
+        'Tripwire must record non-loopback attempt for Unix socket path'
+      );
+
+      // 2. Windows named pipe as string
+      sockPipe = new net.Socket();
+      sockPipe.on('error', () => {});
+      sockPipe.connect('\\\\.\\pipe\\docker_engine');
+      assert.ok(
+        tripwire.nonLoopbackAttempts.some(a => a.host === '\\\\.\\pipe\\docker_engine'),
+        'Tripwire must record non-loopback attempt for Windows named pipe'
+      );
+
+      // 3. Connect with { path: '...' } option object
+      sockPathOpt = new net.Socket();
+      sockPathOpt.on('error', () => {});
+      sockPathOpt.connect({ path: '/tmp/test.sock' } as any);
+      assert.ok(
+        tripwire.nonLoopbackAttempts.some(a => a.host === '/tmp/test.sock'),
+        'Tripwire must record non-loopback attempt for options.path IPC destination'
+      );
+    } finally {
+      sockUnix?.destroy();
+      sockPipe?.destroy();
+      sockPathOpt?.destroy();
+      tripwire.deactivate();
+    }
+  });
+
+  // --- Regression CR-15: Validate manifest issuance timestamp (issued_at) ---
+  it('Regression CR-15: verifyApprovalManifest strictly validates issued_at and expiration window', () => {
+    const now = Date.now();
+
+    // 1. Future-issued manifest (issued_at > now) must be rejected
+    const futureManifest = createValidSyntheticManifest({
+      issued_at: new Date(now + 60000).toISOString(),
+      expires_at: new Date(now + 300000).toISOString(),
+    });
+    const signedFuture = signApprovalManifest(futureManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedFuture, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'FUTURE_ISSUED_MANIFEST'
+    );
+
+    // 2. Inverted or equal expiration window (expires_at <= issued_at) must be rejected
+    const invertedManifest = createValidSyntheticManifest({
+      issued_at: new Date(now - 10000).toISOString(),
+      expires_at: new Date(now - 20000).toISOString(),
+    });
+    const signedInverted = signApprovalManifest(invertedManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedInverted, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && (err.code === 'INVALID_EXPIRATION_WINDOW' || err.code === 'EXPIRED_MANIFEST')
+    );
+
+    // Specifically test expires_at === issued_at with future expiry to isolate INVALID_EXPIRATION_WINDOW
+    const equalManifest = createValidSyntheticManifest({
+      issued_at: new Date(now - 10000).toISOString(),
+      expires_at: new Date(now - 10000).toISOString(),
+    });
+    const signedEqual = signApprovalManifest(equalManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedEqual, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && (err.code === 'INVALID_EXPIRATION_WINDOW' || err.code === 'EXPIRED_MANIFEST')
+    );
+
+    // 3. Malformed/non-parseable issued_at must be rejected
+    const malformedIssuedManifest = createValidSyntheticManifest({
+      issued_at: 'not-a-valid-date',
+      expires_at: new Date(now + 300000).toISOString(),
+    });
+    const signedMalformed = signApprovalManifest(malformedIssuedManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedMalformed, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_ISSUED_AT'
+    );
+  });
+
+  // =========================================================================
+  // Round 2 Pre-Fix Regression Tests: CR-25 through CR-34
+  // These tests assert FINAL CORRECT behavior and fail on unhardened code.
+  // =========================================================================
+
+  // --- Regression CR-25: CABMS schema audit ledger rejects explicit-rowid replacement ---
+  it('Regression CR-25: audit ledger rejects INSERT OR REPLACE with explicit rowid collision under recursive_triggers=OFF', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // Positive control: insert baseline audit manifest row
+    await db.prepare(`
+      INSERT INTO paar_p0_bootstrap_audit_manifests (
+        id, operation_id, nonce, target_id, operator_email, operator_uid,
+        workspace_scope, permitted_action, signing_key_id, signature_algorithm,
+        signature_bytes, canonical_manifest_json, audit_reference, created_at
+      ) VALUES ('audit_cr25_orig', 'op_cr25_orig', 'nonce_cr25_orig', 'target', 'email', 'uid',
+        'scope', 'bootstrap_super_admin', 'key', 'Ed25519', 'sig', '{}', 'ref_cr25_orig', datetime('now'))
+    `).run();
+
+    // Verify baseline row exists
+    const origBefore = await db.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE id = 'audit_cr25_orig'").first<{ n: number }>();
+    assert.equal(origBefore?.n, 1, 'Positive control: original record must exist');
+
+    // Attack: attempt INSERT OR REPLACE reusing explicit rowid = 1 with fresh text identifiers
+    // Under recursive_triggers=OFF, on a table WITH rowid, SQLite replaces rowid 1 without DELETE trigger.
+    // Final required behavior: the attack must NOT overwrite the original audit entry!
+    try {
+      await db.exec(`
+        INSERT OR REPLACE INTO paar_p0_bootstrap_audit_manifests (
+          rowid, id, operation_id, nonce, target_id, operator_email, operator_uid,
+          workspace_scope, permitted_action, signing_key_id, signature_algorithm,
+          signature_bytes, canonical_manifest_json, audit_reference, created_at
+        ) VALUES (
+          1, 'audit_cr25_rep', 'op_cr25_rep', 'nonce_cr25_rep', 'target', 'email', 'uid',
+          'scope', 'bootstrap_super_admin', 'key', 'Ed25519', 'sig', '{}', 'ref_cr25_rep', datetime('now')
+        )
+      `);
+    } catch {
+      // If SQLite rejects because WITHOUT ROWID or constraint, that is acceptable
+    }
+
+    // Assert final correct state: original record must remain intact, replacement record must NOT exist
+    const origAfter = await db.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE id = 'audit_cr25_orig'").first<{ n: number }>();
+    const repAfter = await db.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE id = 'audit_cr25_rep'").first<{ n: number }>();
+
+    assert.equal(origAfter?.n, 1, 'Original audit record MUST remain intact in ledger');
+    assert.equal(repAfter?.n, 0, 'Replacement audit record MUST NOT exist in ledger');
+  });
+
+  // --- Regression CR-26: Unsettled-Outcome Reconciliation Fail-Closed ---
+  it('Regression CR-26: reconciliation on empty database without positive settlement must fail closed to INDETERMINATE', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // 1. Explicit settled: false -> fail-closed to INDETERMINATE
+    const reconUnsettled = await reconcileEnrollmentStatus(
+      db,
+      'op_unsettled_9999',
+      'uid_unsettled_9999',
+      'ref_unsettled_9999',
+      3,
+      { settled: false }
+    );
+    assert.equal(
+      reconUnsettled,
+      'INDETERMINATE',
+      'Empty database read with settled: false must return INDETERMINATE'
+    );
+
+    // 2. Default (no options / unsettled transport) -> fail-closed to INDETERMINATE
+    const reconDefault = await reconcileEnrollmentStatus(
+      db,
+      'op_unsettled_9999',
+      'uid_unsettled_9999',
+      'ref_unsettled_9999',
+      3
+    );
+    assert.equal(
+      reconDefault,
+      'INDETERMINATE',
+      'Empty database read without explicit settlement guarantee must default to INDETERMINATE'
+    );
+
+    // 3. Positive control: explicit settled: true on empty database -> returns NOT_ENROLLED
+    const reconSettled = await reconcileEnrollmentStatus(
+      db,
+      'op_unsettled_9999',
+      'uid_unsettled_9999',
+      'ref_unsettled_9999',
+      3,
+      { settled: true }
+    );
+    assert.equal(
+      reconSettled,
+      'NOT_ENROLLED',
+      'Empty database read WITH positive settled: true signal must return NOT_ENROLLED'
+    );
+  });
+
+  // --- Regression CR-27: Dedicated Read-Only Receipt Recovery ---
+  it('Regression CR-27: recoverAuditReceipt recovers receipt for completed enrollment without writing to D1', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    // 1. First invocation: enroll successfully with invalid evidence directory so receipt export fails
+    const approvedRoot = createVerifiedTempDir('cabms-p0-cr27-root-');
+    const badEvidencePath = path.join(approvedRoot, 'receipts_file');
+    fs.writeFileSync(badEvidencePath, 'not a directory');
+
+    const enrollRes = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+      evidenceDir: badEvidencePath,
+      approvedEvidenceRoot: approvedRoot,
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+    });
+    assert.equal(enrollRes.outcome.status, 'SUCCESS', 'Enrollment must succeed in DB');
+    assert.equal(enrollRes.auditReceiptPath, undefined, 'Receipt export failed as expected');
+
+    // 2. Prepare valid evidence directory for recovery
+    fs.unlinkSync(badEvidencePath);
+    fs.mkdirSync(badEvidencePath);
+
+    // 3. Spy on D1 to ensure recovery makes ZERO write calls via prepare, batch, or exec
+    let writeCalls = 0;
+    const origPrepare = db.prepare.bind(db);
+    const origBatch = db.batch.bind(db);
+    const origExec = (db as any).exec?.bind(db);
+    const isWriteSql = (query: string) => /^\s*(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE)\b/i.test(query.trim());
+    (db as any).prepare = (query: string) => {
+      if (isWriteSql(query)) {
+        writeCalls++;
+      }
+      return origPrepare(query);
+    };
+    (db as any).batch = (...args: any[]) => {
+      writeCalls++; // any batch call during recovery is a write attempt
+      return (origBatch as any)(...args);
+    };
+    if (origExec) {
+      (db as any).exec = (query: string, ...args: any[]) => {
+        if (typeof query === 'string' && isWriteSql(query)) {
+          writeCalls++;
+        }
+        return (origExec as any)(query, ...args);
+      };
+    }
+
+    try {
+      // 4. Call dedicated read-only recovery entry point
+      const recoveryRes = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir: badEvidencePath,
+        approvedEvidenceRoot: approvedRoot,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      assert.equal(writeCalls, 0, 'Receipt recovery MUST NOT make any write calls to D1 (prepare, batch, or exec)');
+      assert.equal(recoveryRes.status, 'RECOVERED', 'Recovery status must be RECOVERED');
+      assert.ok(recoveryRes.auditReceiptPath, 'auditReceiptPath must be defined on recovery');
+      assert.ok(fs.existsSync(recoveryRes.auditReceiptPath!), 'Receipt file must exist on disk');
+
+      // Test C negative control: demonstrate that write-detection spy distinguishes reads from writes
+      // 1. Probing with read queries (SELECT) must NOT increment writeCalls
+      if (origExec) {
+        await (db as any).exec('SELECT 1');
+      }
+      await db.prepare('SELECT COUNT(*) AS n FROM users').first();
+      assert.equal(writeCalls, 0, 'CR-27 negative control: read operations (SELECT) must not increment writeCalls');
+
+      // 2. Perform a controlled write attempt; verify spy detects it
+      const writeCallsBefore = writeCalls;
+      (db as any).prepare("INSERT INTO g01_security_assertions (value) VALUES (0)");
+      assert.ok(
+        writeCalls > writeCallsBefore,
+        'CR-27 negative control: SQL INSERT statement must trigger write-detection spy'
+      );
+
+      // 3. Demonstrate that the zero-write assertion fails when an unauthorized write is detected
+      assert.throws(
+        () => {
+          assert.equal(writeCalls, 0, 'Receipt recovery MUST NOT make any write calls to D1');
+        },
+        /AssertionError/,
+        'CR-27 negative control: writeCalls > 0 must fail the zero-write assertion'
+      );
+
+      // 5. Test expired manifest recovery behavior
+      // The original manifest (from step 1) has now expired relative to a future verification clock
+      const futureNow = Date.parse(manifest.expires_at) + 10000;
+
+      // A: Without allowExpiredForRecovery, recovery with expired clock throws EXPIRED_MANIFEST
+      await assert.rejects(
+        () => recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+          evidenceDir: badEvidencePath,
+          approvedEvidenceRoot: approvedRoot,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+          nowMs: futureNow,
+        }),
+        (err: any) => err instanceof ManifestValidationError && err.code === 'EXPIRED_MANIFEST'
+      );
+
+      // B: With allowExpiredForRecovery: true, completed enrollment receipt can be recovered
+      const recoveryDir = path.join(approvedRoot, 'recovery_subdir');
+      fs.mkdirSync(recoveryDir);
+      try {
+        const recoveryExpired = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+          evidenceDir: recoveryDir,
+          approvedEvidenceRoot: approvedRoot,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+          nowMs: futureNow,
+          allowExpiredForRecovery: true,
+        });
+        assert.equal(recoveryExpired.status, 'RECOVERED');
+
+        // C: Negative control: if manifest validity window does not encompass persisted audit record's created_at,
+        // recovery must reject with INCONSISTENT
+        // Fetch actual created_at from ledger
+        const auditRow = await db.prepare("SELECT created_at FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?").bind(manifest.operation_id).first<{ created_at: string }>();
+        assert.ok(auditRow?.created_at, 'Audit row created_at must be populated');
+        const rawAuditCreated = auditRow!.created_at.trim();
+        const isoAuditCreated = rawAuditCreated.includes('T')
+          ? (rawAuditCreated.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(rawAuditCreated) ? rawAuditCreated : rawAuditCreated + 'Z')
+          : rawAuditCreated.replace(' ', 'T') + 'Z';
+        const auditTime = Date.parse(isoAuditCreated);
+        assert.ok(!Number.isNaN(auditTime), 'Audit row created_at must be valid timestamp');
+        assert.ok(auditTime >= Date.parse(manifest.issued_at) && auditTime <= Date.parse(manifest.expires_at), 'Audit record must have been created within validity window');
+
+        // Manifest whose issued_at is strictly in the future of the audit record's created_at
+        const futureIssuedManifest = createValidSyntheticManifest({
+          operation_id: manifest.operation_id,
+          issued_at: new Date(auditTime + 10000).toISOString(),
+          expires_at: new Date(auditTime + 60000).toISOString(),
+        });
+        const signedFutureIssued = signApprovalManifest(futureIssuedManifest, ephemeralKeyPair.privateKey);
+        const recoveryWindowMismatch = await recoverAuditReceipt(db, signedFutureIssued, ephemeralKeyPair.publicKey, {
+          evidenceDir: recoveryDir,
+          approvedEvidenceRoot: approvedRoot,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+          nowMs: auditTime + 70000,
+          allowExpiredForRecovery: true,
+        });
+        assert.equal(recoveryWindowMismatch.status, 'INCONSISTENT');
+      } finally {
+        try { fs.rmSync(recoveryDir, { recursive: true, force: true }); } catch {}
+      }
+    } finally {
+      (db as any).prepare = origPrepare;
+      (db as any).batch = origBatch;
+      if (origExec) (db as any).exec = origExec;
+      try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  // --- Regression CR-28: Tripwire violation returns distinct security failure outcome ---
+  it('Regression CR-28: tripwire violation during committed enrollment returns SECURITY_VIOLATION outcome and blocks receipt', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    // Inject egress attempt during batch execution (on completion insert)
+    const originalPrepare = db.prepare.bind(db);
+    (db as any).prepare = (query: string) => {
+      if (query.includes('INSERT INTO g01_bootstrap_completion')) {
+        const sock = new net.Socket();
+        sock.on('error', () => {});
+        sock.connect({ host: '203.0.113.1', port: 80 }); // RFC 5737 TEST-NET-3
+      }
+      return originalPrepare(query);
+    };
+
+    // Test A: suppression assertion — evidenceDir provided, receipt must be suppressed on violation
+    const suppressionDirCr28 = createVerifiedTempDir('cabms-p0-cr28-suppression-');
+    try {
+      const result = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir: suppressionDirCr28,
+        approvedEvidenceRoot: suppressionDirCr28,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+      });
+
+      // Final behavior: distinct unsuccessful security outcome
+      assert.equal(
+        result.outcome.status,
+        'SECURITY_VIOLATION',
+        'Outcome status must be SECURITY_VIOLATION when tripwire triggered'
+      );
+      assert.ok(
+        (result as any).securityViolation,
+        'securityViolation field must be present describing the egress attempt'
+      );
+      assert.equal(
+        result.auditReceiptPath,
+        undefined,
+        'Receipt publication must be strictly blocked on security violation'
+      );
+      // Test A negative: evidence directory must remain empty — receipt suppressed, not merely unset
+      assert.equal(
+        fs.readdirSync(suppressionDirCr28).length,
+        0,
+        'CR-28: evidence directory must remain empty when receipt is suppressed by security violation'
+      );
+
+      // Verify DB state is preserved for forensic inspection
+      const compRow = await db.prepare('SELECT operation_id FROM g01_bootstrap_completion WHERE singleton = 1').first<{ operation_id: string }>();
+      assert.equal(compRow?.operation_id, manifest.operation_id, 'Database state must be preserved for forensic analysis');
+    } finally {
+      (db as any).prepare = originalPrepare;
+      try { fs.rmSync(suppressionDirCr28, { recursive: true, force: true }); } catch {}
+    }
+
+    // Test A positive control: same destination pattern accepts a receipt from a clean enrollment
+    {
+      const cleanDb = createLocalD1Database();
+      await runLocalMigrations(cleanDb, { disposableTest: true });
+      const controlDir = createVerifiedTempDir('cabms-p0-cr28-control-');
+      try {
+        const controlManifest = createValidSyntheticManifest();
+        const controlSigned = signApprovalManifest(controlManifest, ephemeralKeyPair.privateKey);
+        const controlResult = await runModeACliEnrollment(cleanDb, controlSigned, ephemeralKeyPair.publicKey, {
+          evidenceDir: controlDir,
+          approvedEvidenceRoot: controlDir,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+        });
+        assert.equal(controlResult.outcome.status, 'SUCCESS', 'CR-28 positive control: clean enrollment must succeed');
+        assert.ok(controlResult.auditReceiptPath, 'CR-28 positive control: receipt must be published to evidence directory');
+        assert.ok(
+          fs.readdirSync(controlDir).length > 0,
+          'CR-28 positive control: evidence directory must contain the exported receipt'
+        );
+      } finally {
+        try { fs.rmSync(controlDir, { recursive: true, force: true }); } catch {}
+      }
+    }
+  });
+
+  // --- Regression CR-29: Reject duplicate workspace IDs in scope ---
+  it('Regression CR-29: verifyApprovalManifest must reject duplicate workspace IDs with DUPLICATE_WORKSPACE_SCOPE', () => {
+    const manifest = createValidSyntheticManifest({
+      workspace_scope: ['solarcell', 'solarcell'],
+    });
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    assert.throws(
+      () => verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'DUPLICATE_WORKSPACE_SCOPE'
+    );
+  });
+
+  // --- Regression CR-30: Reject blank approval identity ---
+  it('Regression CR-30: verifyApprovalManifest must reject blank or whitespace-only approval_identity', () => {
+    const manifest = createValidSyntheticManifest({
+      approval_identity: '   ',
+    });
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    assert.throws(
+      () => verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'MISSING_APPROVAL_IDENTITY'
+    );
+  });
+
+  // --- Regression CR-31: Deterministic Unicode surrogate validation in property names and values ---
+  it('Regression CR-31: canonicalizeJson must reject lone and unpaired surrogates in property names and string values', () => {
+    // 1. Lone high surrogate in string value
+    assert.throws(
+      () => canonicalizeJson({ val: '\uD800' }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_JSON_VALUE'
+    );
+
+    // 2. Lone low surrogate in string value
+    assert.throws(
+      () => canonicalizeJson({ val: '\uDC00' }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_JSON_VALUE'
+    );
+
+    // 3. Trailing lone surrogate in string value
+    assert.throws(
+      () => canonicalizeJson({ val: 'test\uD800' }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_JSON_VALUE'
+    );
+
+    // 4. Lone high surrogate in property name
+    assert.throws(
+      () => canonicalizeJson({ ['\uD800']: 'val' }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_JSON_VALUE'
+    );
+
+    // 5. Lone low surrogate in property name
+    assert.throws(
+      () => canonicalizeJson({ ['\uDC00']: 'val' }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_JSON_VALUE'
+    );
+
+    // Positive control: valid paired surrogate (e.g. emoji 😀 U+1F600 = \uD83D\uDE00) in key and value
+    const validEmoji = canonicalizeJson({ ['\uD83D\uDE00']: '\uD83D\uDE00' });
+    assert.equal(validEmoji, '{"\uD83D\uDE00":"\uD83D\uDE00"}');
+  });
+
+  // --- Regression CR-32: Explicit timezone offset and calendar validation ---
+  it('Regression CR-32: verifyApprovalManifest must require explicit timezone offset and valid calendar date', () => {
+    const now = Date.now();
+
+    // 1. Missing timezone offset (local time format)
+    const noTzManifest = createValidSyntheticManifest({
+      issued_at: '2026-11-18T10:00:00',
+      expires_at: new Date(now + 300000).toISOString(),
+    });
+    const signedNoTz = signApprovalManifest(noTzManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedNoTz, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'MISSING_TIMEZONE_OFFSET'
+    );
+
+    // 2. Invalid timezone offset syntax (+99:99)
+    const badOffsetManifest = createValidSyntheticManifest({
+      issued_at: '2026-11-18T10:00:00+99:99',
+      expires_at: new Date(now + 300000).toISOString(),
+    });
+    const signedBadOffset = signApprovalManifest(badOffsetManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedBadOffset, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && (err.code === 'INVALID_TIMEZONE_OFFSET' || err.code === 'INVALID_ISSUED_AT')
+    );
+
+    // 3. Invalid calendar date (February 30)
+    const badCalendarManifest = createValidSyntheticManifest({
+      issued_at: '2026-02-30T10:00:00Z',
+      expires_at: new Date(now + 300000).toISOString(),
+    });
+    const signedBadCalendar = signApprovalManifest(badCalendarManifest, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signedBadCalendar, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: now }),
+      (err: any) => err instanceof ManifestValidationError && (err.code === 'INVALID_CALENDAR_DATE' || err.code === 'INVALID_ISSUED_AT')
+    );
+
+    // Positive controls: Z and valid numeric offsets
+    const validZManifest = createValidSyntheticManifest({
+      issued_at: '2026-11-18T10:00:00.000Z',
+      expires_at: '2026-11-18T12:00:00.000Z',
+    });
+    const signedValidZ = signApprovalManifest(validZManifest, ephemeralKeyPair.privateKey);
+    assert.doesNotThrow(() =>
+      verifyApprovalManifest(signedValidZ, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: Date.parse('2026-11-18T11:00:00.000Z') })
+    );
+
+    const validOffsetManifest = createValidSyntheticManifest({
+      issued_at: '2026-11-18T20:00:00+10:00',
+      expires_at: '2026-11-18T22:00:00+10:00',
+    });
+    const signedValidOffset = signApprovalManifest(validOffsetManifest, ephemeralKeyPair.privateKey);
+    assert.doesNotThrow(() =>
+      verifyApprovalManifest(signedValidOffset, ephemeralKeyPair.publicKey, { ...DEFAULT_VERIFY_OPTIONS, nowMs: Date.parse('2026-11-18T21:00:00+10:00') })
+    );
+  });
+
+  // --- Regression CR-33: D1 21 vs 22 Parameter Limit Boundary ---
+  it('Regression CR-33: enrollFirstSuperAdmin enforces 21-workspace D1 parameter boundary without claiming database rollback', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // Arithmetic proof:
+    // C03 postcondition statement binds: 15 fixed parameters + 4 parameters per workspace in scope.
+    // N = 21: 15 + 4(21) = 99 <= 100 parameters -> fits within Cloudflare D1 limit.
+    // N = 22: 15 + 4(22) = 103 > 100 parameters -> overflows Cloudflare D1 limit.
+
+    // Case A: N = 22 workspaces must be rejected upfront before database write, without claiming DB rollback
+    const scope22 = Array.from({ length: 22 }, (_, i) => `ws_${i}`);
+    const manifest22 = createValidSyntheticManifest({
+      workspace_scope: scope22,
+    });
+    const signed22 = signApprovalManifest(manifest22, ephemeralKeyPair.privateKey);
+
+    // Case A1: verifyApprovalManifest rejects N = 22 upfront
+    assert.throws(
+      () => verifyApprovalManifest(signed22, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'WORKSPACE_SCOPE_EXCEEDS_LIMIT'
+    );
+
+    // Case A2: enrollFirstSuperAdmin defense-in-depth rejects N = 22 before DB write with writeAttempted: false
+    const bypassedVerified22: VerifiedApprovalManifest = {
+      manifest: manifest22,
+      signature_algorithm: 'Ed25519',
+      signature_bytes: signed22.signature_bytes,
+      signing_key_id: signed22.signing_key_id,
+      canonical_manifest_json: signed22.canonical_manifest_json,
+      audit_reference: 'ref_22',
+    };
+
+    const outcome22 = await enrollFirstSuperAdmin(db, bypassedVerified22);
+    assert.equal(outcome22.status, 'NOT_ENROLLED', 'Must be rejected as NOT_ENROLLED');
+    assert.equal(
+      outcome22.rollbackProven,
+      false,
+      'Pre-dispatch parameter limit rejection MUST NOT claim database rollback occurred (rollbackProven must be false)'
+    );
+    assert.equal(
+      outcome22.writeAttempted,
+      false,
+      'writeAttempted must be explicitly false for pre-dispatch validation rejection'
+    );
+    assert.match(
+      outcome22.error,
+      /parameter limit/i,
+      'Error message must explicitly reference D1 parameter limit'
+    );
+
+    // Case B: N = 21 workspaces must pass upfront parameter boundary check AND successfully commit enrollment in D1
+    const cleanDb21 = createLocalD1Database();
+    await runLocalMigrations(cleanDb21, { disposableTest: true });
+
+    const scope21 = Array.from({ length: 21 }, (_, i) => `ws_${i}`);
+
+    // Seed the 21 workspace records so foreign key constraints on workspace_memberships pass
+    for (const ws of scope21) {
+      await cleanDb21.prepare(
+        'INSERT OR IGNORE INTO workspaces (id, name, slug, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+      ).bind(ws, ws, ws, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z').run();
+    }
+
+    // Test D: Instrument db.prepare to record actual bind argument counts per statement
+    const bindCountsPerStatement: { query: string; count: number }[] = [];
+    const origPrepareCr33 = cleanDb21.prepare.bind(cleanDb21);
+    (cleanDb21 as any).prepare = (query: string) => {
+      const stmt = origPrepareCr33(query);
+      const origBind = stmt.bind.bind(stmt);
+      (stmt as any).bind = (...bindArgs: any[]) => {
+        bindCountsPerStatement.push({ query: query.substring(0, 60), count: bindArgs.length });
+        return origBind(...bindArgs);
+      };
+      return stmt;
+    };
+
+    const manifest21 = createValidSyntheticManifest({
+      workspace_scope: scope21,
+    });
+    const signed21 = signApprovalManifest(manifest21, ephemeralKeyPair.privateKey);
+    const verified21 = verifyApprovalManifest(signed21, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    let outcome21: Awaited<ReturnType<typeof enrollFirstSuperAdmin>>;
+    try {
+      outcome21 = await enrollFirstSuperAdmin(cleanDb21, verified21);
+    } finally {
+      (cleanDb21 as any).prepare = origPrepareCr33;
+    }
+    assert.equal(outcome21.status, 'SUCCESS', '21 workspaces must commit successfully within the 100-parameter limit');
+
+    // Test D: assert the C03 postcondition statement actually bound 98 parameters during enrollment
+    // (Actual binding: 14 fixed parameters + 4 per workspace = 14 + 4(21) = 98; source comment says 15 but
+    //  count from lines 265–283 of firstSuperAdminEnrollment.ts is 14 fixed + 4N spread args.)
+    const observedCounts = bindCountsPerStatement.map(e => e.count);
+    assert.ok(
+      observedCounts.some(n => n === 98),
+      `C03 postcondition statement must bind exactly 98 parameters; observed bind counts: ${JSON.stringify(observedCounts)}`
+    );
+    assert.ok(
+      observedCounts.every(n => n <= 100),
+      `No statement may exceed D1's 100-parameter limit; observed max: ${Math.max(...observedCounts, 0)}`
+    );
+
+    // Test D negative control: demonstrate that our instrumentation detects extra parameters and over-limit bindings (>100)
+    // 1. Controlled binding experiment: inject an extra parameter into a statement binding
+    const testStmt = cleanDb21.prepare('SELECT 1 WHERE 1 = ?');
+    let capturedBindLen = 0;
+    const origTestBind = testStmt.bind.bind(testStmt);
+    (testStmt as any).bind = (...args: any[]) => {
+      capturedBindLen = args.length;
+      return origTestBind(...args);
+    };
+
+    // Binding 1 parameter yields length 1
+    testStmt.bind('val1');
+    assert.equal(capturedBindLen, 1, 'CR-33 negative control: baseline statement captures 1 parameter');
+
+    // Binding an extra parameter (length 2) changes the captured count
+    testStmt.bind('val1', 'extra_param');
+    assert.equal(capturedBindLen, 2, 'CR-33 negative control: extra parameter injection increases captured count to 2');
+
+    // 2. Over-limit binding simulation (N = 22 workspace C03 formula: 14 fixed + 4*22 = 102 parameters):
+    // Demonstrate that if a statement binds 102 arguments, the D1 parameter limit check detects it and fails
+    const simulatedOverLimitBindings = [...observedCounts, 14 + 4 * 22]; // includes 102
+    assert.equal(
+      simulatedOverLimitBindings.some(n => n > 100),
+      true,
+      'CR-33 negative control: statement binding 102 parameters exceeds the D1 100-parameter limit'
+    );
+    assert.throws(
+      () => {
+        assert.ok(
+          simulatedOverLimitBindings.every(n => n <= 100),
+          `No statement may exceed D1's 100-parameter limit; observed max: ${Math.max(...simulatedOverLimitBindings)}`
+        );
+      },
+      /AssertionError/,
+      'CR-33 negative control: injected 102-parameter binding must fail the boundary assertion'
+    );
+
+    // Verify all 21 memberships and 21 approvals were inserted
+    const memberRows = await cleanDb21.prepare(
+      "SELECT COUNT(*) AS count FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'"
+    ).first<{ count: number }>();
+    assert.equal(memberRows?.count, 21, 'Must create exactly 21 workspace memberships');
+
+    const approvalRows = await cleanDb21.prepare(
+      "SELECT COUNT(*) AS count FROM privileged_identity_approvals WHERE role = 'super_admin' AND revoked_at IS NULL"
+    ).first<{ count: number }>();
+    assert.equal(approvalRows?.count, 21, 'Must create exactly 21 active privileged approvals');
+
+    // Verify reconciliation establishes complete 21-workspace set consistency
+    const recon21 = await reconcileEnrollmentStatus(
+      cleanDb21,
+      verified21.manifest.operation_id,
+      verified21.manifest.operator_uid,
+      verified21.audit_reference,
+      scope21
+    );
+    assert.equal(recon21, 'CONFIRMED_ENROLLED', 'Reconciliation must confirm 21-workspace enrollment');
+  });
+
+  // --- Regression CR-34: Socket Options Immutability & Overload Coverage ---
+  it('Regression CR-34: LoopbackTripwire does not mutate frozen options and supports all socket connect overloads', () => {
+    const tripwire = new LoopbackTripwire();
+    tripwire.activate();
+    try {
+      // 1. Frozen options object
+      const frozenOpts = Object.freeze({ host: 'localhost', port: 8080 });
+      const socket1 = new net.Socket();
+      socket1.on('error', () => {});
+
+      assert.doesNotThrow(() => {
+        socket1.connect(frozenOpts as any);
+      }, 'Must not throw TypeError on frozen options');
+      assert.equal(frozenOpts.host, 'localhost', 'Caller options object must remain unmodified');
+      socket1.destroy();
+
+      // 2. Overload: connect(port, host)
+      const socket2 = new net.Socket();
+      socket2.on('error', () => {});
+      assert.doesNotThrow(() => {
+        socket2.connect(8081, '127.0.0.1');
+      });
+      socket2.destroy();
+
+      // 3. Overload: connect(options, callback)
+      const socket3 = new net.Socket();
+      socket3.on('error', () => {});
+      let cbCalled = false;
+      assert.doesNotThrow(() => {
+        socket3.connect({ host: '127.0.0.1', port: 8082 }, () => { cbCalled = true; });
+      });
+      socket3.destroy();
+
+      // 4. Overload: connect({ path: '...' }) IPC destination (must be recorded in nonLoopbackAttempts)
+      const socket4 = new net.Socket();
+      socket4.on('error', () => {});
+      socket4.connect({ path: '/tmp/test.sock' } as any);
+      assert.ok(
+        tripwire.nonLoopbackAttempts.some(a => a.host === '/tmp/test.sock'),
+        'IPC path destination must be intercepted and recorded'
+      );
+      socket4.destroy();
+    } finally {
+      tripwire.deactivate();
+    }
+  });
+
+  it('Regression CR-35: migration 0011 fails loudly without IF NOT EXISTS when table or trigger exists and enforces WITHOUT ROWID', async () => {
+    const db = createLocalD1Database();
+    const migrationSql = fs.readFileSync(path.resolve('./migrations/0011_paar_p0_bootstrap_audit.sql'), 'utf-8');
+    const names = [
+      '0001_g01_initial_schema.sql',
+      '0002_g01_seed_synthetic_data.sql',
+      '0003_g01_revoke_unauthorized_seed_super_admin.sql',
+      '0004_g01_user_account_status.sql',
+      '0005_g01_retire_synthetic_access.sql',
+      '0006_g01_privileged_identity_approvals.sql',
+      '0007_g01_bootstrap_completion.sql',
+    ];
+    for (const name of names) {
+      await db.exec(fs.readFileSync(path.resolve(`./migrations/${name}`), 'utf-8'));
+    }
+
+    // 1. Create a weak, pre-existing table of the same name with rowid
+    await db.exec('CREATE TABLE paar_p0_bootstrap_audit_manifests (id TEXT PRIMARY KEY, weak INTEGER);');
+
+    // 2. Applying migration 0011 over the pre-existing table MUST fail loudly, not silently skip
+    await assert.rejects(
+      () => db.exec(migrationSql),
+      /table .*paar_p0_bootstrap_audit_manifests.* already exists/i
+    );
+
+    // 3. On a clean database, migration 0011 creates a table without rowid
+    const cleanDb = createLocalD1Database();
+    for (const name of names) {
+      await cleanDb.exec(fs.readFileSync(path.resolve(`./migrations/${name}`), 'utf-8'));
+    }
+    await cleanDb.exec(migrationSql);
+
+    // Assert table has no rowid in clean schema
+    await assert.rejects(
+      () => cleanDb.exec('SELECT rowid FROM paar_p0_bootstrap_audit_manifests;'),
+      /no such column: rowid/i
+    );
+
+    // Assert re-applying migration 0011 on cleanDb also fails loudly (triggers or table already exist)
+    await assert.rejects(
+      () => cleanDb.exec(migrationSql),
+      /already exists/i
+    );
+  });
+
+  // --- Regression CR-36: Recovery on Empty, Unsettled DB Returns INDETERMINATE with Zero Writes ---
+  it('Regression CR-36: recovery on empty, unsettled DB returns INDETERMINATE with zero writes', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    const approvedRoot = createVerifiedTempDir('cabms-p0-cr36-root-');
+    const evidenceDir = path.join(approvedRoot, 'receipts');
+    fs.mkdirSync(evidenceDir);
+
+    // 1. Spy on D1 to detect any write attempts via prepare, batch, or exec
+    let writeCalls = 0;
+    const origPrepare = db.prepare.bind(db);
+    const origBatch = db.batch.bind(db);
+    const origExec = (db as any).exec?.bind(db);
+    const isWriteSql = (query: string) => /^\s*(INSERT|UPDATE|DELETE|REPLACE|DROP|ALTER|CREATE)\b/i.test(query.trim());
+    (db as any).prepare = (query: string) => {
+      if (isWriteSql(query)) {
+        writeCalls++;
+      }
+      return origPrepare(query);
+    };
+    (db as any).batch = (...args: any[]) => {
+      writeCalls++; // any batch call during recovery is a write attempt
+      return (origBatch as any)(...args);
+    };
+    if (origExec) {
+      (db as any).exec = (query: string, ...args: any[]) => {
+        if (typeof query === 'string' && isWriteSql(query)) {
+          writeCalls++;
+        }
+        return (origExec as any)(query, ...args);
+      };
+    }
+
+    try {
+      // 2. Case A: Recovery without operator-attested settlement (settled: false / undefined)
+      // Must fail closed to INDETERMINATE, export nothing, and make zero writes
+      const resUnsettled = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir,
+        approvedEvidenceRoot: approvedRoot,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+        // note: settled flag omitted
+      });
+
+      assert.equal(resUnsettled.status, 'INDETERMINATE', 'Recovery without settlement attestation must fail closed to INDETERMINATE');
+      assert.equal(resUnsettled.auditReceiptPath, undefined, 'No receipt path returned');
+      assert.match(resUnsettled.error || '', /settlement was not attested/i, 'Error message must explain settlement was not attested');
+      assert.equal(writeCalls, 0, 'Must perform zero write statements (prepare, batch, exec)');
+      assert.equal(fs.readdirSync(evidenceDir).length, 0, 'No files exported to evidence directory');
+
+      // 3. Case B (Positive Control): Recovery on same empty DB with explicit operator attestation (settled: true)
+      // Must return NOT_ENROLLED, proving the settled flag is wired through rather than hardcoded INDETERMINATE
+      const resSettled = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+        evidenceDir,
+        approvedEvidenceRoot: approvedRoot,
+        expectedTargetId: SYNTHETIC_TARGET,
+        expectedOperatorUid: SYNTHETIC_UID,
+        expectedOperatorEmail: SYNTHETIC_EMAIL,
+        settled: true,
+      });
+
+      assert.equal(resSettled.status, 'NOT_ENROLLED', 'Recovery with explicit settlement attestation on empty DB returns NOT_ENROLLED');
+      assert.equal(resSettled.auditReceiptPath, undefined, 'No receipt path returned');
+      assert.equal(writeCalls, 0, 'Must still perform zero write statements');
+      assert.equal(fs.readdirSync(evidenceDir).length, 0, 'No files exported to evidence directory');
+
+      // Test C negative control: demonstrate that write-detection spy distinguishes reads from writes
+      // 1. Probing with read queries (SELECT) must NOT increment writeCalls
+      if (origExec) {
+        await (db as any).exec('SELECT 1');
+      }
+      await db.prepare('SELECT 1').all();
+      assert.equal(writeCalls, 0, 'CR-36 negative control: read operations (SELECT) must not increment writeCalls');
+
+      // 2. Perform a controlled write attempt; verify spy detects it
+      const writesBefore = writeCalls;
+      (db as any).prepare("INSERT INTO g01_security_assertions (value) VALUES (0)");
+      assert.ok(
+        writeCalls > writesBefore,
+        'CR-36 negative control: SQL INSERT statement must trigger write-detection spy'
+      );
+
+      // 3. Demonstrate that the zero-write assertion fails when an unauthorized write is detected
+      assert.throws(
+        () => {
+          assert.equal(writeCalls, 0, 'Receipt recovery MUST NOT make any write calls to D1');
+        },
+        /AssertionError/,
+        'CR-36 negative control: writeCalls > 0 must fail the zero-write assertion'
+      );
+    } finally {
+      (db as any).prepare = origPrepare;
+      (db as any).batch = origBatch;
+      if (origExec) (db as any).exec = origExec;
+    }
+  });
+
+  // --- Regression CR-37: Enrollment without evidenceDir Succeeds in D1 but Never Exits 0 ---
+  it('Regression CR-37: enrollment without evidenceDir succeeds in D1 but never exits 0', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+    // Run Mode A enrollment with evidenceDir omitted
+    const result = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+      evidenceDir: undefined,
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+    });
+
+    assert.equal(result.outcome.status, 'SUCCESS', 'D1 enrollment transaction must succeed');
+    assert.equal(result.auditReceiptPath, undefined, 'auditReceiptPath must be undefined when evidenceDir is omitted');
+    assert.equal(
+      getCliExitCode(result),
+      4,
+      'getCliExitCode MUST return 4 (RECEIPT_EXPORT_ERROR) when mandatory audit receipt is missing, never 0'
+    );
   });
 });

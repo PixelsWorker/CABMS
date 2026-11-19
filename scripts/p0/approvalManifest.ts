@@ -48,9 +48,40 @@ export class ManifestValidationError extends Error {
 }
 
 /**
+ * Deterministic detection of unpaired UTF-16 surrogates.
+ * Rejects lone high, lone low, and trailing unpaired surrogates.
+ * Required for RFC 8785 compliance on both string values and property names.
+ */
+export function hasUnpairedSurrogate(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code >= 0xD800 && code <= 0xDBFF) { // high surrogate
+      if (i + 1 >= s.length) return true; // trailing lone high surrogate at end of string
+      const next = s.charCodeAt(i + 1);
+      if (next < 0xDC00 || next > 0xDFFF) return true; // high not followed by valid low
+      i++; // skip valid low surrogate
+    } else if (code >= 0xDC00 && code <= 0xDFFF) {
+      return true; // lone low surrogate without preceding high
+    }
+  }
+  return false;
+}
+
+/**
+ * Serializes a string with deterministic lone-surrogate rejection.
+ */
+function checkedStringSerialize(s: string): string {
+  if (hasUnpairedSurrogate(s)) {
+    throw new ManifestValidationError('Strings containing lone surrogates not permitted in canonical JSON', 'INVALID_JSON_VALUE');
+  }
+  return JSON.stringify(s);
+}
+
+/**
  * Deterministic JSON serialization with sorted keys and compact spacing.
  * Enforces RFC 8785 JSON Canonicalization Scheme (JCS) invariants:
- * rejects undefined values, non-finite numbers, and lone surrogates.
+ * rejects undefined values, non-finite numbers, and lone surrogates
+ * in both string values and property names.
  */
 export function canonicalizeJson(obj: unknown): string {
   if (obj === undefined) {
@@ -63,10 +94,7 @@ export function canonicalizeJson(obj: unknown): string {
     return JSON.stringify(obj);
   }
   if (typeof obj === 'string') {
-    if (typeof (obj as any).toWellFormed === 'function' && (obj as any).toWellFormed() !== obj) {
-      throw new ManifestValidationError('Strings containing lone surrogates not permitted in canonical JSON', 'INVALID_JSON_VALUE');
-    }
-    return JSON.stringify(obj);
+    return checkedStringSerialize(obj);
   }
   if (obj === null || typeof obj === 'boolean') {
     return JSON.stringify(obj);
@@ -82,7 +110,7 @@ export function canonicalizeJson(obj: unknown): string {
       }
     }
     const pairs = keys.map(
-      key => `${JSON.stringify(key)}:${canonicalizeJson((obj as Record<string, unknown>)[key])}`
+      key => `${checkedStringSerialize(key)}:${canonicalizeJson((obj as Record<string, unknown>)[key])}`
     );
     return `{${pairs.join(',')}}`;
   }
@@ -150,6 +178,7 @@ export interface VerifyManifestOptions {
   expectedOperatorEmail: string;
   expectedAction?: string;
   nowMs?: number;
+  allowExpiredForRecovery?: boolean;
 }
 
 /**
@@ -278,13 +307,81 @@ export function verifyApprovalManifest(
     );
   }
 
-  // 5. Expiry check with strict finite clock validation
+  // 5. Issuance and expiry check with strict finite clock validation
   if (options.nowMs !== undefined && (!Number.isFinite(options.nowMs) || Number.isNaN(options.nowMs))) {
     throw new ManifestValidationError('nowMs option must be a finite number', 'INVALID_CLOCK');
   }
   const now = options.nowMs ?? Date.now();
-  const expiresAt = Date.parse(manifest.expires_at);
-  if (Number.isNaN(expiresAt) || expiresAt <= now) {
+
+  const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+  const DATE_TIME_PREFIX_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+  const TZ_OFFSET_RE = /(?:Z|[+-](?:0\d|1\d|2[0-3]):[0-5]\d)$/;
+
+  function validateIsoTimestamp(tsStr: string, fieldName: 'issued_at' | 'expires_at'): number {
+    if (typeof tsStr !== 'string' || !tsStr.trim()) {
+      throw new ManifestValidationError(`Approval manifest ${fieldName} timestamp is invalid`, fieldName === 'issued_at' ? 'INVALID_ISSUED_AT' : 'INVALID_EXPIRES_AT');
+    }
+
+    // 1. Check basic date-time format prefix
+    if (!DATE_TIME_PREFIX_RE.test(tsStr)) {
+      throw new ManifestValidationError(`Approval manifest ${fieldName} timestamp is invalid`, fieldName === 'issued_at' ? 'INVALID_ISSUED_AT' : 'INVALID_EXPIRES_AT');
+    }
+
+    // 2. Check explicit timezone offset presence
+    if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(tsStr)) {
+      throw new ManifestValidationError(`${fieldName} must include explicit timezone offset (Z or ±HH:MM)`, 'MISSING_TIMEZONE_OFFSET');
+    }
+
+    // 3. Check full ISO format
+    if (!ISO_TIMESTAMP_RE.test(tsStr)) {
+      throw new ManifestValidationError(`Approval manifest ${fieldName} timestamp is invalid`, fieldName === 'issued_at' ? 'INVALID_ISSUED_AT' : 'INVALID_EXPIRES_AT');
+    }
+
+    // 4. Validate timezone offset range (+00:00 to +23:59)
+    if (!TZ_OFFSET_RE.test(tsStr)) {
+      throw new ManifestValidationError(`Approval manifest ${fieldName} has invalid timezone offset`, 'INVALID_TIMEZONE_OFFSET');
+    }
+
+    // 3. Validate calendar dates (e.g. February 30)
+    const dateMatch = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(tsStr);
+    if (dateMatch) {
+      const year = Number(dateMatch[1]);
+      const month = Number(dateMatch[2]);
+      const day = Number(dateMatch[3]);
+      const hour = Number(dateMatch[4]);
+      const min = Number(dateMatch[5]);
+      const sec = Number(dateMatch[6]);
+
+      if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || min > 59 || sec > 59) {
+        throw new ManifestValidationError(`Approval manifest ${fieldName} has invalid calendar date`, 'INVALID_CALENDAR_DATE');
+      }
+
+      // Days per month
+      const isLeap = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+      const daysInMonth = [0, 31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      if (day > daysInMonth[month]) {
+        throw new ManifestValidationError(`Approval manifest ${fieldName} has invalid calendar date`, 'INVALID_CALENDAR_DATE');
+      }
+    }
+
+    const parsed = Date.parse(tsStr);
+    if (Number.isNaN(parsed)) {
+      throw new ManifestValidationError(`Approval manifest ${fieldName} timestamp is invalid`, fieldName === 'issued_at' ? 'INVALID_ISSUED_AT' : 'INVALID_EXPIRES_AT');
+    }
+
+    return parsed;
+  }
+
+  const issuedAt = validateIsoTimestamp(manifest.issued_at, 'issued_at');
+  if (issuedAt > now) {
+    throw new ManifestValidationError('Approval manifest issued_at is in the future relative to verification clock', 'FUTURE_ISSUED_MANIFEST');
+  }
+
+  const expiresAt = validateIsoTimestamp(manifest.expires_at, 'expires_at');
+  if (expiresAt <= issuedAt) {
+    throw new ManifestValidationError('Approval manifest expires_at must be strictly later than issued_at', 'INVALID_EXPIRATION_WINDOW');
+  }
+  if (expiresAt <= now && !options.allowExpiredForRecovery) {
     throw new ManifestValidationError('Approval manifest has expired', 'EXPIRED_MANIFEST');
   }
 
@@ -345,6 +442,18 @@ export function verifyApprovalManifest(
   }
   if (!Array.isArray(manifest.workspace_scope) || manifest.workspace_scope.length === 0) {
     throw new ManifestValidationError('workspace_scope must be non-empty array', 'INVALID_WORKSPACE_SCOPE');
+  }
+  if (manifest.workspace_scope.length > 21) {
+    throw new ManifestValidationError(
+      `workspace_scope length ${manifest.workspace_scope.length} exceeds Mode A limit of 21 workspaces`,
+      'WORKSPACE_SCOPE_EXCEEDS_LIMIT'
+    );
+  }
+  if (new Set(manifest.workspace_scope).size !== manifest.workspace_scope.length) {
+    throw new ManifestValidationError('workspace_scope contains duplicate workspace IDs', 'DUPLICATE_WORKSPACE_SCOPE');
+  }
+  if (typeof manifest.approval_identity !== 'string' || !manifest.approval_identity.trim()) {
+    throw new ManifestValidationError('approval_identity must be a non-blank string', 'MISSING_APPROVAL_IDENTITY');
   }
 
   const auditReference = computeAuditReference(recalculatedJson, envelopeSignatureBytes);

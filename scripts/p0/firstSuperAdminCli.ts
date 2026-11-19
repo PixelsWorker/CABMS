@@ -147,7 +147,7 @@ export function assertChildEnvAllowlist(childEnv: Record<string, string>): void 
  */
 export class LoopbackTripwire {
   private static activeInstances = new Set<LoopbackTripwire>();
-  private static originalGlobalConnect = net.Socket.prototype.connect;
+  private static originalGlobalConnect: typeof net.Socket.prototype.connect | null = null;
   public nonLoopbackAttempts: Array<{ host: string; port: number }> = [];
   public loopbackAttempts: Array<{ host: string; port: number }> = [];
   public active = false;
@@ -155,9 +155,13 @@ export class LoopbackTripwire {
   public activate(): void {
     if (this.active) return;
     this.active = true;
+    if (LoopbackTripwire.activeInstances.size === 0) {
+      LoopbackTripwire.originalGlobalConnect = net.Socket.prototype.connect;
+    }
     LoopbackTripwire.activeInstances.add(this);
 
     if (LoopbackTripwire.activeInstances.size === 1) {
+      const underlyingConnect = LoopbackTripwire.originalGlobalConnect!;
       net.Socket.prototype.connect = function (...args: any[]) {
         let host: string | undefined;
         let port = 0;
@@ -199,8 +203,25 @@ export class LoopbackTripwire {
           normalizedHost = normalizedHost.split(':')[0];
         }
 
-        // Check loopback targets
-        const isNamedPipeOrUnixSocket = normalizedHost.startsWith('\\\\.\\pipe\\') || normalizedHost.startsWith('/');
+        // Check IPC destinations (Unix domain sockets, Windows named pipes, and options.path)
+        // Mode A rejects IPC destinations by default to prevent socket-based proxy/egress bypass
+        const isIpc =
+          (typeof firstArg === 'object' && firstArg !== null && 'path' in firstArg) ||
+          normalizedHost.startsWith('\\\\.\\pipe\\') ||
+          normalizedHost.startsWith('/');
+
+        if (isIpc) {
+          for (const inst of LoopbackTripwire.activeInstances) {
+            inst.nonLoopbackAttempts.push({ host, port });
+          }
+          const err = new Error(`LoopbackTripwire blocked IPC destination attempt to ${host}`);
+          process.nextTick(() => {
+            this.destroy(err);
+          });
+          return this;
+        }
+
+        // Check loopback targets (strictly IPv4/IPv6 loopback literals and canonical loopback hostnames)
         const isNamedLoopback =
           normalizedHost === 'localhost' ||
           normalizedHost === 'ip6-localhost' ||
@@ -219,17 +240,18 @@ export class LoopbackTripwire {
           Number(ipv4Match[3]) <= 255
         );
 
-        const isLoopback = isNamedPipeOrUnixSocket || isNamedLoopback || isIpv6Loopback || isIpv4Loopback;
+        const isLoopback = isNamedLoopback || isIpv6Loopback || isIpv4Loopback;
 
-        // Pin named loopback destination directly to loopback IP literal to eliminate DNS rebinding or unvalidated external resolver risk
+        // Pin named loopback destination directly to loopback IP literal without mutating caller options object
+        const delegateArgs = [...args];
         if (isNamedLoopback) {
           const literal = normalizedHost.startsWith('ip6') ? '::1' : '127.0.0.1';
           if (typeof firstArg === 'object' && firstArg !== null) {
-            firstArg.host = literal;
+            delegateArgs[0] = { ...firstArg, host: literal };
           } else if (typeof args[1] === 'string') {
-            args[1] = literal;
+            delegateArgs[1] = literal;
           } else if (typeof firstArg === 'string') {
-            args[0] = literal;
+            delegateArgs[0] = literal;
           }
         }
 
@@ -247,7 +269,7 @@ export class LoopbackTripwire {
         for (const inst of LoopbackTripwire.activeInstances) {
           inst.loopbackAttempts.push({ host, port });
         }
-        return LoopbackTripwire.originalGlobalConnect.apply(this, args as any);
+        return underlyingConnect.apply(this, delegateArgs as any);
       };
     }
   }
@@ -256,11 +278,36 @@ export class LoopbackTripwire {
     if (!this.active) return;
     this.active = false;
     LoopbackTripwire.activeInstances.delete(this);
-    if (LoopbackTripwire.activeInstances.size === 0) {
+    if (LoopbackTripwire.activeInstances.size === 0 && LoopbackTripwire.originalGlobalConnect) {
       net.Socket.prototype.connect = LoopbackTripwire.originalGlobalConnect;
+      LoopbackTripwire.originalGlobalConnect = null;
     }
   }
 }
+
+export interface RecoverReceiptOptions {
+  evidenceDir?: string;
+  approvedEvidenceRoot?: string;
+  expectedTargetId: string;
+  expectedOperatorUid: string;
+  expectedOperatorEmail: string;
+  allowExpiredForRecovery?: boolean;
+  nowMs?: number;
+  /** Operator must affirmatively attest that any prior write has terminated. Default: false (fail closed). */
+  settled?: boolean;
+}
+
+export type RecoverReceiptResult = {
+  status: 'RECOVERED' | 'NOT_ENROLLED' | 'INCONSISTENT' | 'INDETERMINATE' | 'SECURITY_VIOLATION';
+  auditReceiptPath?: string;
+  error?: string;
+  securityViolation?: string;
+  receiptExportWarning?: string;
+};
+
+export type CliEnrollmentOutcome =
+  | EnrollmentOutcome
+  | { status: 'SECURITY_VIOLATION'; error: string; dbState: 'COMMITTED' | 'UNCOMMITTED' | 'INDETERMINATE' };
 
 export interface RunModeACliOptions {
   evidenceDir?: string;
@@ -268,6 +315,336 @@ export interface RunModeACliOptions {
   expectedTargetId: string;
   expectedOperatorUid: string;
   expectedOperatorEmail: string;
+}
+
+export interface RunModeACliResult {
+  outcome: CliEnrollmentOutcome;
+  reconciliation?: ReconciliationOutcome;
+  auditReceiptPath?: string;
+  securityViolation?: string;
+  receiptExportError?: string;
+  receiptExportWarning?: string;
+}
+
+/**
+ * Publishes an audit receipt atomically to resolvedEvidenceDir using linkSync.
+ * Prohibits overwriting existing receipt, verifies containment before and after publication,
+ * and cleans up only the temporary file owned by this invocation.
+ */
+function publishAuditReceipt(
+  verified: VerifiedApprovalManifest,
+  resolvedEvidenceDir: string,
+  approvedRoot?: string
+): { auditReceiptPath?: string; receiptExportError?: string; receiptExportWarning?: string } {
+  let fd: number | undefined;
+  let ownedTempPath: string | undefined;
+  let auditReceiptPath: string | undefined;
+  let receiptExportError: string | undefined;
+  let receiptExportWarning: string | undefined;
+
+  try {
+    if (!OPERATION_ID_UUID_REGEX.test(verified.manifest.operation_id)) {
+      throw new SecurityBoundaryError('operation_id must strictly match agreed format op_<UUID>');
+    }
+    fs.mkdirSync(resolvedEvidenceDir, { recursive: true });
+    if (approvedRoot) {
+      const realCreatedDir = fs.realpathSync(resolvedEvidenceDir);
+      const relCreated = path.relative(approvedRoot, realCreatedDir);
+      if (relCreated.startsWith('..') || path.isAbsolute(relCreated)) {
+        throw new SecurityBoundaryError('Evidence directory canonical realpath escapes approved root boundary');
+      }
+    }
+    const receiptFilename = `p0_audit_receipt_${verified.manifest.operation_id}.json`;
+    auditReceiptPath = path.join(resolvedEvidenceDir, receiptFilename);
+    const relReceipt = path.relative(resolvedEvidenceDir, auditReceiptPath);
+    if (relReceipt.startsWith('..') || path.isAbsolute(relReceipt) || path.dirname(auditReceiptPath) !== resolvedEvidenceDir) {
+      throw new SecurityBoundaryError('Receipt destination path escapes evidence directory');
+    }
+    if (fs.existsSync(auditReceiptPath)) {
+      throw new SecurityBoundaryError(`Receipt destination file already exists: ${receiptFilename}`);
+    }
+    const receipt = {
+      operation_id: verified.manifest.operation_id,
+      nonce: verified.manifest.nonce,
+      target_id: verified.manifest.target_id,
+      operator_email: verified.manifest.operator_email,
+      operator_uid: verified.manifest.operator_uid,
+      workspace_scope: verified.manifest.workspace_scope,
+      permitted_action: verified.manifest.permitted_action,
+      signing_key_id: verified.signing_key_id,
+      signature_algorithm: verified.signature_algorithm,
+      signature_bytes: verified.signature_bytes,
+      audit_reference: verified.audit_reference,
+      canonical_manifest_json: verified.canonical_manifest_json,
+      recorded_at: new Date().toISOString(),
+    };
+
+    const tempFilename = `.tmp_p0_receipt_${verified.manifest.operation_id}_${crypto.randomUUID()}.json`;
+    const tempPath = path.join(resolvedEvidenceDir, tempFilename);
+
+    fd = fs.openSync(tempPath, 'wx');
+    ownedTempPath = tempPath;
+
+    if (approvedRoot) {
+      let realParent: string;
+      try {
+        realParent = fs.realpathSync(resolvedEvidenceDir);
+      } catch {
+        throw new SecurityBoundaryError('Evidence directory disappeared or was swapped');
+      }
+      const relParent = path.relative(approvedRoot, realParent);
+      if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+        throw new SecurityBoundaryError('Evidence directory canonical realpath escapes approved root boundary (swapped or redirected)');
+      }
+      if (!fs.existsSync(tempPath)) {
+        throw new SecurityBoundaryError('Temporary file missing after open: directory was swapped or redirected');
+      }
+
+      const realTemp = fs.realpathSync(tempPath);
+      const relTemp = path.relative(approvedRoot, realTemp);
+      if (relTemp.startsWith('..') || path.isAbsolute(relTemp)) {
+        throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
+      }
+
+      const realTempParent = fs.realpathSync(path.dirname(tempPath));
+      if (realTempParent !== realParent) {
+        throw new SecurityBoundaryError('Receipt parent directory was swapped during file creation');
+      }
+    }
+
+    fs.writeSync(fd, JSON.stringify(receipt, null, 2), null, 'utf8');
+    fs.closeSync(fd);
+    fd = undefined;
+
+    if (approvedRoot) {
+      const realDestDir = fs.realpathSync(resolvedEvidenceDir);
+      const relDest = path.relative(approvedRoot, realDestDir);
+      if (relDest.startsWith('..') || path.isAbsolute(relDest)) {
+        throw new SecurityBoundaryError('Evidence directory canonical realpath was redirected before publication');
+      }
+    }
+
+    // Exclusive atomic publication via linkSync (fails if destination exists; never falls back to renameSync)
+    fs.linkSync(tempPath, auditReceiptPath);
+
+    try {
+      fs.unlinkSync(tempPath);
+      ownedTempPath = undefined;
+    } catch (cleanErr) {
+      receiptExportWarning = `Receipt published successfully, but temporary file cleanup failed: ${(cleanErr as Error).message}`;
+    }
+
+    if (approvedRoot) {
+      const realPublished = fs.realpathSync(auditReceiptPath);
+      const relPublished = path.relative(approvedRoot, realPublished);
+      if (relPublished.startsWith('..') || path.isAbsolute(relPublished)) {
+        try { fs.unlinkSync(auditReceiptPath); } catch {}
+        throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
+      }
+      const realParent = fs.realpathSync(path.dirname(auditReceiptPath));
+      const expectedParent = fs.realpathSync(resolvedEvidenceDir);
+      if (realParent !== expectedParent) {
+        try { fs.unlinkSync(auditReceiptPath); } catch {}
+        throw new SecurityBoundaryError('Receipt parent directory was swapped during file publication');
+      }
+    }
+
+    return { auditReceiptPath, receiptExportWarning };
+  } catch (err) {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch {}
+      fd = undefined;
+    }
+    if (ownedTempPath && fs.existsSync(ownedTempPath)) {
+      try { fs.unlinkSync(ownedTempPath); } catch {}
+    }
+    receiptExportError = (err as Error).message;
+    return { receiptExportError };
+  }
+}
+
+/**
+ * Dedicated read-only receipt recovery entry point.
+ * Recovers audit receipt for an already-completed enrollment without executing any write calls to D1.
+ */
+export async function recoverAuditReceipt(
+  db: D1Database,
+  signedManifest: SignedApprovalManifest,
+  trustedPublicKey: crypto.KeyObject | string,
+  options: RecoverReceiptOptions
+): Promise<RecoverReceiptResult> {
+  // 1. Enforce verified disposable local database boundary
+  if (!db || !isDisposableInMemoryD1(db) || typeof db.prepare !== 'function') {
+    throw new SecurityBoundaryError('Mode A CLI requires verified disposable local database boundary from trusted factory');
+  }
+
+  // 2. Validate mandatory options
+  if (!options || typeof options !== 'object') {
+    throw new SecurityBoundaryError('Recovery options are mandatory in Mode A');
+  }
+  if (!options.expectedTargetId) {
+    throw new SecurityBoundaryError('expectedTargetId is mandatory for receipt recovery');
+  }
+  if (!options.expectedOperatorUid) {
+    throw new SecurityBoundaryError('expectedOperatorUid is mandatory for receipt recovery');
+  }
+  if (!options.expectedOperatorEmail) {
+    throw new SecurityBoundaryError('expectedOperatorEmail is mandatory for receipt recovery');
+  }
+
+  // 3. Resolve evidence dir & approved root
+  let resolvedEvidenceDir: string | undefined;
+  let approvedRoot: string | undefined;
+  if (options.evidenceDir) {
+    const rawDir = options.evidenceDir;
+    if (rawDir.includes('..')) {
+      throw new SecurityBoundaryError('Evidence directory path escapes approved boundary');
+    }
+    const approvedRootRaw = path.resolve(options.approvedEvidenceRoot ?? 'evidence/paar-p0-mode-a');
+    if (!fs.existsSync(approvedRootRaw)) {
+      fs.mkdirSync(approvedRootRaw, { recursive: true });
+    }
+    approvedRoot = fs.realpathSync(approvedRootRaw);
+    resolvedEvidenceDir = path.resolve(rawDir);
+    const rel = path.relative(approvedRoot, resolvedEvidenceDir);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new SecurityBoundaryError('Evidence directory path escapes approved evidence root boundary');
+    }
+    let ancestor = resolvedEvidenceDir;
+    while (!fs.existsSync(ancestor)) {
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+    }
+    if (fs.existsSync(ancestor)) {
+      const realAncestor = fs.realpathSync(ancestor);
+      const relReal = path.relative(approvedRoot, realAncestor);
+      if (relReal.startsWith('..') || path.isAbsolute(relReal)) {
+        throw new SecurityBoundaryError('Evidence directory canonical realpath escapes approved root boundary');
+      }
+    }
+  }
+
+  // 4. Validate Ed25519 key
+  let validatedKeyObj: crypto.KeyObject;
+  if (typeof trustedPublicKey === 'string' || Buffer.isBuffer(trustedPublicKey)) {
+    try {
+      validatedKeyObj = crypto.createPublicKey(trustedPublicKey);
+    } catch (err) {
+      throw new SecurityBoundaryError(`Failed to parse trusted public key: ${(err as Error).message}`);
+    }
+  } else if (typeof trustedPublicKey === 'object' && trustedPublicKey !== null && 'asymmetricKeyType' in trustedPublicKey) {
+    validatedKeyObj = trustedPublicKey as crypto.KeyObject;
+  } else {
+    throw new SecurityBoundaryError('Invalid trusted public key format');
+  }
+  if (validatedKeyObj.asymmetricKeyType !== 'ed25519') {
+    throw new SecurityBoundaryError(`Unsupported public key type '${validatedKeyObj.asymmetricKeyType}'. Mode A strictly pins Ed25519 keys.`);
+  }
+
+  // 5. Verify manifest
+  const verified = verifyApprovalManifest(signedManifest, validatedKeyObj, {
+    expectedTargetId: options.expectedTargetId,
+    expectedOperatorUid: options.expectedOperatorUid,
+    expectedOperatorEmail: options.expectedOperatorEmail,
+    allowExpiredForRecovery: options.allowExpiredForRecovery,
+    nowMs: options.nowMs,
+  });
+
+  // 6. Deep read-only reconciliation under tripwire (ZERO write statements sent to D1)
+  const tripwire = new LoopbackTripwire();
+  tripwire.activate();
+  let reconStatus: ReconciliationOutcome;
+  try {
+    reconStatus = await reconcileEnrollmentStatus(
+      db,
+      verified.manifest.operation_id,
+      verified.manifest.operator_uid,
+      verified.audit_reference,
+      verified.manifest.workspace_scope,
+      { settled: options.settled === true }
+    );
+
+    if (tripwire.nonLoopbackAttempts.length > 0) {
+      return {
+        status: 'SECURITY_VIOLATION',
+        securityViolation: `Egress tripwire triggered during recovery: ${JSON.stringify(tripwire.nonLoopbackAttempts)}`,
+      };
+    }
+  } finally {
+    tripwire.deactivate();
+  }
+
+  if (reconStatus !== 'CONFIRMED_ENROLLED') {
+    return {
+      status: reconStatus,
+      error:
+        reconStatus === 'INDETERMINATE'
+          ? 'Receipt recovery rejected: database is empty or uncommitted, and operator settlement was not attested'
+          : `Receipt recovery rejected: database status is ${reconStatus}`,
+    };
+  }
+
+  // 6.5 Re-verify persisted audit row fields match verified manifest exactly
+  const persistedAudit = await db
+    .prepare('SELECT operation_id, audit_reference, canonical_manifest_json, created_at FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?')
+    .bind(verified.manifest.operation_id)
+    .first<{ operation_id: string; audit_reference: string; canonical_manifest_json: string; created_at: string }>();
+
+  if (
+    !persistedAudit ||
+    persistedAudit.operation_id !== verified.manifest.operation_id ||
+    persistedAudit.audit_reference !== verified.audit_reference ||
+    persistedAudit.canonical_manifest_json !== verified.canonical_manifest_json
+  ) {
+    return {
+      status: 'INCONSISTENT',
+      error: 'Persisted audit record does not match authenticated manifest signature or canonical bytes',
+    };
+  }
+
+  // 6.6 For expired manifest recovery, verify persisted audit record occurred within manifest validity window
+  if (options.allowExpiredForRecovery) {
+    const rawCreatedAt = persistedAudit.created_at.trim();
+    const isoRecordedAt = rawCreatedAt.includes('T')
+      ? (rawCreatedAt.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(rawCreatedAt) ? rawCreatedAt : rawCreatedAt + 'Z')
+      : rawCreatedAt.replace(' ', 'T') + 'Z';
+    const auditRecordedAt = Date.parse(isoRecordedAt);
+    const issuedAt = Date.parse(verified.manifest.issued_at);
+    const expiresAt = Date.parse(verified.manifest.expires_at);
+
+    if (
+      Number.isNaN(auditRecordedAt) ||
+      auditRecordedAt < issuedAt ||
+      auditRecordedAt > expiresAt
+    ) {
+      return {
+        status: 'INCONSISTENT',
+        error: `Persisted audit record created_at (${persistedAudit.created_at}) falls outside manifest validity window (${verified.manifest.issued_at} to ${verified.manifest.expires_at})`,
+      };
+    }
+  }
+
+  // 7. Publish receipt if evidence dir provided
+  if (!resolvedEvidenceDir) {
+    return {
+      status: 'RECOVERED',
+    };
+  }
+
+  const pubResult = publishAuditReceipt(verified, resolvedEvidenceDir, approvedRoot);
+  if (pubResult.receiptExportError) {
+    return {
+      status: 'INDETERMINATE',
+      error: `Receipt recovery failed during publication: ${pubResult.receiptExportError}`,
+    };
+  }
+
+  return {
+    status: 'RECOVERED',
+    auditReceiptPath: pubResult.auditReceiptPath,
+    receiptExportWarning: pubResult.receiptExportWarning,
+  };
 }
 
 /**
@@ -278,12 +655,7 @@ export async function runModeACliEnrollment(
   signedManifest: SignedApprovalManifest,
   trustedPublicKey: crypto.KeyObject | string,
   options: RunModeACliOptions
-): Promise<{
-  outcome: EnrollmentOutcome;
-  reconciliation?: ReconciliationOutcome;
-  auditReceiptPath?: string;
-  receiptExportError?: string;
-}> {
+): Promise<RunModeACliResult> {
   // 1. Enforce verified disposable local database boundary from trusted factory (Finding F-03)
   if (!db || !isDisposableInMemoryD1(db) || typeof db.prepare !== 'function') {
     throw new SecurityBoundaryError('Mode A CLI requires verified disposable local database boundary from trusted factory');
@@ -361,8 +733,9 @@ export async function runModeACliEnrollment(
   const tripwire = new LoopbackTripwire();
   tripwire.activate();
   let verified: VerifiedApprovalManifest;
-  let outcome: EnrollmentOutcome;
+  let outcome: CliEnrollmentOutcome;
   let reconciliation: ReconciliationOutcome | undefined;
+  let securityViolation: string | undefined;
 
   try {
     verified = verifyApprovalManifest(
@@ -390,131 +763,65 @@ export async function runModeACliEnrollment(
     }
 
     if (tripwire.nonLoopbackAttempts.length > 0) {
-      throw new SecurityBoundaryError(
-        `Egress tripwire triggered during Mode A execution: ${JSON.stringify(tripwire.nonLoopbackAttempts)}`
-      );
+      securityViolation = `Egress tripwire triggered during Mode A execution: ${JSON.stringify(tripwire.nonLoopbackAttempts)}`;
+      const dbState = outcome.status === 'SUCCESS'
+        ? 'COMMITTED'
+        : outcome.status === 'INDETERMINATE'
+          ? 'INDETERMINATE'
+          : 'UNCOMMITTED';
+      outcome = {
+        status: 'SECURITY_VIOLATION',
+        error: securityViolation,
+        dbState,
+      };
     }
   } finally {
     tripwire.deactivate();
   }
 
-  // 7. Export non-secret signed audit receipt (CR-02, CR-04 & Directory-Swap TOCTOU hardening)
+  // 7. Export non-secret signed audit receipt (linkSync publication)
   let auditReceiptPath: string | undefined;
   let receiptExportError: string | undefined;
+  let receiptExportWarning: string | undefined;
   const isConfirmedEnrolled =
-    outcome.status === 'SUCCESS' || reconciliation === 'CONFIRMED_ENROLLED';
+    !securityViolation &&
+    (outcome.status === 'SUCCESS' || reconciliation === 'CONFIRMED_ENROLLED');
 
   if (isConfirmedEnrolled && resolvedEvidenceDir) {
-    let fd: number | undefined;
-    try {
-      if (!OPERATION_ID_UUID_REGEX.test(verified.manifest.operation_id)) {
-        throw new SecurityBoundaryError('operation_id must strictly match agreed format op_<UUID>');
-      }
-      fs.mkdirSync(resolvedEvidenceDir, { recursive: true });
-      if (approvedRoot) {
-        const realCreatedDir = fs.realpathSync(resolvedEvidenceDir);
-        const relCreated = path.relative(approvedRoot, realCreatedDir);
-        if (relCreated.startsWith('..') || path.isAbsolute(relCreated)) {
-          throw new SecurityBoundaryError('Evidence directory canonical realpath escapes approved root boundary');
-        }
-      }
-      const receiptFilename = `p0_audit_receipt_${verified.manifest.operation_id}.json`;
-      auditReceiptPath = path.join(resolvedEvidenceDir, receiptFilename);
-      const relReceipt = path.relative(resolvedEvidenceDir, auditReceiptPath);
-      if (relReceipt.startsWith('..') || path.isAbsolute(relReceipt) || path.dirname(auditReceiptPath) !== resolvedEvidenceDir) {
-        throw new SecurityBoundaryError('Receipt destination path escapes evidence directory');
-      }
-      // If destination file already exists, prohibit overwriting (exclusive creation 'wx')
-      if (fs.existsSync(auditReceiptPath)) {
-        throw new SecurityBoundaryError(`Receipt destination file already exists: ${receiptFilename}`);
-      }
-      const receipt = {
-        operation_id: verified.manifest.operation_id,
-        nonce: verified.manifest.nonce,
-        target_id: verified.manifest.target_id,
-        operator_email: verified.manifest.operator_email,
-        operator_uid: verified.manifest.operator_uid,
-        workspace_scope: verified.manifest.workspace_scope,
-        permitted_action: verified.manifest.permitted_action,
-        signing_key_id: verified.signing_key_id,
-        signature_algorithm: verified.signature_algorithm,
-        signature_bytes: verified.signature_bytes,
-        audit_reference: verified.audit_reference,
-        canonical_manifest_json: verified.canonical_manifest_json,
-        recorded_at: new Date().toISOString(),
-      };
-
-      // Write full JSON to a secure temporary file first, then publish exclusively to prevent partial/truncated files
-      const tempFilename = `.tmp_p0_receipt_${verified.manifest.operation_id}_${crypto.randomUUID()}.json`;
-      const tempPath = path.join(resolvedEvidenceDir, tempFilename);
-
-      // Atomic creation of temp file with exclusive 'wx' flag
-      fd = fs.openSync(tempPath, 'wx');
-
-      // Post-creation canonical containment revalidation while holding descriptor
-      // Closes TOCTOU directory swap race before writing content
-      if (approvedRoot) {
-        const realTemp = fs.realpathSync(tempPath);
-        const relTemp = path.relative(approvedRoot, realTemp);
-        if (relTemp.startsWith('..') || path.isAbsolute(relTemp)) {
-          throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
-        }
-
-        const realParent = fs.realpathSync(path.dirname(tempPath));
-        const expectedParent = fs.realpathSync(resolvedEvidenceDir);
-        if (realParent !== expectedParent) {
-          throw new SecurityBoundaryError('Receipt parent directory was swapped during file creation');
-        }
-      }
-
-      // Write complete JSON content to open descriptor
-      fs.writeSync(fd, JSON.stringify(receipt, null, 2), null, 'utf8');
-      fs.closeSync(fd);
-      fd = undefined;
-
-      // Atomically publish via exclusive copy (strictly prohibits overwriting existing receipt)
-      fs.copyFileSync(tempPath, auditReceiptPath, fs.constants.COPYFILE_EXCL);
-      try { fs.unlinkSync(tempPath); } catch {}
-
-      // Post-publication canonical containment verification to eliminate any post-check write/copy gap
-      if (approvedRoot) {
-        const realPublished = fs.realpathSync(auditReceiptPath);
-        const relPublished = path.relative(approvedRoot, realPublished);
-        if (relPublished.startsWith('..') || path.isAbsolute(relPublished)) {
-          try { fs.unlinkSync(auditReceiptPath); } catch {}
-          throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
-        }
-        const realParent = fs.realpathSync(path.dirname(auditReceiptPath));
-        const expectedParent = fs.realpathSync(resolvedEvidenceDir);
-        if (realParent !== expectedParent) {
-          try { fs.unlinkSync(auditReceiptPath); } catch {}
-          throw new SecurityBoundaryError('Receipt parent directory was swapped during file publication');
-        }
-      }
-    } catch (err) {
-      if (fd !== undefined) {
-        try { fs.closeSync(fd); } catch {}
-        fd = undefined;
-      }
-      if (resolvedEvidenceDir && fs.existsSync(resolvedEvidenceDir)) {
-        try {
-          const files = fs.readdirSync(resolvedEvidenceDir);
-          for (const f of files) {
-            if (f.startsWith(`.tmp_p0_receipt_${verified.manifest.operation_id}`)) {
-              try { fs.unlinkSync(path.join(resolvedEvidenceDir, f)); } catch {}
-            }
-          }
-        } catch {}
-      }
-      receiptExportError = (err as Error).message;
-      auditReceiptPath = undefined;
-    }
+    const pubResult = publishAuditReceipt(verified, resolvedEvidenceDir, approvedRoot);
+    auditReceiptPath = pubResult.auditReceiptPath;
+    receiptExportError = pubResult.receiptExportError;
+    receiptExportWarning = pubResult.receiptExportWarning;
   }
 
   return {
     outcome,
     reconciliation,
     auditReceiptPath,
+    securityViolation,
     receiptExportError,
+    receiptExportWarning,
   };
+}
+
+/**
+ * Maps Mode A execution outcome to canonical process exit code.
+ * Exported status-mapping contract for automation wrappers.
+ * Exits non-zero on:
+ * - 2: SECURITY_VIOLATION (loopback egress tripwire tripped)
+ * - 3: INDETERMINATE (transport dropped, database state unsettled)
+ * - 1: NOT_ENROLLED (validation failure, transaction rollback, or unexpected status)
+ * - 4: RECEIPT_EXPORT_ERROR (database committed, but mandatory audit receipt is missing)
+ * - 0: Complete operational success (enrolled and audit receipt populated)
+ */
+export function getCliExitCode(result: RunModeACliResult): number {
+  if (result.outcome.status === 'SECURITY_VIOLATION') return 2;
+  if (result.outcome.status === 'INDETERMINATE') return 3;
+  if (result.outcome.status === 'NOT_ENROLLED') return 1;
+  if (result.outcome.status === 'SUCCESS') {
+    // Committed to D1, but mandatory audit receipt is missing (export failed or destination omitted)
+    if (result.receiptExportError || !result.auditReceiptPath) return 4;
+    return 0;
+  }
+  return 1;
 }

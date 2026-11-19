@@ -27,6 +27,7 @@ test('G01: legacy bootstrap script is retired and fails closed with zero mutatio
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM g01_protected_super_admin").first<{ n: number }>())?.n, 0);
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM g01_bootstrap_completion").first<{ n: number }>())?.n, 0);
   assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM privileged_identity_approvals WHERE role = 'super_admin'").first<{ n: number }>())?.n, 0);
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests").first<{ n: number }>())?.n, 0);
 });
 
 test('G01: legacy bootstrap script fails closed even if executed on schema prior to migration 0006', async () => {

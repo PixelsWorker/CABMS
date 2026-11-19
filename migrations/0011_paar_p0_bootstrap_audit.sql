@@ -4,7 +4,7 @@
 -- signing key ID, independent unique nonce, unique operation ID, and execution provenance.
 -- Provides trigger-enforced completion prerequisite and strict immutability.
 
-CREATE TABLE IF NOT EXISTS paar_p0_bootstrap_audit_manifests (
+CREATE TABLE paar_p0_bootstrap_audit_manifests (
   id TEXT PRIMARY KEY NOT NULL,
   operation_id TEXT NOT NULL UNIQUE CHECK (length(trim(operation_id)) > 0),
   nonce TEXT NOT NULL UNIQUE CHECK (length(trim(nonce)) > 0),
@@ -19,16 +19,16 @@ CREATE TABLE IF NOT EXISTS paar_p0_bootstrap_audit_manifests (
   canonical_manifest_json TEXT NOT NULL CHECK (length(trim(canonical_manifest_json)) > 0),
   audit_reference TEXT NOT NULL UNIQUE CHECK (length(trim(audit_reference)) > 0),
   created_at TEXT NOT NULL CHECK (length(trim(created_at)) > 0)
-);
+) WITHOUT ROWID;
 
 -- Immutability triggers: audit manifests can never be updated, deleted, or replaced
-CREATE TRIGGER IF NOT EXISTS paar_p0_audit_no_update
+CREATE TRIGGER paar_p0_audit_no_update
 BEFORE UPDATE ON paar_p0_bootstrap_audit_manifests
 BEGIN
   SELECT RAISE(ABORT, 'audit manifest records are immutable');
 END;
 
-CREATE TRIGGER IF NOT EXISTS paar_p0_audit_no_delete
+CREATE TRIGGER paar_p0_audit_no_delete
 BEFORE DELETE ON paar_p0_bootstrap_audit_manifests
 BEGIN
   SELECT RAISE(ABORT, 'audit manifest records cannot be deleted');
@@ -37,7 +37,7 @@ END;
 -- Explicit BEFORE INSERT conflict rejection trigger:
 -- Blocks INSERT OR REPLACE, INSERT OR IGNORE, and conflicting UPSERT
 -- regardless of whether PRAGMA recursive_triggers is OFF or ON.
-CREATE TRIGGER IF NOT EXISTS paar_p0_audit_no_insert_conflict
+CREATE TRIGGER paar_p0_audit_no_insert_conflict
 BEFORE INSERT ON paar_p0_bootstrap_audit_manifests
 WHEN EXISTS (
   SELECT 1 FROM paar_p0_bootstrap_audit_manifests
@@ -52,7 +52,7 @@ END;
 
 -- Completion prerequisite trigger:
 -- Completion record cannot be inserted unless a matching audit manifest row already exists.
-CREATE TRIGGER IF NOT EXISTS paar_p0_completion_requires_audit
+CREATE TRIGGER paar_p0_completion_requires_audit
 BEFORE INSERT ON g01_bootstrap_completion
 WHEN NOT EXISTS (
   SELECT 1 FROM paar_p0_bootstrap_audit_manifests a

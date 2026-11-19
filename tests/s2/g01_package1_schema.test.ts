@@ -86,6 +86,47 @@ test('protected identity and marker reject every replacement and conflict policy
   } finally { db.getSqliteHandle().close(); }
 });
 
+test('4D: bootstrap completion rejects valid audit row when protected identity is missing or mismatched', async () => {
+  const db = await setup();
+  try {
+    // 1. Valid audit manifest is inserted first
+    await db.exec(auditManifest);
+
+    // 2. Protected identity is missing: marker insertion must fail closed with 'bootstrap identity mismatch'
+    await assert.rejects(
+      () => db.exec(marker),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.ok(
+          error.message.includes('bootstrap identity mismatch'),
+          `expected 'bootstrap identity mismatch' when protected identity is missing, got: ${error.message}`
+        );
+        return true;
+      }
+    );
+
+    // 3. Protected identity exists with mismatched UID: marker insertion must also fail closed
+    await db.exec(identity.replace("'original_uid'", "'mismatched_uid'"));
+    await assert.rejects(
+      () => db.exec(marker),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.ok(
+          error.message.includes('bootstrap identity mismatch'),
+          `expected 'bootstrap identity mismatch' when protected identity UID mismatches, got: ${error.message}`
+        );
+        return true;
+      }
+    );
+
+    // 4. Verify g01_bootstrap_completion remains strictly empty
+    const completionRows = await db.prepare('SELECT COUNT(*) AS count FROM g01_bootstrap_completion').first<{ count: number }>();
+    assert.equal(completionRows?.count, 0, 'g01_bootstrap_completion must remain empty after rejections');
+  } finally {
+    db.getSqliteHandle().close();
+  }
+});
+
 test('recovery chain rejects malformed, conflicting and replayed transitions without state changes', async () => {
   const db = await setup();
   try {

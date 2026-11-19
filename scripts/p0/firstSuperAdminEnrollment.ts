@@ -19,7 +19,7 @@ import type { VerifiedApprovalManifest } from './approvalManifest.ts';
 
 export type EnrollmentOutcome =
   | { status: 'SUCCESS'; operationId: string; auditReference: string }
-  | { status: 'NOT_ENROLLED'; error: string; rollbackProven: true }
+  | { status: 'NOT_ENROLLED'; error: string; rollbackProven: boolean; writeAttempted?: boolean }
   | { status: 'INDETERMINATE'; error: string };
 
 export type ReconciliationOutcome =
@@ -82,14 +82,15 @@ export function isSqliteConstraintOrTriggerAbort(error: unknown): boolean {
     return true;
   }
 
-  // Standard SQLite constraint failed messages
+  // Standard SQLite constraint failed messages and D1 SQLITE_CONSTRAINT errors
   if (
     message.includes('CHECK constraint failed') ||
     message.includes('UNIQUE constraint failed') ||
     message.includes('FOREIGN KEY constraint failed') ||
     message.includes('NOT NULL constraint failed') ||
     message.includes('PRIMARY KEY constraint failed') ||
-    message.startsWith('constraint failed')
+    message.startsWith('constraint failed') ||
+    message.includes('SQLITE_CONSTRAINT')
   ) {
     return true;
   }
@@ -111,6 +112,21 @@ export async function enrollFirstSuperAdmin(
   const mappingId = `map_sa_primary_${crypto.randomUUID()}`;
   const auditId = `audit_p0_${crypto.randomUUID()}`;
   const scope = manifest.workspace_scope;
+
+  // Guard: D1 limits statements to 100 bound parameters.
+  // C03 postcondition statement binds 15 fixed + 4 per workspace in scope.
+  // For N = 21: 15 + 4(21) = 99 <= 100.
+  // For N = 22: 15 + 4(22) = 103 > 100.
+  // Validation rejected before database write MUST NOT claim rollback occurred (rollbackProven: false).
+  const MAX_D1_SCOPE_SIZE = 21;
+  if (scope.length > MAX_D1_SCOPE_SIZE) {
+    return {
+      status: 'NOT_ENROLLED',
+      error: `workspace_scope length ${scope.length} exceeds Mode A D1 parameter limit of 21 workspaces (15 + 4N <= 100)`,
+      rollbackProven: false,
+      writeAttempted: false,
+    };
+  }
 
   // Build statement array for D1.batch()
   const statements: D1PreparedStatement[] = [];
@@ -227,14 +243,14 @@ export async function enrollFirstSuperAdmin(
         AND (SELECT COUNT(*) FROM user_identity_mappings WHERE user_id = 'usr_primary_super_admin' AND provider_id = 'firebase' AND provider_subject_id = ?) = 1
         -- C03-03: Matching g01_protected_super_admin singleton with correct user_id and provider_subject_id
         AND (SELECT COUNT(*) FROM g01_protected_super_admin WHERE singleton = 1 AND user_id = 'usr_primary_super_admin' AND provider_subject_id = ?) = 1
-        -- C03-04: Exactly the approved workspace memberships with role = 'super_admin' and exact scope set
-        AND (SELECT COUNT(*) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin') = ?
-        AND (SELECT COUNT(*) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND workspace_id NOT IN (${scopePlaceholders})) = 0
+        -- C03-04: Exactly the approved workspace memberships, zero memberships outside signed scope, and no non-super_admin roles
+        AND (SELECT COUNT(*) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin') = ?
+        AND (SELECT COUNT(*) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND (role != 'super_admin' OR workspace_id NOT IN (${scopePlaceholders}))) = 0
         AND (SELECT COUNT(DISTINCT workspace_id) FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND workspace_id IN (${scopePlaceholders})) = ?
-        -- C03-05: Exactly one active approval per approved workspace matching operator UID and exact scope set
-        AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_subject_id = ? AND revoked_at IS NULL) = ?
-        AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_subject_id = ? AND revoked_at IS NULL AND workspace_id NOT IN (${scopePlaceholders})) = 0
-        AND (SELECT COUNT(DISTINCT workspace_id) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_subject_id = ? AND revoked_at IS NULL AND workspace_id IN (${scopePlaceholders})) = ?
+        -- C03-05: Exactly one active approval per approved workspace matching operator UID, zero approvals outside signed scope, and no non-super_admin or non-firebase approvals
+        AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND revoked_at IS NULL) = ?
+        AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND revoked_at IS NULL AND (role != 'super_admin' OR provider_id != 'firebase' OR provider_subject_id != ? OR workspace_id NOT IN (${scopePlaceholders}))) = 0
+        AND (SELECT COUNT(DISTINCT workspace_id) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_id = 'firebase' AND provider_subject_id = ? AND revoked_at IS NULL AND workspace_id IN (${scopePlaceholders})) = ?
         -- C03-06: No prior revoked approvals for this user/role
         AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND revoked_at IS NOT NULL) = 0
         -- C03-07: Matching audit record with operation_id and audit_reference
@@ -253,7 +269,6 @@ export async function enrollFirstSuperAdmin(
       ...scope,
       ...scope,
       scope.length,
-      manifest.operator_uid,
       scope.length,
       manifest.operator_uid,
       ...scope,
@@ -305,6 +320,10 @@ export async function enrollFirstSuperAdmin(
   }
 }
 
+export interface ReconcileOptions {
+  settled?: boolean;
+}
+
 /**
  * Deep read-only reconciliation function.
  * Called ONLY when outcome is uncertain (INDETERMINATE).
@@ -315,7 +334,8 @@ export async function reconcileEnrollmentStatus(
   operationId: string,
   expectedUid: string,
   expectedAuditRef: string,
-  expectedScopeLengthOrList?: number | readonly string[]
+  expectedScopeLengthOrList?: number | readonly string[],
+  options?: ReconcileOptions
 ): Promise<ReconciliationOutcome> {
   try {
     // Query completion, audit, protected identity, mappings, memberships, approvals, user status
@@ -376,9 +396,8 @@ export async function reconcileEnrollmentStatus(
     const totalMappingCount = mappingCounts?.total ?? 0;
 
     const approvalsRes = await db
-      .prepare("SELECT workspace_id, role, provider_id FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND provider_subject_id = ? AND revoked_at IS NULL")
-      .bind(expectedUid)
-      .all<{ workspace_id: string; role: string; provider_id: string }>();
+      .prepare("SELECT workspace_id, role, provider_id, provider_subject_id FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND revoked_at IS NULL")
+      .all<{ workspace_id: string; role: string; provider_id: string; provider_subject_id: string }>();
     const approvalRows = approvalsRes.results ?? [];
 
     // Derive approved workspace set (CR-08: Caller's verified expectedScopeList is strictly authoritative)
@@ -388,6 +407,7 @@ export async function reconcileEnrollmentStatus(
     }
 
     // Read workspace IDs from lossless array in canonical_manifest_json when available
+    let manifestArrayMalformed = false;
     const auditWorkspaces = (() => {
       if (!auditRow) return [];
       if (auditRow.canonical_manifest_json) {
@@ -395,8 +415,16 @@ export async function reconcileEnrollmentStatus(
           const parsed = JSON.parse(auditRow.canonical_manifest_json) as Record<string, unknown>;
           if (Array.isArray(parsed.workspace_scope)) {
             return (parsed.workspace_scope as unknown[]).map(String).sort();
+          } else if (callerExpectedWorkspaces) {
+            manifestArrayMalformed = true;
           }
-        } catch {}
+        } catch {
+          if (callerExpectedWorkspaces) {
+            manifestArrayMalformed = true;
+          }
+        }
+      } else if (callerExpectedWorkspaces) {
+        manifestArrayMalformed = true;
       }
       return auditRow.workspace_scope
         ? auditRow.workspace_scope.split(',').map(s => s.trim()).filter(Boolean).sort()
@@ -425,6 +453,7 @@ export async function reconcileEnrollmentStatus(
     const auditMatchesCaller = !callerExpectedWorkspaces || setsEqual(callerExpectedWorkspaces, auditWorkspaces);
 
     const isScopeConsistent =
+      !manifestArrayMalformed &&
       expectedWorkspaces.length > 0 &&
       auditMatchesCaller &&
       setsEqual(expectedWorkspaces, actualMembershipWorkspaces) &&
@@ -433,7 +462,7 @@ export async function reconcileEnrollmentStatus(
       membershipRows.length === expectedLength &&
       approvalRows.length === expectedLength &&
       membershipRows.every(m => m.role === 'super_admin') &&
-      approvalRows.every(a => a.role === 'super_admin' && a.provider_id === 'firebase');
+      approvalRows.every(a => a.role === 'super_admin' && a.provider_id === 'firebase' && a.provider_subject_id === expectedUid);
 
     // Case 1: Complete, active user, and fully consistent
     if (
@@ -469,6 +498,9 @@ export async function reconcileEnrollmentStatus(
       membershipRows.length === 0 &&
       approvalRows.length === 0
     ) {
+      if (options?.settled !== true) {
+        return 'INDETERMINATE';
+      }
       return 'NOT_ENROLLED';
     }
 

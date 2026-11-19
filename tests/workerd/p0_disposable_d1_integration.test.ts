@@ -23,9 +23,9 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
-import { loadVerifiedMigrations, runLocalMigrations } from '../../backend/db/migrate.ts';
+import { loadVerifiedMigrations } from '../../backend/db/migrate.ts';
 import { createFirebaseFixture } from '../support/firebaseTokens.ts';
-import { createLocalD1Database, isDisposableInMemoryD1, type D1Database } from '../../backend/db/d1.ts';
+import { isDisposableInMemoryD1, type D1Database } from '../../backend/db/d1.ts';
 import {
   signApprovalManifest,
   verifyApprovalManifest,
@@ -51,6 +51,10 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
   let worker: any;
   let workerUrl: URL;
   let realD1: D1Database;
+  let workerW7: any;
+  let w7D1: D1Database;
+  let workerW9: any;
+  let w9D1: D1Database;
   let isolationDir: string;
   let isolationReal: string;
   let tempReal: string;
@@ -83,13 +87,17 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     }
 
     tempReal = fs.realpathSync(os.tmpdir());
-    isolationDir = fs.mkdtempSync(path.join(tempReal, 'cabms-p0-workerd-'));
-    isolationReal = fs.realpathSync(isolationDir);
+    const candidateDir = fs.mkdtempSync(path.join(tempReal, 'cabms-p0-workerd-'));
+    const candidateReal = fs.realpathSync(candidateDir);
 
-    const rel = path.relative(tempReal, isolationReal);
+    const rel = path.relative(tempReal, candidateReal);
     if (!rel || path.isAbsolute(rel) || rel === '..' || rel.startsWith('..' + path.sep)) {
       throw new Error('Unsafe disposable workerd isolation directory path escape');
     }
+
+    // Assign to cleanup targets only AFTER containment validation passes
+    isolationDir = candidateDir;
+    isolationReal = candidateReal;
 
     // 1. Copy validated migrations 0001 through 0011 into ephemeral migrations directory
     const verified = loadVerifiedMigrations();
@@ -104,11 +112,12 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     firebaseFixture = await createFirebaseFixture();
     const jwks = firebaseFixture.jwks();
 
-    // 3. Write ephemeral Wrangler configuration targeting tests/support/worker.ts
-    const configPath = path.join(isolationReal, 'wrangler.json');
+    // 3. Write ephemeral Wrangler configurations targeting tests/support/worker.ts
+    // Main worker: tests W1-W6, W8
     const workerEntryPath = path.resolve(rootDir, 'tests/support/worker.ts');
+    const configPathMain = path.join(isolationReal, 'wrangler-main.json');
     fs.writeFileSync(
-      configPath,
+      configPathMain,
       JSON.stringify({
         name: 'cabms-p0-workerd-worker',
         main: workerEntryPath,
@@ -132,21 +141,89 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
       })
     );
 
+    // Dedicated W7 worker with isolated D1 binding for real D1 rollback proof
+    const configPathW7 = path.join(isolationReal, 'wrangler-w7.json');
+    fs.writeFileSync(
+      configPathW7,
+      JSON.stringify({
+        name: 'cabms-p0-workerd-w7-worker',
+        main: workerEntryPath,
+        compatibility_date: '2026-10-28',
+        compatibility_flags: ['nodejs_compat'],
+        d1_databases: [
+          {
+            binding: 'DB',
+            database_name: 'cabms-d1-w7',
+            database_id: 'local-w7-only',
+            migrations_dir: migrationDir,
+          },
+        ],
+        vars: {
+          ENVIRONMENT: 'test',
+          FIREBASE_PROJECT_ID: 'cabms-test',
+          TEST_PUBLIC_JWKS: JSON.stringify(jwks),
+          TEST_RUN_ID: runId,
+          TEST_SETUP_SECRET: setupSecret,
+        },
+      })
+    );
+
+    // Dedicated W9 worker with isolated D1 binding for real workerd runtime privilege denial
+    const configPathW9 = path.join(isolationReal, 'wrangler-w9.json');
+    fs.writeFileSync(
+      configPathW9,
+      JSON.stringify({
+        name: 'cabms-p0-workerd-w9-worker',
+        main: workerEntryPath,
+        compatibility_date: '2026-10-28',
+        compatibility_flags: ['nodejs_compat'],
+        d1_databases: [
+          {
+            binding: 'DB',
+            database_name: 'cabms-d1-w9',
+            database_id: 'local-w9-only',
+            migrations_dir: migrationDir,
+          },
+        ],
+        vars: {
+          ENVIRONMENT: 'test',
+          FIREBASE_PROJECT_ID: 'cabms-test',
+          TEST_PUBLIC_JWKS: JSON.stringify(jwks),
+          TEST_RUN_ID: runId,
+          TEST_SETUP_SECRET: setupSecret,
+        },
+      })
+    );
+
     // 4. Launch disposable test harness via pinned Wrangler createTestHarness
     server = createTestHarness({
-      workers: [{ configPath }],
+      workers: [
+        { configPath: configPathMain },
+        { configPath: configPathW7 },
+        { configPath: configPathW9 },
+      ],
     });
 
     const listenResult = await server.listen();
     workerUrl = new URL(listenResult.url.href);
     worker = server.getWorker('cabms-p0-workerd-worker');
+    workerW7 = server.getWorker('cabms-p0-workerd-w7-worker');
+    workerW9 = server.getWorker('cabms-p0-workerd-w9-worker');
 
-    // 5. Apply migrations 0001 through 0011 to real D1 instance
+    // 5. Apply migrations 0001 through 0011 to real D1 instances
     await worker.applyD1Migrations('DB');
+    await workerW7.applyD1Migrations('DB');
+    await workerW9.applyD1Migrations('DB');
 
-    // 6. Obtain real D1 binding for test verification
+    // 6. Obtain real D1 bindings for test verification
     const env = await worker.getEnv();
     realD1 = env.DB;
+
+    const envW7 = await workerW7.getEnv();
+    w7D1 = envW7.DB;
+
+    const envW9 = await workerW9.getEnv();
+    w9D1 = envW9.DB;
   });
 
   after(async () => {
@@ -397,36 +474,33 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     assert.equal(freshOutcome.status, 'NOT_ENROLLED');
     assert.equal(freshOutcome.rollbackProven, true);
 
-    // 3. Fresh disposable D1 rollback proof: abort at completion insertion rolls back all earlier writes
-    const freshD1 = createLocalD1Database();
-    await runLocalMigrations(freshD1, { disposableTest: true });
-
-    // Inject trigger to abort at completion insertion
-    await freshD1.exec("CREATE TRIGGER w7_fail_completion BEFORE INSERT ON g01_bootstrap_completion BEGIN SELECT RAISE(ABORT, 'w7_simulated_completion_failure'); END;");
+    // 3. Real disposable D1 rollback proof: abort at completion insertion rolls back all earlier writes on real D1 binding
+    // Inject trigger on real D1 binding to abort at completion insertion
+    await w7D1.exec("CREATE TRIGGER w7_fail_completion BEFORE INSERT ON g01_bootstrap_completion BEGIN SELECT RAISE(ABORT, 'w7_simulated_completion_failure'); END;");
 
     const manifestW7 = createValidSyntheticManifest();
     const signedW7 = signApprovalManifest(manifestW7, ephemeralKeyPair.privateKey);
     const verifiedW7 = verifyApprovalManifest(signedW7, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
 
-    const failedOutcome = await enrollFirstSuperAdmin(freshD1, verifiedW7);
+    const failedOutcome = await enrollFirstSuperAdmin(w7D1, verifiedW7);
     assert.equal(failedOutcome.status, 'NOT_ENROLLED');
     assert.equal(failedOutcome.rollbackProven, true);
 
-    // Verify all prior writes were rolled back cleanly
-    const userCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    // Verify all prior writes were rolled back cleanly on real D1
+    const userCount = (await w7D1.prepare("SELECT COUNT(*) AS n FROM users WHERE id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
     assert.equal(userCount, 0, 'Users table must have rolled back');
-    const mapCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM user_identity_mappings WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    const mapCount = (await w7D1.prepare("SELECT COUNT(*) AS n FROM user_identity_mappings WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
     assert.equal(mapCount, 0, 'Identity mappings must have rolled back');
-    const memCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    const memCount = (await w7D1.prepare("SELECT COUNT(*) AS n FROM workspace_memberships WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
     assert.equal(memCount, 0, 'Workspace memberships must have rolled back');
-    const apprCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
+    const apprCount = (await w7D1.prepare("SELECT COUNT(*) AS n FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin'").first<{ n: number }>())?.n;
     assert.equal(apprCount, 0, 'Approvals must have rolled back');
-    const auditCount = (await freshD1.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?").bind(manifestW7.operation_id).first<{ n: number }>())?.n;
+    const auditCount = (await w7D1.prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ?").bind(manifestW7.operation_id).first<{ n: number }>())?.n;
     assert.equal(auditCount, 0, 'Audit record must have rolled back');
 
-    // Remove failure trigger and confirm enrollment now succeeds
-    await freshD1.exec("DROP TRIGGER w7_fail_completion;");
-    const retryOutcome = await enrollFirstSuperAdmin(freshD1, verifiedW7);
+    // Remove failure trigger and confirm enrollment now succeeds on real D1
+    await w7D1.exec("DROP TRIGGER w7_fail_completion;");
+    const retryOutcome = await enrollFirstSuperAdmin(w7D1, verifiedW7);
     assert.equal(retryOutcome.status, 'SUCCESS');
   });
 
@@ -472,39 +546,87 @@ describe('CABMS PAAR-P0 — Real Disposable workerd & D1 Integration', () => {
     );
   });
 
-  // --- Scenario 9: Incomplete-state privilege denial on disposable D1 fixture ---
-  it('W9: incomplete-state on disposable D1 fixture (protected identity + active approval without completion) denies super_admin privilege', async () => {
-    const db = createLocalD1Database();
-    await runLocalMigrations(db, { disposableTest: true });
-
+  // --- Scenario 9: Incomplete-state privilege denial on real workerd & D1 binding ---
+  it('W9: incomplete-state on real workerd & D1 binding (protected identity + active approval without completion) denies super_admin privilege', async () => {
     const incompleteUid = 'workerd_incomplete_super_admin_uid';
-    await db.exec(`
-      INSERT INTO users (id, email, display_name, disabled, created_at, updated_at)
-      VALUES ('usr_primary_super_admin', '${PROTECTED_EMAIL}', 'Primary Super Admin', 0, datetime('now'), datetime('now'));
-      INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at)
-      VALUES ('map_incomplete_workerd', 'usr_primary_super_admin', 'firebase', '${incompleteUid}', datetime('now'));
-      INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at)
-      VALUES ('mem_incomplete_workerd', 'solarcell', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now'));
-      INSERT INTO g01_protected_super_admin (singleton, user_id, provider_id, provider_subject_id, assigned_at, assigned_by)
-      VALUES (1, 'usr_primary_super_admin', 'firebase', '${incompleteUid}', datetime('now'), 'test');
-      INSERT INTO privileged_identity_approvals (id, user_id, provider_id, provider_subject_id, workspace_id, role, granted_at, granted_by)
-      VALUES ('appr_incomplete_workerd', 'usr_primary_super_admin', 'firebase', '${incompleteUid}', 'solarcell', 'super_admin', datetime('now'), 'test');
-    `);
+    await w9D1.batch([
+      w9D1.prepare("INSERT INTO users (id, email, display_name, disabled, created_at, updated_at) VALUES ('usr_primary_super_admin', ?, 'Primary Super Admin', 0, datetime('now'), datetime('now'))").bind(PROTECTED_EMAIL),
+      w9D1.prepare("INSERT INTO user_identity_mappings (id, user_id, provider_id, provider_subject_id, created_at) VALUES ('map_incomplete_workerd', 'usr_primary_super_admin', 'firebase', ?, datetime('now'))").bind(incompleteUid),
+      w9D1.prepare("INSERT INTO workspace_memberships (id, workspace_id, user_id, role, created_at, updated_at) VALUES ('mem_incomplete_workerd', 'solarcell', 'usr_primary_super_admin', 'super_admin', datetime('now'), datetime('now'))"),
+      w9D1.prepare("INSERT INTO g01_protected_super_admin (singleton, user_id, provider_id, provider_subject_id, assigned_at, assigned_by) VALUES (1, 'usr_primary_super_admin', 'firebase', ?, datetime('now'), 'test')").bind(incompleteUid),
+      w9D1.prepare("INSERT INTO privileged_identity_approvals (id, user_id, provider_id, provider_subject_id, workspace_id, role, granted_at, granted_by) VALUES ('appr_incomplete_workerd', 'usr_primary_super_admin', 'firebase', ?, 'solarcell', 'super_admin', datetime('now'), 'test')").bind(incompleteUid),
+    ]);
 
-    const { createAuthenticationService } = await import('../../backend/workers/auth.ts');
-    const { createWorker } = await import('../../backend/index.ts');
-    const authService = createAuthenticationService(firebaseFixture.transport);
-    const workerInst = createWorker(authService);
     const token = await firebaseFixture.token(incompleteUid, PROTECTED_EMAIL);
 
-    const res = await workerInst.fetch(
-      new Request('http://localhost/api/v1/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-      { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' }
-    );
+    // 1. Dispatch directly to workerW9 in real workerd runtime
+    const res = await workerW9.fetch('http://localhost/api/v1/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
     assert.equal(res.status, 200);
     const body = (await res.json()) as { memberships: unknown[] };
-    assert.equal(body.memberships.length, 0, 'Incomplete state on disposable D1 fixture must not expose super_admin membership');
+    assert.equal(body.memberships.length, 0, 'Incomplete state on real workerd runtime must not expose super_admin membership');
+
+    // 2. Dispatch protected workspace endpoint to workerW9 in real workerd runtime
+    const resProtected = await workerW9.fetch('http://localhost/api/v1/workspaces/solarcell/settings', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(resProtected.status, 403, 'Incomplete bootstrap state must return 403 Forbidden on real workerd runtime');
+  });
+
+  // --- Scenario 10: Real D1 explicit-rowid replacement rejection (CR-25 / W10) ---
+  it('W10: real D1 rejects INSERT OR REPLACE with explicit rowid collision, leaving original ledger row intact', async () => {
+    // 1. Positive control: retrieve existing audit row from W4
+    const existingAudit = await realD1
+      .prepare('SELECT id, operation_id, nonce, audit_reference FROM paar_p0_bootstrap_audit_manifests LIMIT 1')
+      .first<{ id: string; operation_id: string; nonce: string; audit_reference: string }>();
+    assert.ok(existingAudit, 'Baseline audit row must exist from Scenario W4');
+
+    const freshOpId = `op_w10_attack_${crypto.randomUUID()}`;
+    const freshNonce = `nonce_w10_attack_${crypto.randomUUID()}`;
+    const freshAuditRef = `ref_w10_attack_${crypto.randomUUID()}`;
+
+    // 2. Attack: attempt INSERT OR REPLACE reusing explicit rowid = 1 with fresh text identifiers
+    // Under recursive_triggers=OFF, on a table WITH rowid, SQLite replaces rowid 1 without DELETE trigger.
+    // Final required behavior: the attack must NOT overwrite the original audit entry!
+    try {
+      await realD1
+        .prepare(
+          `INSERT OR REPLACE INTO paar_p0_bootstrap_audit_manifests (
+            rowid, id, operation_id, nonce, target_id, operator_email, operator_uid,
+            workspace_scope, permitted_action, signing_key_id, signature_algorithm,
+            signature_bytes, canonical_manifest_json, audit_reference, created_at
+          ) VALUES (
+            1, 'audit_w10_replacement', ?, ?, ?, ?, ?, ?, 'bootstrap_super_admin',
+            'ephemeral_p0_key_01', 'Ed25519', ?, ?, ?, datetime('now')
+          )`
+        )
+        .bind(
+          freshOpId,
+          freshNonce,
+          SYNTHETIC_TARGET,
+          PROTECTED_EMAIL,
+          SYNTHETIC_OPERATOR_UID,
+          SYNTHETIC_WORKSPACES.join(','),
+          verifiedEnrolledManifest.signature_bytes,
+          verifiedEnrolledManifest.canonical_manifest_json,
+          freshAuditRef
+        )
+        .run();
+    } catch {
+      // Rejection via SQLite constraint or WITHOUT ROWID error is expected final behavior
+    }
+
+    // 3. Assert final correct state: original record must remain intact, replacement record must NOT exist
+    const origAfter = await realD1
+      .prepare('SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE id = ?')
+      .bind(existingAudit.id)
+      .first<{ n: number }>();
+    const repAfter = await realD1
+      .prepare("SELECT COUNT(*) AS n FROM paar_p0_bootstrap_audit_manifests WHERE id = 'audit_w10_replacement'")
+      .first<{ n: number }>();
+
+    assert.equal(origAfter?.n, 1, 'Original audit record MUST remain intact in real D1 ledger');
+    assert.equal(repAfter?.n, 0, 'Replacement audit record MUST NOT exist in real D1 ledger');
   });
 });

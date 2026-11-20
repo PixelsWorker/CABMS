@@ -361,7 +361,6 @@ export const WorkspaceSettingsView: React.FC = () => {
           </form>
 
           {/* Legal Entity & Licences (Read-only for Admin) */}
-          {!resource.active && <>
           <div className="cabms-card p-6 bg-(--cabms-surface-subtle) border border-(--cabms-border-base) rounded-lg space-y-4">
             <div className="flex items-center justify-between border-b border-(--cabms-border-base) pb-3">
               <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2">
@@ -413,7 +412,6 @@ export const WorkspaceSettingsView: React.FC = () => {
               </div>
             </div>
           </div>
-          </>}
       </div>
     </div>
   );

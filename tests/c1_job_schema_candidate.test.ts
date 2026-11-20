@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createLocalD1Database, type LocalD1Database } from '../backend/db/d1.ts';
+import { runLocalMigrations } from '../backend/db/migrate.ts';
+
+test('candidate job schema fails closed on legacy requirements and unsigned required forms', async t => {
+ const db = createLocalD1Database() as LocalD1Database;
+ t.after(() => db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});
+ await db.exec(readFileSync('proposals/0014_job_forms_candidate.sql','utf8'));
+ await db.exec(`INSERT INTO users(id,email,created_at,updated_at) VALUES('SYSTEM','fixture@example.invalid','2026-01-01','2026-01-01')`);
+ await assert.rejects(()=>db.exec(`INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,status,created_at,created_by) VALUES('legacy','solarcell','solarcell','jt-solar-install','pol-solar-install-v1','Legacy','OPEN','2026-01-01','SYSTEM')`),/legacy/);
+ await db.exec(`INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,status,created_at,created_by) VALUES('service','solarcell','solarcell','jt-solar-service','pol-solar-service-v1','Service','OPEN','2026-01-01','SYSTEM')`);
+ await db.exec(`UPDATE cabms_jobs SET status='COMPLETED',completed_at='2026-01-02',completed_by='SYSTEM' WHERE id='service'`);
+ await assert.rejects(()=>db.exec(`UPDATE cabms_jobs SET status='OPEN' WHERE id='service'`),/completed/);
+ await db.exec(`
+  INSERT INTO form_definitions(id,workspace_id,brand_id,code,title,category,status,created_at,updated_at) VALUES('def','solarcell','solarcell','CUSTOM','Inspection','Custom','DRAFT','2026','2026');
+  INSERT INTO form_revisions(id,workspace_id,form_definition_id,version,status,created_at,updated_at) VALUES('rev','solarcell','def','v1','DRAFT','2026','2026');
+  UPDATE form_revisions SET status='REVIEW' WHERE id='rev';
+  UPDATE form_revisions SET status='PUBLISHED' WHERE id='rev';
+  UPDATE form_definitions SET status='ACTIVE',published_revision_id='rev' WHERE id='def';
+  INSERT INTO job_types(id,workspace_id,code,name,brand_id,status,created_at,updated_at) VALUES('type','solarcell','TEST','Test','solarcell','ACTIVE','2026','2026');
+  INSERT INTO job_type_compliance_policies(id,job_type_id,version,status,created_at,updated_at) VALUES('policy','type','v1','DRAFT','2026','2026');
+  INSERT INTO policy_catalog_form_rules(id,workspace_id,policy_version_id,form_revision_id,required,display_order) VALUES('rule','solarcell','policy','rev',1,0);
+  UPDATE job_type_compliance_policies SET status='PUBLISHED' WHERE id='policy';
+  UPDATE job_types SET current_policy_version_id='policy' WHERE id='type';
+  INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,status,created_at,created_by) VALUES('job','solarcell','solarcell','type','policy','Test','OPEN','2026','SYSTEM');
+ `);
+ const complete=`UPDATE cabms_jobs SET status='COMPLETED',completed_at='2026-01-02',completed_by='SYSTEM' WHERE id='job'`;
+ await assert.rejects(()=>db.exec(complete),/mandatory form unsigned/);
+ await db.exec(`INSERT INTO cabms_job_forms(id,workspace_id,job_id,form_revision_id,policy_rule_id,origin,created_at,created_by,updated_at) VALUES('form','solarcell','job','rev','rule','POLICY','2026','SYSTEM','2026')`);
+ await assert.rejects(()=>db.exec(complete),/mandatory form unsigned/);
+ await assert.rejects(()=>db.exec(`DELETE FROM cabms_job_forms WHERE id='form'`),/cannot be deleted/);
+ await assert.rejects(()=>db.exec(`INSERT INTO cabms_job_form_signatures(id,workspace_id,job_form_id,form_version,snapshot_json,snapshot_sha256,signer_id,signed_at) VALUES('bad','solarcell','form',1,'{"answers":{"forged":true}}','${'a'.repeat(64)}','SYSTEM','2026')`),/signature requires current open form/);
+ await db.exec(`INSERT INTO cabms_job_form_signatures(id,workspace_id,job_form_id,form_version,snapshot_json,snapshot_sha256,signer_id,signed_at) VALUES('sig','solarcell','form',1,'{"answers":{}}','${'a'.repeat(64)}','SYSTEM','2026')`);
+ await db.exec(`UPDATE cabms_job_forms SET answers_json='{"changed":true}',version=2 WHERE id='form'`);
+ await assert.rejects(()=>db.exec(complete),/mandatory form unsigned/);
+ await assert.rejects(()=>db.exec(`UPDATE cabms_job_form_signatures SET snapshot_json='{"tampered":true}' WHERE id='sig'`),/immutable/);
+ await assert.rejects(()=>db.exec(`INSERT INTO cabms_job_forms(id,workspace_id,job_id,form_revision_id,origin,created_at,created_by,updated_at) VALUES('cross','cctv','job','rev','ADDITIONAL','2026','SYSTEM','2026')`),/invalid job form scope/);
+ await db.exec(`INSERT INTO cabms_job_form_signatures(id,workspace_id,job_form_id,form_version,snapshot_json,snapshot_sha256,signer_id,signed_at) VALUES('sig2','solarcell','form',2,'{"answers":{"changed":true}}','${'b'.repeat(64)}','SYSTEM','2026')`);
+ await db.exec(complete);
+ await assert.rejects(()=>db.exec(`UPDATE cabms_job_forms SET answers_json='{}',version=3 WHERE id='form'`),/invalid job form update/);
+});

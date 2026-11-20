@@ -73,6 +73,14 @@ export function g01TestAuthStatementSpecs(): readonly StatementSpec[] {
       sql: `INSERT INTO privileged_identity_approvals (id, user_id, provider_id, provider_subject_id, workspace_id, role, granted_at, granted_by) VALUES ${memberships.filter(m => m[3] === 'super_admin' || m[3] === 'owner_admin').map(() => "(?, ?, 'firebase', ?, ?, ?, datetime('now'), 'test-fixture')").join(', ')}`,
       params: memberships.filter(m => m[3] === 'super_admin' || m[3] === 'owner_admin').flatMap((m, i) => [`test_g01_approval_${i + 1}`, m[2], m[3] === 'super_admin' ? G01_TEST_AUTH.superAdmin.uid : G01_TEST_AUTH.ownerAdmin.uid, m[1], m[3]]),
     },
+    {
+      sql: `INSERT INTO paar_p0_bootstrap_audit_manifests (id, operation_id, nonce, target_id, operator_email, operator_uid, workspace_scope, permitted_action, signing_key_id, signature_algorithm, signature_bytes, canonical_manifest_json, audit_reference, created_at) VALUES ('test_g01_audit_1', 'op_test_g01_fixture', 'nonce_test_g01_fixture', 'local-test-only', ?, ?, 'solarcell,smart_home,cctv', 'bootstrap_super_admin', 'key_test_fixture', 'Ed25519', 'test_sig', '{}', 'audit_ref_test_g01_fixture', datetime('now'))`,
+      params: [G01_TEST_AUTH.superAdmin.email, G01_TEST_AUTH.superAdmin.uid],
+    },
+    {
+      sql: `INSERT INTO g01_bootstrap_completion (singleton, original_firebase_uid, completed_at, completed_by, operation_id, request_id, audit_reference) VALUES (1, ?, datetime('now'), 'test-fixture', 'op_test_g01_fixture', 'req_test_g01_fixture', 'audit_ref_test_g01_fixture')`,
+      params: [G01_TEST_AUTH.superAdmin.uid],
+    },
   ];
 }
 
@@ -82,11 +90,11 @@ export async function installG01TestAuthFixtures(db: D1Database): Promise<void> 
     db.prepare(spec.sql).bind(...spec.params)
   );
   const results = await db.batch(statements);
-  if (results.length !== 5 || results.some(result => !result.success)) {
+  if (results.length !== 7 || results.some(result => !result.success)) {
     throw new Error('G01 test-auth fixture batch did not complete successfully');
   }
   const changes = results.map(result => result.meta.changes);
-  if (changes[0] !== 4 || changes[1] !== 4 || changes[2] !== 6 || changes[3] !== 1 || changes[4] !== 4) {
+  if (changes[0] !== 4 || changes[1] !== 4 || changes[2] !== 6 || changes[3] !== 1 || changes[4] !== 4 || changes[5] !== 1 || changes[6] !== 1) {
     throw new Error(`G01 test-auth fixture changed unexpected row counts: ${changes.join(',')}`);
   }
 }

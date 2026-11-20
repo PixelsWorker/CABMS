@@ -82,7 +82,7 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
         </div>
         {session && isSuperAdmin ? (
           <div hidden={activeSubTab !== 'system'}>
-            <LegalDetailsForm />
+            <SuperAdminSetupView />
           </div>
         ) : activeSubTab === 'system' ? (
           isSuperAdmin ? (

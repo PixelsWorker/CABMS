@@ -82,11 +82,12 @@ export const DemoControlsBar: React.FC = () => {
             <FontAwesomeIcon icon={faBuilding} className="w-3.5 h-3.5 text-amber-400" />
             <span className="text-slate-400 text-xs hidden sm:inline">Workspace:</span>
             <select
-              value={activeBrandId}
+              value={activeBrandId ?? ''}
               onChange={e => setActiveBrandId(e.target.value as BrandId)}
               className="min-w-0 max-w-full flex-1 bg-transparent text-white font-medium text-xs cursor-pointer"
               aria-label="Active Brand Workspace Selector"
             >
+              {!activeBrandId && <option value="">No authorized workspace</option>}
               {(['solarcell', 'smart_home', 'cctv'] as BrandId[]).map(id => {
                 const b = brands[id];
                 return (

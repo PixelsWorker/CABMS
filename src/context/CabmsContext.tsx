@@ -5,6 +5,8 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useG01Session } from './G01Session.tsx';
+import { pendingRevisionId, publishedTemplateFromServer } from '../utils/revisionIdentity.ts';
+import { mapTemplateDetail } from '../utils/templateServerMapping.ts';
 import {
   AppearanceMode,
   BrandingMode,
@@ -23,6 +25,7 @@ import {
   Tca1CertData,
   Tca2CertData,
   TemplateSetting,
+  TemplateRevision,
   WebsiteEnquiry,
   SampleAttachment,
   Quote,
@@ -51,6 +54,25 @@ import {
   INITIAL_WEBSITE_ENQUIRIES,
 } from '../data/seedData.ts';
 import { getMockDataAdapter } from '../services/index.ts';
+import {
+  apiListJobTypes,
+  apiGetJobType,
+  apiListTemplates,
+  apiGetTemplate,
+  apiCreateJobType,
+  apiPatchJobType,
+  apiDeleteJobType,
+  apiCreateJobTypePolicyDraft,
+  apiSubmitJobTypePolicyReview,
+  apiApproveJobTypePolicy,
+  apiCreateTemplate,
+  apiPatchTemplate,
+  apiDeleteTemplate,
+  apiCreateTemplateRevisionDraft,
+  apiUpdateTemplateRevisionDraft,
+  apiSubmitTemplateRevisionReview,
+  apiApproveTemplateRevision,
+} from '../services/g01Client.ts';
 import {
   validateJobCompletion,
   deduplicateReviewRequest,
@@ -223,7 +245,7 @@ interface CabmsContextType {
   sendCertificateEmail: (jobId: string, formType: string, simulateFail?: boolean) => { success: boolean; message: string };
   retryCertificateDelivery: (deliveryId: string) => void;
 
-  // Templates & Version Lifecycle (G00-007, G00-025, G00-026)
+  // Templates & Version Lifecycle (G00-007, G00-025, G00-026, C1)
   templates: TemplateSetting[];
   publishTemplateVersion: (templateId: string) => void;
   createTemplateDraftRevision: (templateId: string, newContent: string) => void;
@@ -233,6 +255,36 @@ interface CabmsContextType {
     formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[],
     isDirectToInvoice: boolean
   ) => void;
+  addJobType: (config: {
+    name: string;
+    code?: string;
+    description?: string;
+    brandId: BrandId;
+    formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+    isDirectToInvoice: boolean;
+    formRules?: Array<{form_revision_id:string;required:boolean}>;
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }) => Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string };
+  editJobType: (id: string, updates: Partial<JobTypeConfig>) => Promise<{ success: boolean; error?: string }>;
+  archiveJobType: (id: string) => void;
+  restoreJobType: (id: string) => void;
+  deleteJobTypeDraft: (id: string) => { success: boolean; error?: string };
+  createJobTypePolicyDraft: (id: string) => void;
+  submitJobTypePolicyForReview: (id: string) => void;
+  approveJobTypePolicy: (id: string) => void;
+  addTemplate: (tpl: {
+    name: string;
+    code?: string;
+    type: TemplateSetting['type'];
+    content: string;
+    description?: string;
+    sampleFileName?: string;
+    output?: { category:'Compliance'|'Terms'|'Email'|'Contract'; brand_id:string; linked_form_revision_id?:string|null; document_type_id?:string|null; layout:Record<string,unknown>; dynamic_fields:Record<string,unknown> };
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }) => Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string };
+  archiveTemplate: (id: string) => void;
+  restoreTemplate: (id: string) => void;
+  deleteTemplateDraft: (id: string) => { success: boolean; error?: string };
 
   // Website Handoff Queue (G00-011)
   websiteEnquiries: WebsiteEnquiry[];
@@ -444,6 +496,77 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [templates, setTemplates] = useState<TemplateSetting[]>(INITIAL_TEMPLATES);
   const [websiteEnquiries, setWebsiteEnquiries] = useState<WebsiteEnquiry[]>(INITIAL_WEBSITE_ENQUIRIES);
   const [sampleAttachments] = useState<SampleAttachment[]>(INITIAL_SAMPLE_ATTACHMENTS);
+
+  useEffect(() => {
+    if (!session?.workspaceId || !session?.profile || activeTab !== 'templates') return;
+    let active = true;
+    setTemplates([]);
+    setJobTypes([]);
+    void session.token().then(token => {
+      apiListJobTypes(session.workspaceId!, token).then(async res => {
+        if (!active) return;
+        if (!res.ok) {
+          showDemoNotification(res.problem?.detail || 'Failed to fetch job types from server', 'error');
+          return;
+        }
+        if (!res.data) return;
+        const details = await Promise.all(res.data.map(row=>apiGetJobType(session.workspaceId!,row.id,token)));
+        if (!active) return;
+        if (details.some(detail=>!detail.ok || !Array.isArray(detail.data?.policies))) {
+          showDemoNotification('Unable to load complete job type policy history. Refresh and try again.', 'error');
+          return;
+        }
+        setJobTypes(res.data.map((row,index) => {
+          const policies = details[index].data.policies as Array<{id:string;version:string;status:'DRAFT'|'REVIEW'|'PUBLISHED'|'ARCHIVED';formsRequired:JobTypeConfig['formsRequired'];is_direct_to_invoice:number;effective_at?:string;updated_at:string;created_by?:string;approved_by?:string;approved_at?:string}>;
+          const ordered = [...policies].sort((a,b)=>Number(['DRAFT','REVIEW'].includes(b.status))-Number(['DRAFT','REVIEW'].includes(a.status)));
+          const pending = ordered.find(p=>p.status==='DRAFT' || p.status==='REVIEW');
+          return {
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          description: row.description || undefined,
+          brandId: row.brand_id as BrandId,
+          formsRequired: row.forms_required || [],
+          catalogForms: row.catalog_forms || [],
+          isDirectToInvoice: Boolean(row.is_direct_to_invoice),
+          version: row.version || 'v1.0',
+          status: row.status || 'DRAFT',
+          policyStatus: pending?.status || row.policy_status || 'DRAFT',
+          currentPolicyId: row.current_policy_version_id || undefined,
+          revisionHistory: ordered.map(policy=>({id:policy.id,version:policy.version,formsRequired:policy.formsRequired || [],isDirectToInvoice:Boolean(policy.is_direct_to_invoice),status:policy.status,effectiveAt:policy.effective_at || undefined,updatedAt:policy.updated_at,updatedBy:policy.created_by || 'SYSTEM',approvedBy:policy.approved_by,approvedAt:policy.approved_at})),
+        };}));
+      }).catch(err => {
+        if (active) showDemoNotification(`Failed to load job types: ${err?.message || 'Network error'}`, 'error');
+      });
+
+      apiListTemplates(session.workspaceId!, token).then(async res => {
+        if (!active) return;
+        if (!res.ok) {
+          showDemoNotification(res.problem?.detail || 'Failed to fetch templates from server', 'error');
+          return;
+        }
+        if (!res.data) return;
+        const details = await Promise.all(res.data.map(row => apiGetTemplate(session.workspaceId!,row.id,token)));
+        if (!active) return;
+        if (details.some(detail=>!detail.ok || !detail.data)) {
+          showDemoNotification('Unable to load complete template history. Refresh and try again.', 'error');
+          return;
+        }
+        const mapped = details.map(detail=>mapTemplateDetail(detail.data));
+        if (mapped.some(template=>!template)) {
+          showDemoNotification('Template history is incomplete or invalid. Refresh and try again.', 'error');
+          return;
+        }
+        setTemplates(mapped.filter((template): template is TemplateSetting => template !== null));
+      }).catch(err => {
+        if (active) showDemoNotification(`Failed to load templates: ${err?.message || 'Network error'}`, 'error');
+      });
+    }).catch(err => {
+      if (active) showDemoNotification(`Session token error: ${err?.message || 'Unauthorized'}`, 'error');
+    });
+
+    return () => { active = false; };
+  }, [session?.workspaceId, session?.profile?.user.id, activeTab]);
 
   const createSignedJsaSeed = (jobId: string): JsaFormData => {
     const job = INITIAL_JOBS.find(candidate => candidate.id === jobId);
@@ -1174,6 +1297,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const matchedJobType = requestedJobType || jobTypes.find(jt => jt.brandId === targetBrandId);
     if (!matchedJobType) {
       const message = `No configured job type is available for ${targetBrandId}.`;
+      showDemoNotification(message, 'error');
+      throw new Error(message);
+    }
+    if (session?.profile && (matchedJobType.status === 'DRAFT' || matchedJobType.status === 'ARCHIVED' || matchedJobType.policyStatus === 'DRAFT' || matchedJobType.policyStatus === 'REVIEW')) {
+      const message = 'This job type does not have an active published policy.';
       showDemoNotification(message, 'error');
       throw new Error(message);
     }
@@ -2537,7 +2665,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // The editable template content may be a draft. Only the matching published
     // revision is eligible for this synthetic quote snapshot.
     const termsTpl = templates.find(t => t.type === 'TERMS');
-    const publishedTerms = termsTpl?.revisions.find(r => r.status === 'PUBLISHED' && r.version === termsTpl.currentVersion);
+    const publishedTerms = termsTpl?.revisions.find(r => r.status === 'PUBLISHED' && r.version === (termsTpl.publishedVersion || termsTpl.currentVersion));
     if (!publishedTerms) {
       const message = 'Cannot prepare quote: published terms are unavailable.';
       showDemoNotification(message, 'error');
@@ -3226,9 +3354,37 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const tpl = templates.find(t => t.id === templateId);
     if (!tpl) return;
 
-    const res = processPublishTemplate(tpl, persona, demoClock);
+    const caller = authoritativePersonaRef.current || persona;
+    const res = processPublishTemplate(tpl, caller, demoClock);
     if (!res.success) {
       showDemoNotification(res.error || 'Cannot publish template.', 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const revId = pendingRevisionId(tpl.revisions, 'REVIEW');
+        if (!revId) { showDemoNotification('Missing server review revision ID. Reload and try again.', 'error'); return; }
+        apiApproveTemplateRevision(session.workspaceId!, templateId, revId, token).then(async apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Template approval failed on server', 'error');
+          } else {
+            const detail = await apiGetTemplate(session.workspaceId!,templateId,token);
+            const authoritative = detail.ok && detail.data ? publishedTemplateFromServer(detail.data) : null;
+            if (!authoritative || authoritative.currentRevisionId !== revId || !Array.isArray(detail.data.revisions)) {
+              showDemoNotification('Publication was confirmed, but the authoritative revision could not be reloaded. Refresh before continuing.', 'warning');
+              return;
+            }
+            const revisions: TemplateRevision[] = detail.data.revisions.map((r: any) => ({id:r.id,version:r.version,status:r.status,content:r.content,updatedAt:r.updated_at,updatedBy:r.created_by || 'SYSTEM',approvedBy:r.approved_by || undefined,approvedAt:r.approved_at || undefined}));
+            setTemplates(prev => prev.map(t => t.id === templateId ? {...t,...authoritative,publishedVersion:authoritative.currentVersion,editingRevisionId:undefined,status:'ACTIVE' as const,revisions} : t));
+            showDemoNotification(`Template version published. Full revision and review audit history retained.`, 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error publishing template: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
       return;
     }
 
@@ -3243,6 +3399,63 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const access = verifyPersonaAccess(persona, 'template_editing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      const existingDraft = templates.find(t=>t.id===templateId)?.revisions.find(r=>r.status==='DRAFT');
+      if (existingDraft) {
+        if (!existingDraft.id || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(existingDraft.updatedAt)) {
+          showDemoNotification('Draft revision details are incomplete. Reload before saving.', 'error');
+          return;
+        }
+        void session.token().then(async token=>{
+          const result=await apiUpdateTemplateRevisionDraft(session.workspaceId!,templateId,existingDraft.id!,token,existingDraft.updatedAt,newContent);
+          if (!result.ok || !result.data?.updated_at) {showDemoNotification(result.problem?.detail || 'Draft could not be saved.', 'error');return;}
+          setTemplates(prev=>prev.map(t=>t.id!==templateId?t:{...t,content:newContent,revisions:t.revisions.map(r=>r.id===existingDraft.id?{...r,content:newContent,updatedAt:result.data!.updated_at}:r)}));
+          showDemoNotification('Draft template revision saved.', 'success');
+        }).catch(err=>showDemoNotification(`Could not save draft: ${err?.message || 'Network error'}`,'error'));
+        return;
+      }
+      void session.token().then(token => {
+        apiCreateTemplateRevisionDraft(session.workspaceId!, templateId, token, newContent).then(apiRes => {
+          if (!apiRes.ok || !apiRes.data?.id || !apiRes.data.updated_at) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to create revision draft on server', 'error');
+          } else {
+            const revId = apiRes.data.id;
+            const draftVer = apiRes.data.version;
+            setTemplates(prev =>
+              prev.map(t => {
+                if (t.id === templateId) {
+                  const draftRev: TemplateRevision = {
+                    id: revId,
+                    version: draftVer,
+                    status: 'DRAFT' as const,
+                    content: newContent,
+                    updatedAt: apiRes.data!.updated_at,
+                    updatedBy: persona.toUpperCase(),
+                  };
+                  return {
+                    ...t,
+                    publishedVersion: t.publishedVersion || (t.activeStatus === 'PUBLISHED' ? t.currentVersion : undefined),
+                    currentVersion: draftVer,
+                    editingRevisionId: revId,
+                    content: newContent,
+                    activeStatus: 'DRAFT',
+                    revisions: [draftRev, ...t.revisions],
+                  };
+                }
+                return t;
+              })
+            );
+            showDemoNotification('Draft template revision saved. Ready for owner review before publishing.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error creating revision draft: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
       return;
     }
 
@@ -3284,6 +3497,42 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('DENIED: Only a draft revision can be submitted for review.', 'error');
       return;
     }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const revId = pendingRevisionId(targetTemplate.revisions, 'DRAFT');
+        if (!revId) { showDemoNotification('Missing server draft revision ID. Reload and try again.', 'error'); return; }
+        apiSubmitTemplateRevisionReview(session.workspaceId!, templateId, revId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to submit template revision for review', 'error');
+          } else {
+            const timestamp = serializeBusinessInstant(demoClock);
+            setTemplates(prev =>
+              prev.map(t => {
+                if (t.id === templateId) {
+                  const revs = t.revisions.map((r, idx) =>
+                    idx === 0 ? { ...r, status: 'REVIEW' as const, updatedAt: timestamp } : r
+                  );
+                  return {
+                    ...t,
+                    activeStatus: 'REVIEW',
+                    revisions: revs,
+                  };
+                }
+                return t;
+              })
+            );
+            showDemoNotification('Template revision submitted for Admin compliance review.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error submitting revision for review: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
     const timestamp = serializeBusinessInstant(demoClock);
     setTemplates(prev =>
       prev.map(t => {
@@ -3337,6 +3586,691 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Job type compliance matrix policy updated to new version. Existing in-flight jobs retain historical requirement snapshots.', 'success');
+  };
+
+  const addJobType = (config: {
+    name: string;
+    code?: string;
+    description?: string;
+    brandId: BrandId;
+    formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+    isDirectToInvoice: boolean;
+    formRules?: Array<{form_revision_id:string;required:boolean}>;
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }): Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string } => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      const res = { success: false, error: access.reason };
+      return Object.assign(Promise.resolve(res), res);
+    }
+    if (!config.name || !config.name.trim()) {
+      showDemoNotification('Job type category name cannot be blank.', 'error');
+      const res = { success: false, error: 'Name cannot be blank' };
+      return Object.assign(Promise.resolve(res), res);
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      const execute = async () => {
+        try {
+          const token = await session.token();
+          const apiRes = await apiCreateJobType(session.workspaceId!, token, {
+            name: config.name.trim(),
+            code: config.code?.trim(),
+            description: config.description?.trim(),
+            brandId: config.brandId,
+            isDirectToInvoice: config.isDirectToInvoice,
+            formsRequired: config.formsRequired,
+            formRules: config.formRules,
+            status: config.status,
+          });
+          if (!apiRes.ok || !apiRes.data) {
+            const errMsg = apiRes.problem?.detail || 'Could not create job type';
+            showDemoNotification(errMsg, 'error');
+            return { success: false, error: errMsg };
+          }
+          const serverId = apiRes.data.id;
+          const serverPolicyId = apiRes.data.policyId;
+          const refreshed = await apiListJobTypes(session.workspaceId!, token);
+          const serverRow = refreshed.ok ? refreshed.data?.find(row => row.id === serverId) : undefined;
+          const timestamp = serializeBusinessInstant(demoClock);
+          const newJt: JobTypeConfig = {
+            id: serverId,
+            code: config.code?.trim() || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+            name: config.name.trim(),
+            description: config.description?.trim(),
+            brandId: config.brandId,
+            formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+            catalogForms: serverRow?.catalog_forms || [],
+            isDirectToInvoice: config.isDirectToInvoice,
+            version: 'v1.0',
+            status: 'DRAFT',
+            policyStatus: 'DRAFT',
+            currentPolicyId: serverPolicyId,
+            revisionHistory: [{
+              id: serverPolicyId,
+              version: 'v1.0',
+              formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+              isDirectToInvoice: config.isDirectToInvoice,
+              status: 'DRAFT',
+              updatedAt: timestamp,
+              updatedBy: persona.toUpperCase(),
+            }],
+          };
+          setJobTypes(prev => [...prev, newJt]);
+          showDemoNotification(serverRow ? `Job type '${newJt.name}' created as draft (pending review and approval).` : `Job type '${newJt.name}' was created, but its saved rules could not be reloaded. Refresh to verify.`, serverRow ? 'success' : 'warning');
+          return { success: true, id: serverId };
+        } catch (err: any) {
+          const errMsg = err?.message || 'Network error creating job type';
+          showDemoNotification(errMsg, 'error');
+          return { success: false, error: errMsg };
+        }
+      };
+      const promise = execute();
+      return Object.assign(promise, { success: true });
+    }
+
+    const id = `JT-${String(jobTypes.length + 1).padStart(3, '0')}`;
+    const code = config.code?.trim() || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const timestamp = serializeBusinessInstant(demoClock);
+    const initialStatus = config.status || 'ACTIVE';
+    const isInitialDraft = initialStatus === 'DRAFT';
+    const newJt: JobTypeConfig = {
+      id,
+      code,
+      name: config.name.trim(),
+      description: config.description?.trim(),
+      brandId: config.brandId,
+      formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+      isDirectToInvoice: config.isDirectToInvoice,
+      version: 'v1.0',
+      status: initialStatus,
+      policyStatus: isInitialDraft ? 'DRAFT' : 'PUBLISHED',
+      revisionHistory: [{
+        version: 'v1.0',
+        formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+        isDirectToInvoice: config.isDirectToInvoice,
+        status: isInitialDraft ? 'DRAFT' : 'PUBLISHED',
+        effectiveAt: isInitialDraft ? undefined : timestamp,
+        updatedAt: timestamp,
+        updatedBy: persona.toUpperCase(),
+        approvedBy: isInitialDraft ? undefined : persona.toUpperCase(),
+        approvedAt: isInitialDraft ? undefined : timestamp,
+      }],
+    };
+    setJobTypes(prev => [...prev, newJt]);
+    showDemoNotification(`Job type '${newJt.name}' created.`, 'success');
+    const res = { success: true, id };
+    return Object.assign(Promise.resolve(res), res);
+  };
+
+  const editJobType = async (id: string, updates: Partial<JobTypeConfig>) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return { success: false, error: 'Job type not found' };
+
+    if (session?.workspaceId && session?.profile) {
+      try {
+        const token = await session.token();
+        const result = await apiPatchJobType(session.workspaceId, id, token, {
+          name: updates.name, code: updates.code, description: updates.description, brandId: updates.brandId,
+        });
+        if (!result.ok) {
+          const error = result.problem?.detail || 'The server did not save the job type.';
+          showDemoNotification(error, 'error');
+          return { success: false, error };
+        }
+      } catch {
+        const error = 'Could not save the job type. Check your connection and try again.';
+        showDemoNotification(error, 'error');
+        return { success: false, error };
+      }
+    }
+
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          return {
+            ...jt,
+            name: updates.name ? updates.name.trim() : jt.name,
+            code: updates.code ? updates.code.trim() : jt.code,
+            description: updates.description !== undefined ? updates.description.trim() : jt.description,
+            brandId: updates.brandId || jt.brandId,
+            status: updates.status || jt.status,
+            policyStatus: updates.policyStatus || jt.policyStatus,
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification(`Job type '${target.name}' updated successfully.`, 'success');
+    return { success: true };
+  };
+
+  const archiveJobType = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => (jt.id === id ? { ...jt, status: 'ARCHIVED' as const } : jt))
+    );
+    showDemoNotification(`Job type archived. Historical references and completed jobs are preserved.`, 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchJobType(session.workspaceId!, id, token, { action: 'archive' }).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const restoreJobType = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchJobType(session.workspaceId!, id, token, { action: 'restore' }).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Cannot activate job type without a published compliance policy', 'error');
+          } else {
+            setJobTypes(prev =>
+              prev.map(jt => (jt.id === id ? { ...jt, status: 'ACTIVE' as const } : jt))
+            );
+            showDemoNotification(`Job type restored to active catalog.`, 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error restoring job type: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => (jt.id === id ? { ...jt, status: 'ACTIVE' as const } : jt))
+    );
+    showDemoNotification(`Job type restored to active catalog.`, 'success');
+  };
+
+  const deleteJobTypeDraft = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return { success: false, error: 'Job type not found' };
+    if (target.status !== 'DRAFT') {
+      showDemoNotification('Cannot delete published or archived job types; archive them instead.', 'error');
+      return { success: false, error: 'Only drafts can be deleted' };
+    }
+    const isReferenced = jobs.some(j => j.jobType === target.name || j.jobType === target.id);
+    if (isReferenced) {
+      showDemoNotification('Cannot delete job type referenced by existing work orders.', 'error');
+      return { success: false, error: 'Referenced by existing jobs' };
+    }
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiDeleteJobType(session.workspaceId!, id, token).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Failed to delete job type draft on server', 'error');
+          }
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+    setJobTypes(prev => prev.filter(jt => jt.id !== id));
+    showDemoNotification(`Draft job type '${target.name}' deleted.`, 'info');
+    return { success: true };
+  };
+
+  const createJobTypePolicyDraft = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return;
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiCreateJobTypePolicyDraft(session.workspaceId!, id, token, {
+          formsRequired: target.formsRequired,
+          isDirectToInvoice: target.isDirectToInvoice,
+        }).then(apiRes => {
+          if (!apiRes.ok || !apiRes.data) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to create policy draft on server', 'error');
+          } else {
+            const polId = apiRes.data.id;
+            const draftVer = apiRes.data.version;
+            setJobTypes(prev =>
+              prev.map(jt => {
+                if (jt.id === id) {
+                  const historyEntry = {
+                    id: polId,
+                    version: draftVer,
+                    formsRequired: [...jt.formsRequired],
+                    isDirectToInvoice: jt.isDirectToInvoice,
+                    status: 'DRAFT' as const,
+                    updatedAt: serializeBusinessInstant(demoClock),
+                    updatedBy: persona.toUpperCase(),
+                  };
+                  return {
+                    ...jt,
+                    version: draftVer,
+                    policyStatus: 'DRAFT' as const,
+                    currentPolicyId: polId,
+                    revisionHistory: [historyEntry, ...(jt.revisionHistory || [])],
+                  };
+                }
+                return jt;
+              })
+            );
+            showDemoNotification('Created new draft policy version. Configure rules and submit for review.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error creating policy draft: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          const currentVerNum = parseFloat(jt.version.replace('v', '')) || 1.0;
+          const draftVer = `v${(currentVerNum + 0.1).toFixed(1)}-draft`;
+          const historyEntry = {
+            version: draftVer,
+            formsRequired: [...jt.formsRequired],
+            isDirectToInvoice: jt.isDirectToInvoice,
+            status: 'DRAFT' as const,
+            updatedAt: serializeBusinessInstant(demoClock),
+            updatedBy: persona.toUpperCase(),
+          };
+          return {
+            ...jt,
+            version: draftVer,
+            policyStatus: 'DRAFT' as const,
+            revisionHistory: [historyEntry, ...(jt.revisionHistory || [])],
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification('Created new draft policy version. Configure rules and submit for review.', 'info');
+  };
+
+  const submitJobTypePolicyForReview = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return;
+    if (target.policyStatus !== 'DRAFT') {
+      showDemoNotification('Only draft policies can be submitted for review.', 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const policyId = pendingRevisionId(target.revisionHistory, 'DRAFT');
+        if (!policyId) { showDemoNotification('Missing server draft policy ID. Reload and try again.', 'error'); return; }
+        apiSubmitJobTypePolicyReview(session.workspaceId!, id, policyId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to submit policy for review', 'error');
+          } else {
+            setJobTypes(prev =>
+              prev.map(jt => {
+                if (jt.id === id) {
+                  return {
+                    ...jt,
+                    policyStatus: 'REVIEW' as const,
+                    revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+                      idx === 0 ? { ...rev, status: 'REVIEW' as const, updatedAt: serializeBusinessInstant(demoClock) } : rev
+                    ),
+                  };
+                }
+                return jt;
+              })
+            );
+            showDemoNotification('Policy version submitted for compliance review.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error submitting policy for review: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          return {
+            ...jt,
+            policyStatus: 'REVIEW' as const,
+            revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+              idx === 0 ? { ...rev, status: 'REVIEW' as const, updatedAt: serializeBusinessInstant(demoClock) } : rev
+            ),
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification('Policy version submitted for compliance review.', 'info');
+  };
+
+  const approveJobTypePolicy = (id: string) => {
+    const caller = authoritativePersonaRef.current || persona;
+    if (caller !== 'owner_admin' && caller !== 'super_admin') {
+      showDemoNotification('Office staff cannot publish compliance policies.', 'error');
+      return;
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return;
+    if (target.policyStatus !== 'REVIEW') {
+      showDemoNotification('Policy must be in REVIEW status before approval.', 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const policyId = pendingRevisionId(target.revisionHistory, 'REVIEW');
+        if (!policyId) { showDemoNotification('Missing server review policy ID. Reload and try again.', 'error'); return; }
+        apiApproveJobTypePolicy(session.workspaceId!, id, policyId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Policy approval failed on server', 'error');
+          } else {
+            const publishedVer = target.version.replace('-draft', '');
+            const timestamp = serializeBusinessInstant(demoClock);
+            setJobTypes(prev =>
+              prev.map(jt => {
+                if (jt.id === id) {
+                  return {
+                    ...jt,
+                    version: publishedVer,
+                    status: 'ACTIVE' as const,
+                    policyStatus: 'PUBLISHED' as const,
+                    revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+                      idx === 0
+                        ? {
+                            ...rev,
+                            version: publishedVer,
+                            status: 'PUBLISHED' as const,
+                            approvedBy: caller.toUpperCase(),
+                            approvedAt: timestamp,
+                            effectiveAt: timestamp,
+                            updatedAt: timestamp,
+                          }
+                        : rev
+                    ),
+                  };
+                }
+                return jt;
+              })
+            );
+            showDemoNotification('Compliance policy approved & published. Snapshot is now frozen.', 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error approving policy: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
+    const publishedVer = target.version.replace('-draft', '');
+    const timestamp = serializeBusinessInstant(demoClock);
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          return {
+            ...jt,
+            version: publishedVer,
+            status: jt.status === 'DRAFT' ? ('ACTIVE' as const) : jt.status,
+            policyStatus: 'PUBLISHED' as const,
+            revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+              idx === 0
+                ? {
+                    ...rev,
+                    version: publishedVer,
+                    status: 'PUBLISHED' as const,
+                    approvedBy: caller.toUpperCase(),
+                    approvedAt: timestamp,
+                    effectiveAt: timestamp,
+                    updatedAt: timestamp,
+                  }
+                : rev
+            ),
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification('Compliance policy approved & published. Snapshot is now frozen.', 'success');
+  };
+
+  const addTemplate = (tpl: {
+    name: string;
+    code?: string;
+    type: TemplateSetting['type'];
+    content: string;
+    description?: string;
+    sampleFileName?: string;
+    output?: { category:'Compliance'|'Terms'|'Email'|'Contract'; brand_id:string; linked_form_revision_id?:string|null; document_type_id?:string|null; layout:Record<string,unknown>; dynamic_fields:Record<string,unknown> };
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }): Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string } => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      const res = { success: false, error: access.reason };
+      return Object.assign(Promise.resolve(res), res);
+    }
+    if (!tpl.name || !tpl.name.trim()) {
+      showDemoNotification('Template name cannot be blank.', 'error');
+      const res = { success: false, error: 'Name cannot be blank' };
+      return Object.assign(Promise.resolve(res), res);
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      const execute = async () => {
+        try {
+          const token = await session.token();
+          const apiRes = await apiCreateTemplate(session.workspaceId!, token, {
+            name: tpl.name.trim(),
+            code: tpl.code?.trim(),
+            templateType: tpl.type === 'TERMS' ? 'QUOTE_TERMS' : 'COMPLIANCE_DISCLAIMER',
+            content: tpl.content || `${tpl.name} standard wording.`,
+            description: tpl.description?.trim(),
+            sampleFileName: tpl.sampleFileName,
+            output: tpl.output,
+            status: tpl.status,
+          });
+          if (!apiRes.ok || !apiRes.data?.id || !apiRes.data.revisionId || !apiRes.data.updated_at) {
+            const errMsg = apiRes.problem?.detail || 'Could not create template';
+            showDemoNotification(errMsg, 'error');
+            return { success: false, error: errMsg };
+          }
+          const serverId = apiRes.data.id;
+          const serverRevId = apiRes.data.revisionId;
+          const timestamp = apiRes.data.updated_at;
+          const initialRev: TemplateRevision = {
+            id: serverRevId,
+            version: 'v1.0',
+            status: 'DRAFT',
+            content: tpl.content || `${tpl.name} standard wording.`,
+            updatedAt: timestamp,
+            updatedBy: persona.toUpperCase(),
+          };
+          const newTpl: TemplateSetting = {
+            id: serverId,
+            code: tpl.code?.trim() || tpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+            name: tpl.name.trim(),
+            type: tpl.type,
+            currentVersion: 'v1.0',
+            activeStatus: 'DRAFT',
+            status: 'DRAFT',
+            editingRevisionId: serverRevId,
+            content: tpl.content || `${tpl.name} standard wording.`,
+            description: tpl.description?.trim(),
+            sampleFileName: tpl.sampleFileName || `${serverId.toLowerCase()}-template.docx`,
+            mappingStatus: 'Mapped',
+            revisions: [initialRev],
+          };
+          setTemplates(prev => [...prev, newTpl]);
+          showDemoNotification(`Template '${newTpl.name}' added as draft (pending review and approval).`, 'success');
+          return { success: true, id: serverId };
+        } catch (err: any) {
+          const errMsg = err?.message || 'Network error creating template';
+          showDemoNotification(errMsg, 'error');
+          return { success: false, error: errMsg };
+        }
+      };
+      const promise = execute();
+      return Object.assign(promise, { success: true });
+    }
+
+    const id = `TPL-${String(templates.length + 1).padStart(3, '0')}`;
+    const timestamp = serializeBusinessInstant(demoClock);
+    const initialStatus = tpl.status || 'ACTIVE';
+    const isInitialDraft = initialStatus === 'DRAFT';
+    const initialRevStatus = isInitialDraft ? 'DRAFT' : 'PUBLISHED';
+    const initialRev: TemplateRevision = {
+      version: 'v1.0',
+      status: initialRevStatus,
+      content: tpl.content || `${tpl.name} standard wording.`,
+      updatedAt: timestamp,
+      updatedBy: persona.toUpperCase(),
+      approvedBy: isInitialDraft ? undefined : persona.toUpperCase(),
+      approvedAt: isInitialDraft ? undefined : timestamp,
+    };
+    const newTpl: TemplateSetting = {
+      id,
+      code: tpl.code?.trim() || tpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+      name: tpl.name.trim(),
+      type: tpl.type,
+      currentVersion: 'v1.0',
+      activeStatus: initialRevStatus,
+      status: initialStatus,
+      content: tpl.content || `${tpl.name} standard wording.`,
+      description: tpl.description?.trim(),
+      sampleFileName: tpl.sampleFileName || `${id.toLowerCase()}-template.docx`,
+      mappingStatus: 'Mapped',
+      revisions: [initialRev],
+    };
+    setTemplates(prev => [...prev, newTpl]);
+    showDemoNotification(`Template '${newTpl.name}' added to library.`, 'success');
+    const res = { success: true, id };
+    return Object.assign(Promise.resolve(res), res);
+  };
+
+  const archiveTemplate = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setTemplates(prev =>
+      prev.map(t => (t.id === id ? { ...t, status: 'ARCHIVED' as const } : t))
+    );
+    showDemoNotification('Template archived. Existing signed documents retain their frozen text.', 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchTemplate(session.workspaceId!, id, token, { action: 'archive' }).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const restoreTemplate = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchTemplate(session.workspaceId!, id, token, { action: 'restore' }).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Cannot activate template without a published revision', 'error');
+          } else {
+            setTemplates(prev =>
+              prev.map(t => (t.id === id ? { ...t, status: 'ACTIVE' as const } : t))
+            );
+            showDemoNotification('Template restored to active catalog.', 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error restoring template: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+    setTemplates(prev =>
+      prev.map(t => (t.id === id ? { ...t, status: 'ACTIVE' as const } : t))
+    );
+    showDemoNotification('Template restored to active catalog.', 'success');
+  };
+
+  const deleteTemplateDraft = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    const target = templates.find(t => t.id === id);
+    if (!target) return { success: false, error: 'Template not found' };
+    const hasPublishedRevision = target.revisions.some(r => r.status === 'PUBLISHED');
+    if (hasPublishedRevision && target.status !== 'DRAFT') {
+      if (target.activeStatus === 'DRAFT') {
+        setTemplates(prev =>
+          prev.map(t => {
+            if (t.id === id) {
+              const nonDraftRevisions = t.revisions.filter(r => r.status !== 'DRAFT');
+              const publishedRev = nonDraftRevisions[0] || t.revisions[0];
+              return {
+                ...t,
+                activeStatus: publishedRev.status,
+                currentVersion: publishedRev.version,
+                content: publishedRev.content,
+                revisions: nonDraftRevisions,
+              };
+            }
+            return t;
+          })
+        );
+        showDemoNotification(`Draft revision on '${target.name}' discarded; restored to published revision.`, 'info');
+        return { success: true };
+      }
+      showDemoNotification('Cannot delete published or archived templates; archive them instead.', 'error');
+      return { success: false, error: 'Cannot delete published templates' };
+    }
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiDeleteTemplate(session.workspaceId!, id, token).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Failed to delete template draft on server', 'error');
+          }
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    showDemoNotification(`Draft template '${target.name}' deleted.`, 'info');
+    return { success: true };
   };
 
   // Certificate Delivery Workflow (G00-022) & Certificate Policy A & MAN-SEC-01 Permission Guard
@@ -3849,6 +4783,18 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         createTemplateDraftRevision,
         submitTemplateForReview,
         updateJobTypeConfig,
+        addJobType,
+        editJobType,
+        archiveJobType,
+        restoreJobType,
+        deleteJobTypeDraft,
+        createJobTypePolicyDraft,
+        submitJobTypePolicyForReview,
+        approveJobTypePolicy,
+        addTemplate,
+        archiveTemplate,
+        restoreTemplate,
+        deleteTemplateDraft,
         websiteEnquiries: authorizedEnquiries,
         simulateWebsiteSubmission,
         convertEnquiryToJob,

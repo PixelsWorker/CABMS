@@ -455,7 +455,12 @@ const SimulatedWebsiteInboxView: React.FC = () => {
 /** Authenticated demo data is kept separate from the G00 simulated inbox. */
 export const WebsiteInboxView: React.FC = () => {
  const session = useG01Session();
- return session ? <PersistentInbox key={JSON.stringify([session.workspaceId, session.profile?.user.id])} /> : <SimulatedWebsiteInboxView />;
+ return (
+   <div className="space-y-6">
+     {session && <PersistentInbox key={JSON.stringify([session.workspaceId, session.profile?.user.id])} />}
+     <SimulatedWebsiteInboxView />
+   </div>
+ );
 };
 function PersistentInbox() {
  const session = useG01Session()!;

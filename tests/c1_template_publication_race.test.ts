@@ -1,0 +1,34 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createLocalD1Database,type LocalD1Database} from '../backend/db/d1.ts';
+import {runLocalMigrations} from '../backend/db/migrate.ts';
+import {createWorker} from '../backend/index.ts';
+import {createAuthenticationService} from '../backend/workers/auth.ts';
+import {createFirebaseFixture} from './support/firebaseTokens.ts';
+import {G01_TEST_AUTH,installG01TestAuthFixtures} from './support/g01SyntheticFixtures.ts';
+
+test('template publication rechecks authority inside the atomic transition',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());
+ await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
+ const fixture=await createFirebaseFixture(), worker=createWorker(createAuthenticationService(fixture.transport));
+ const env={DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'};
+ const staff=await fixture.token(G01_TEST_AUTH.officeStaff.uid,G01_TEST_AUTH.officeStaff.email),owner=await fixture.token(G01_TEST_AUTH.ownerAdmin.uid,G01_TEST_AUTH.ownerAdmin.email);
+ const req=(path:string,token:string,method='GET',body?:unknown)=>worker.fetch(new Request(`http://localhost/api/v1/workspaces/solarcell/${path}`,{method,headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},body:body?JSON.stringify(body):undefined}),env);
+ const made=await req('templates',staff,'POST',{name:'Race test',templateType:'QUOTE_TERMS',content:'Draft'});assert.equal(made.status,201);
+ const ids=await made.json() as {id:string;revisionId:string};
+ assert.equal((await req(`templates/${ids.id}/revisions/${ids.revisionId}/review`,staff,'POST')).status,200);
+ const original=db.batch.bind(db);let once=true;
+ db.batch=async statements=>{if(once){once=false;await db.prepare('UPDATE users SET disabled=1 WHERE id=?').bind(G01_TEST_AUTH.ownerAdmin.userId).run();}return original(statements);};
+ const result=await req(`templates/${ids.id}/revisions/${ids.revisionId}/approve`,owner,'POST');
+ assert.notEqual(result.status,200);
+ const record=await db.prepare('SELECT status,approved_by FROM template_revisions WHERE id=?').bind(ids.revisionId).first<{status:string;approved_by:string|null}>();
+ assert.equal(record?.status,'REVIEW');assert.equal(record?.approved_by,null);
+ db.batch=original;await db.prepare('UPDATE users SET disabled=0 WHERE id=?').bind(G01_TEST_AUTH.ownerAdmin.userId).run();
+ const newType=await req('job-types',staff,'POST',{name:'Race job type',brandId:'solarcell',formsRequired:['JSA']});assert.equal(newType.status,201);
+ const type=await newType.json() as {id:string;policyId:string};
+ assert.equal((await req(`job-types/${type.id}/policies/${type.policyId}/review`,staff,'POST')).status,200);
+ once=true;db.batch=async statements=>{if(once){once=false;await db.prepare('UPDATE users SET disabled=1 WHERE id=?').bind(G01_TEST_AUTH.ownerAdmin.userId).run();}return original(statements);};
+ assert.notEqual((await req(`job-types/${type.id}/policies/${type.policyId}/approve`,owner,'POST')).status,200);
+ const policy=await db.prepare('SELECT status,approved_by FROM job_type_compliance_policies WHERE id=?').bind(type.policyId).first<{status:string;approved_by:string|null}>();
+ assert.equal(policy?.status,'REVIEW');assert.equal(policy?.approved_by,null);
+});

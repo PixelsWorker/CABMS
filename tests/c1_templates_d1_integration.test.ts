@@ -91,9 +91,20 @@ test('C1 D1 & Worker Integration: Job Types, Policies, Templates, and Immutabili
     policies: Array<{ id: string; version: string; status: string; formsRequired: string[] }>;
   };
   assert.equal(newJt.name, 'Residential EV Charger Installation');
-  assert.equal(newJt.policies[0].status, 'PUBLISHED');
+  assert.equal(newJt.policies[0].status, 'DRAFT');
   assert.deepEqual(newJt.policies[0].formsRequired, ['JSA', 'ELECTRICAL']);
   const initialPolicyId = newJt.policies[0].id;
+
+  // Submit and approve initial policy so it becomes PUBLISHED
+  const submitInitial = await call(`solarcell/job-types/${newJtId}/policies/${initialPolicyId}/review`, 'POST');
+  assert.equal(submitInitial.status, 200);
+  const approveInitial = await call(
+    `solarcell/job-types/${newJtId}/policies/${initialPolicyId}/approve`,
+    'POST',
+    undefined,
+    adminToken
+  );
+  assert.equal(approveInitial.status, 200);
 
   // 6. Immutability Trigger in D1: Attempting to UPDATE or DELETE a PUBLISHED policy fails loudly
   await assert.rejects(

@@ -57,7 +57,7 @@ test('C1 Backend: Job Types & Compliance Policies lifecycle against real disposa
   });
   assert.equal(techCreate.status, 403);
 
-  // 3. Office staff creates a new job type
+  // 3. Office staff creates a new job type (always starts as DRAFT regardless of caller input)
   const createRes = await req('job-types', staffToken, 'POST', {
     name: 'Battery Backup Storage System',
     code: 'battery_backup_storage',
@@ -65,46 +65,58 @@ test('C1 Backend: Job Types & Compliance Policies lifecycle against real disposa
     brandId: 'solarcell',
     isDirectToInvoice: false,
     formsRequired: ['JSA', 'ELECTRICAL'],
-    status: 'ACTIVE',
+    status: 'ACTIVE', // Requesting ACTIVE must be ignored; starts as DRAFT
   });
   assert.equal(createRes.status, 201);
-  const created = await createRes.json() as { id: string };
+  const created = await createRes.json() as { id: string; policyId: string };
   assert.ok(created.id);
+  assert.ok(created.policyId);
 
-  // 4. Create new draft compliance policy
-  const draftRes = await req(`job-types/${created.id}/policies`, staffToken, 'POST', {
-    isDirectToInvoice: false,
-    formsRequired: ['JSA', 'ELECTRICAL', 'TCA2'],
-  });
-  assert.equal(draftRes.status, 201);
-  const draftPolicy = await draftRes.json() as { id: string; version: string };
-  assert.match(draftPolicy.version, /v.*-draft/);
+  // 4. Verify initial state is DRAFT for both job type and policy
+  const initialGet = await req(`job-types/${created.id}`, staffToken);
+  assert.equal(initialGet.status, 200);
+  const initialData = await initialGet.json() as any;
+  assert.equal(initialData.status, 'DRAFT', 'Job type must start in DRAFT');
+  assert.equal(initialData.policy_status, 'DRAFT', 'Policy must start in DRAFT');
 
-  // 5. Submit policy draft for review
-  const reviewRes = await req(`job-types/${created.id}/policies/${draftPolicy.id}/review`, staffToken, 'POST');
+  // 5. Premature Activation Guard: Restoring draft item to ACTIVE fails because policy is not PUBLISHED
+  const prematureRestore = await req(`job-types/${created.id}`, staffToken, 'PATCH', { action: 'restore' });
+  assert.equal(prematureRestore.status, 400);
+  const prematureRestoreProb = await prematureRestore.json() as any;
+  assert.equal(prematureRestoreProb.code, 'ACTIVATION_FAILED');
+
+  // 6. Approval Bypass Guard: Approving a policy directly from DRAFT must fail (must be in REVIEW first)
+  const prematureApprove = await req(`job-types/${created.id}/policies/${created.policyId}/approve`, ownerToken, 'POST');
+  assert.equal(prematureApprove.status, 400);
+  const prematureApproveProb = await prematureApprove.json() as any;
+  assert.equal(prematureApproveProb.code, 'APPROVAL_FAILED');
+
+  // 7. Submit policy draft for review
+  const reviewRes = await req(`job-types/${created.id}/policies/${created.policyId}/review`, staffToken, 'POST');
   assert.equal(reviewRes.status, 200);
 
-  // 6. Role Gate: Office staff CANNOT approve policy (must return 403)
-  const staffApproveRes = await req(`job-types/${created.id}/policies/${draftPolicy.id}/approve`, staffToken, 'POST');
+  // 8. Negative Authorization: Office staff CANNOT approve policy (must return 403)
+  const staffApproveRes = await req(`job-types/${created.id}/policies/${created.policyId}/approve`, staffToken, 'POST');
   assert.equal(staffApproveRes.status, 403);
 
-  // 7. Owner admin approves policy (200 OK)
-  const ownerApproveRes = await req(`job-types/${created.id}/policies/${draftPolicy.id}/approve`, ownerToken, 'POST');
+  // 9. Owner admin approves policy (200 OK) -> publishes policy and activates parent job type
+  const ownerApproveRes = await req(`job-types/${created.id}/policies/${created.policyId}/approve`, ownerToken, 'POST');
   assert.equal(ownerApproveRes.status, 200);
 
-  // 8. Verify the policy is now PUBLISHED and forms updated
+  // 10. Verify the policy is now PUBLISHED and job type is now ACTIVE
   const detailRes = await req(`job-types/${created.id}`, staffToken);
   assert.equal(detailRes.status, 200);
   const detail = await detailRes.json() as any;
-  assert.equal(detail.policy_status, 'PUBLISHED');
+  assert.equal(detail.status, 'ACTIVE', 'Job type automatically activated upon policy approval');
+  assert.equal(detail.policy_status, 'PUBLISHED', 'Policy status is now PUBLISHED');
 
-  // 9. Immutability Trigger: Attempting direct SQL update on published policy must be rejected by SQLite trigger
+  // 11. Immutability Trigger: Attempting direct SQL update on published policy must be rejected by SQLite trigger
   await assert.rejects(
-    () => db.exec(`UPDATE job_type_compliance_policies SET version = 'v99.0' WHERE id = '${draftPolicy.id}'`),
+    () => db.exec(`UPDATE job_type_compliance_policies SET version = 'v99.0' WHERE id = '${created.policyId}'`),
     /published compliance policies are immutable/
   );
 
-  // 10. Archive and Restore
+  // 12. Archive and Restore: Now permitted because current policy is PUBLISHED
   const archiveRes = await req(`job-types/${created.id}`, staffToken, 'PATCH', { action: 'archive' });
   assert.equal(archiveRes.status, 200);
 
@@ -149,7 +161,7 @@ test('C1 Backend: Document Templates & Revisions lifecycle against real disposab
   assert.ok(quoteTerms);
   assert.equal(quoteTerms.revision_status, 'PUBLISHED');
 
-  // 2. Create new template
+  // 2. Create new template (starts in DRAFT regardless of caller input)
   const createRes = await req('templates', staffToken, 'POST', {
     name: 'Battery Warranty & Maintenance Agreement',
     templateType: 'QUOTE_TERMS',
@@ -158,31 +170,50 @@ test('C1 Backend: Document Templates & Revisions lifecycle against real disposab
     status: 'ACTIVE',
   });
   assert.equal(createRes.status, 201);
-  const created = await createRes.json() as { id: string };
+  const created = await createRes.json() as { id: string; revisionId: string };
+  assert.ok(created.id);
+  assert.ok(created.revisionId);
 
-  // 3. Create draft revision
-  const draftRevRes = await req(`templates/${created.id}/revisions`, staffToken, 'POST', {
-    content: 'Updated: 15-year battery warranty with complimentary annual health inspection.',
-  });
-  assert.equal(draftRevRes.status, 201);
-  const draftRev = await draftRevRes.json() as { id: string; version: string };
-  assert.match(draftRev.version, /v.*-draft/);
+  // Verify initial state is DRAFT
+  const tplGet = await req(`templates/${created.id}`, staffToken);
+  assert.equal(tplGet.status, 200);
+  const tplData = await tplGet.json() as any;
+  assert.equal(tplData.status, 'DRAFT');
+  assert.equal(tplData.revision_status, 'DRAFT');
 
-  // 4. Submit revision for review
-  const reviewRes = await req(`templates/${created.id}/revisions/${draftRev.id}/review`, staffToken, 'POST');
+  // Premature Activation Guard: Cannot restore/activate template without published revision
+  const prematureTplRestore = await req(`templates/${created.id}`, staffToken, 'PATCH', { action: 'restore' });
+  assert.equal(prematureTplRestore.status, 400);
+  const prematureTplProb = await prematureTplRestore.json() as any;
+  assert.equal(prematureTplProb.code, 'ACTIVATION_FAILED');
+
+  // Approval Bypass Guard: Approving revision directly from DRAFT must fail
+  const prematureRevApprove = await req(`templates/${created.id}/revisions/${created.revisionId}/approve`, ownerToken, 'POST');
+  assert.equal(prematureRevApprove.status, 400);
+  const prematureRevProb = await prematureRevApprove.json() as any;
+  assert.equal(prematureRevProb.code, 'APPROVAL_FAILED');
+
+  // 3. Submit revision for review
+  const reviewRes = await req(`templates/${created.id}/revisions/${created.revisionId}/review`, staffToken, 'POST');
   assert.equal(reviewRes.status, 200);
 
-  // 5. Office staff approval fails closed (403)
-  const staffApprove = await req(`templates/${created.id}/revisions/${draftRev.id}/approve`, staffToken, 'POST');
+  // 4. Office staff approval fails closed (403)
+  const staffApprove = await req(`templates/${created.id}/revisions/${created.revisionId}/approve`, staffToken, 'POST');
   assert.equal(staffApprove.status, 403);
 
-  // 6. Owner admin approval succeeds (200)
-  const ownerApprove = await req(`templates/${created.id}/revisions/${draftRev.id}/approve`, ownerToken, 'POST');
+  // 5. Owner admin approval succeeds (200) -> publishes revision and activates parent template
+  const ownerApprove = await req(`templates/${created.id}/revisions/${created.revisionId}/approve`, ownerToken, 'POST');
   assert.equal(ownerApprove.status, 200);
 
-  // 7. Immutability Trigger: Direct SQL edit to published revision content fails
+  const tplDetail = await req(`templates/${created.id}`, staffToken);
+  assert.equal(tplDetail.status, 200);
+  const tplDetailData = await tplDetail.json() as any;
+  assert.equal(tplDetailData.status, 'ACTIVE', 'Template activated upon revision approval');
+  assert.equal(tplDetailData.revision_status, 'PUBLISHED', 'Revision status is now PUBLISHED');
+
+  // 6. Immutability Trigger: Direct SQL edit to published revision content fails
   await assert.rejects(
-    () => db.exec(`UPDATE template_revisions SET content = 'Tampered content' WHERE id = '${draftRev.id}'`),
+    () => db.exec(`UPDATE template_revisions SET content = 'Tampered content' WHERE id = '${created.revisionId}'`),
     /published template revisions are immutable/
   );
 });

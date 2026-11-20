@@ -95,7 +95,12 @@ export async function handleJobTypesRoute(
     }
     if (input.action === 'restore') {
       const ok = await setJobTypeStatus(env.DB, workspace, auth, jobTypeId, 'ACTIVE');
-      return ok ? reply({ success: true }) : resourceNotFoundResponse('Job type not found', requestId);
+      if (!ok) {
+        const jt = await getJobType(env.DB, workspace, auth, jobTypeId);
+        if (!jt) return resourceNotFoundResponse('Job type not found', requestId);
+        return createProblemResponse(400, 'ACTIVATION_FAILED', 'activation-failed', 'Activation Failed', 'Cannot activate job type without a published compliance policy', requestId);
+      }
+      return reply({ success: true });
     }
 
     const ok = await updateJobType(env.DB, workspace, auth, jobTypeId, input);
@@ -115,6 +120,9 @@ export async function handleJobTypesRoute(
   if (request.method === 'POST' && jobTypeId && subAction === 'policies' && !subId) {
     let input: any;
     try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
+    if (!input || typeof input !== 'object' || Array.isArray(input) || (input.formRules !== undefined && (!Array.isArray(input.formRules) || input.formRules.length > 100 || input.formRules.some((rule: any) => !rule || typeof rule.form_revision_id !== 'string' || typeof rule.required !== 'boolean') || new Set(input.formRules.map((rule: any) => rule.form_revision_id)).size !== input.formRules.length)) || (input.isDirectToInvoice && input.formRules?.some((rule: any) => rule.required))) {
+      return validationErrorResponse('Invalid policy form rules', [], requestId);
+    }
     const res = await createJobTypePolicyDraft(env.DB, workspace, auth, jobTypeId, input || {});
     if (!res) return resourceNotFoundResponse('Job type not found', requestId);
     return reply(res, 201);
@@ -132,7 +140,7 @@ export async function handleJobTypesRoute(
       return accessDeniedResponse('Only owner_admin or super_admin can approve and publish compliance policies', requestId);
     }
     const ok = await approveJobTypePolicy(env.DB, workspace, auth, jobTypeId, subId);
-    return ok ? reply({ success: true }) : createProblemResponse(400, 'APPROVAL_FAILED', 'approval-failed', 'Approval Failed', 'Policy approval failed', requestId);
+    return ok ? reply({ success: true }) : createProblemResponse(400, 'APPROVAL_FAILED', 'approval-failed', 'Approval Failed', 'Policy must be in REVIEW status before approval', requestId);
   }
 
   return new Response('Method Not Allowed', { status: 405 });
@@ -198,7 +206,12 @@ export async function handleTemplatesRoute(
     }
     if (input?.action === 'restore') {
       const ok = await setTemplateStatus(env.DB, workspace, auth, templateId, 'ACTIVE');
-      return ok ? reply({ success: true }) : resourceNotFoundResponse('Template not found', requestId);
+      if (!ok) {
+        const tpl = await getTemplate(env.DB, workspace, auth, templateId);
+        if (!tpl) return resourceNotFoundResponse('Template not found', requestId);
+        return createProblemResponse(400, 'ACTIVATION_FAILED', 'activation-failed', 'Activation Failed', 'Cannot activate template without a published revision', requestId);
+      }
+      return reply({ success: true });
     }
     return validationErrorResponse('Unsupported action', [], requestId);
   }
@@ -235,7 +248,7 @@ export async function handleTemplatesRoute(
       return accessDeniedResponse('Only owner_admin or super_admin can approve and publish document template revisions', requestId);
     }
     const ok = await approveTemplateRevision(env.DB, workspace, auth, templateId, subId);
-    return ok ? reply({ success: true }) : createProblemResponse(400, 'APPROVAL_FAILED', 'approval-failed', 'Approval Failed', 'Revision approval failed', requestId);
+    return ok ? reply({ success: true }) : createProblemResponse(400, 'APPROVAL_FAILED', 'approval-failed', 'Approval Failed', 'Revision must be in REVIEW status before approval', requestId);
   }
 
   return new Response('Method Not Allowed', { status: 405 });

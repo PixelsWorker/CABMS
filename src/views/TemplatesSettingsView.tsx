@@ -10,6 +10,7 @@
 import React, { useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
+import { FormLibrary } from '../components/FormLibrary.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBoxArchive,
@@ -159,9 +160,9 @@ export const TemplatesSettingsView: React.FC = () => {
     setEditingJobTypeId(null);
   };
 
-  const handleCreateJobType = (e: React.FormEvent) => {
+  const handleCreateJobType = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = addJobType({
+    const res = await addJobType({
       name: newJtName,
       code: newJtCode,
       brandId: newJtBrandId,
@@ -179,9 +180,9 @@ export const TemplatesSettingsView: React.FC = () => {
     }
   };
 
-  const handleCreateTemplate = (e: React.FormEvent) => {
+  const handleCreateTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = addTemplate({
+    const res = await addTemplate({
       name: newTplName,
       code: newTplCode,
       type: newTplType,
@@ -226,6 +227,8 @@ export const TemplatesSettingsView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <FormLibrary />
 
       {/* SECTION 1: REQUIRED FORMS BY JOB TYPE MATRIX */}
       <div className="cabms-card p-6 space-y-4">

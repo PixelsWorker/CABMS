@@ -106,7 +106,9 @@ export interface JobTypeConfig {
   version: string;
   status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   policyStatus?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+  currentPolicyId?: string;
   revisionHistory?: {
+    id?: string;
     version: string;
     formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
     isDirectToInvoice: boolean;
@@ -469,6 +471,7 @@ export interface WebsiteEnquiry {
 }
 
 export interface TemplateRevision {
+  id?: string;
   version: string;
   status: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
   content: string;
@@ -486,6 +489,7 @@ export interface TemplateSetting {
   currentVersion: string;
   activeStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
   status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  currentRevisionId?: string;
   content: string;
   description?: string;
   sampleFileName?: string;

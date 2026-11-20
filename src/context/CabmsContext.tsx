@@ -258,7 +258,7 @@ interface CabmsContextType {
     formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
     isDirectToInvoice: boolean;
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
-  }) => { success: boolean; id?: string; error?: string };
+  }) => Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string };
   editJobType: (id: string, updates: Partial<JobTypeConfig>) => { success: boolean; error?: string };
   archiveJobType: (id: string) => void;
   restoreJobType: (id: string) => void;
@@ -274,7 +274,7 @@ interface CabmsContextType {
     description?: string;
     sampleFileName?: string;
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
-  }) => { success: boolean; id?: string; error?: string };
+  }) => Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string };
   archiveTemplate: (id: string) => void;
   restoreTemplate: (id: string) => void;
   deleteTemplateDraft: (id: string) => { success: boolean; error?: string };
@@ -495,7 +495,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     let active = true;
     void session.token().then(token => {
       apiListJobTypes(session.workspaceId!, token).then(res => {
-        if (!active || !res.ok || !res.data || res.data.length === 0) return;
+        if (!active) return;
+        if (!res.ok) {
+          showDemoNotification(res.problem?.detail || 'Failed to fetch job types from server', 'error');
+          return;
+        }
+        if (!res.data) return;
         setJobTypes(res.data.map(row => ({
           id: row.id,
           code: row.code,
@@ -505,43 +510,58 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           formsRequired: row.forms_required || [],
           isDirectToInvoice: Boolean(row.is_direct_to_invoice),
           version: row.version || 'v1.0',
-          status: row.status || 'ACTIVE',
-          policyStatus: row.policy_status || 'PUBLISHED',
+          status: row.status || 'DRAFT',
+          policyStatus: row.policy_status || 'DRAFT',
+          currentPolicyId: row.current_policy_version_id || undefined,
           revisionHistory: [{
+            id: row.current_policy_version_id || undefined,
             version: row.version || 'v1.0',
             formsRequired: row.forms_required || [],
             isDirectToInvoice: Boolean(row.is_direct_to_invoice),
-            status: row.policy_status || 'PUBLISHED',
+            status: row.policy_status || 'DRAFT',
             updatedAt: row.updated_at,
             updatedBy: 'SYSTEM',
           }],
         })));
-      }).catch(() => {});
+      }).catch(err => {
+        if (active) showDemoNotification(`Failed to load job types: ${err?.message || 'Network error'}`, 'error');
+      });
 
       apiListTemplates(session.workspaceId!, token).then(res => {
-        if (!active || !res.ok || !res.data || res.data.length === 0) return;
+        if (!active) return;
+        if (!res.ok) {
+          showDemoNotification(res.problem?.detail || 'Failed to fetch templates from server', 'error');
+          return;
+        }
+        if (!res.data) return;
         setTemplates(res.data.map(row => ({
           id: row.id,
           code: row.code,
           name: row.name,
           type: (row.template_type === 'QUOTE_TERMS' || row.template_type === 'INVOICE_TERMS' ? 'TERMS' : 'COMPLIANCE') as TemplateSetting['type'],
           currentVersion: row.current_version || 'v1.0',
-          activeStatus: row.revision_status || 'PUBLISHED',
-          status: row.status || 'ACTIVE',
+          activeStatus: row.revision_status || 'DRAFT',
+          status: row.status || 'DRAFT',
+          currentRevisionId: row.current_revision_id || undefined,
           content: row.current_content || '',
           description: row.description || undefined,
           sampleFileName: row.sample_file_name || undefined,
           mappingStatus: row.mapping_status || 'Mapped',
           revisions: [{
+            id: row.current_revision_id || undefined,
             version: row.current_version || 'v1.0',
-            status: row.revision_status || 'PUBLISHED',
+            status: row.revision_status || 'DRAFT',
             content: row.current_content || '',
             updatedAt: row.updated_at,
             updatedBy: 'SYSTEM',
           }],
         })));
-      }).catch(() => {});
-    }).catch(() => {});
+      }).catch(err => {
+        if (active) showDemoNotification(`Failed to load templates: ${err?.message || 'Network error'}`, 'error');
+      });
+    }).catch(err => {
+      if (active) showDemoNotification(`Session token error: ${err?.message || 'Unauthorized'}`, 'error');
+    });
 
     return () => { active = false; };
   }, [session?.workspaceId, session?.profile?.user.id, activeTab]);
@@ -3327,9 +3347,32 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const tpl = templates.find(t => t.id === templateId);
     if (!tpl) return;
 
-    const res = processPublishTemplate(tpl, persona, demoClock);
+    const caller = authoritativePersonaRef.current || persona;
+    const res = processPublishTemplate(tpl, caller, demoClock);
     if (!res.success) {
       showDemoNotification(res.error || 'Cannot publish template.', 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const revId = tpl.currentRevisionId || tpl.revisions[0]?.id || tpl.revisions[0]?.version || 'v1.0';
+        apiApproveTemplateRevision(session.workspaceId!, templateId, revId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Template approval failed on server', 'error');
+          } else {
+            seqCounters.revision++;
+            setTemplates(prev =>
+              prev.map(t => (t.id === templateId ? { ...res.updatedTemplate!, status: 'ACTIVE' as const } : t))
+            );
+            showDemoNotification(`Template version published. Full revision and review audit history retained.`, 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error publishing template: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
       return;
     }
 
@@ -3338,18 +3381,54 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       prev.map(t => (t.id === templateId ? res.updatedTemplate! : t))
     );
     showDemoNotification(`Template version published. Full revision and review audit history retained.`, 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        const revId = tpl.revisions[0]?.version || 'v1.0';
-        apiApproveTemplateRevision(session.workspaceId!, templateId, revId, token).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const createTemplateDraftRevision = (templateId: string, newContent: string) => {
     const access = verifyPersonaAccess(persona, 'template_editing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiCreateTemplateRevisionDraft(session.workspaceId!, templateId, token, newContent).then(apiRes => {
+          if (!apiRes.ok || !apiRes.data) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to create revision draft on server', 'error');
+          } else {
+            const revId = apiRes.data.id;
+            const draftVer = apiRes.data.version;
+            setTemplates(prev =>
+              prev.map(t => {
+                if (t.id === templateId) {
+                  const draftRev: TemplateRevision = {
+                    id: revId,
+                    version: draftVer,
+                    status: 'DRAFT' as const,
+                    content: newContent,
+                    updatedAt: serializeBusinessInstant(demoClock),
+                    updatedBy: persona.toUpperCase(),
+                  };
+                  return {
+                    ...t,
+                    currentVersion: draftVer,
+                    currentRevisionId: revId,
+                    content: newContent,
+                    activeStatus: 'DRAFT',
+                    revisions: [draftRev, ...t.revisions],
+                  };
+                }
+                return t;
+              })
+            );
+            showDemoNotification('Draft template revision saved. Ready for owner review before publishing.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error creating revision draft: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
       return;
     }
 
@@ -3374,11 +3453,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Draft template revision saved. Ready for owner review before publishing.', 'info');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        apiCreateTemplateRevisionDraft(session.workspaceId!, templateId, token, newContent).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const submitTemplateForReview = (templateId: string) => {
@@ -3396,6 +3470,41 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('DENIED: Only a draft revision can be submitted for review.', 'error');
       return;
     }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const revId = targetTemplate.currentRevisionId || targetTemplate.revisions[0]?.id || targetTemplate.revisions[0]?.version || 'v1.0';
+        apiSubmitTemplateRevisionReview(session.workspaceId!, templateId, revId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to submit template revision for review', 'error');
+          } else {
+            const timestamp = serializeBusinessInstant(demoClock);
+            setTemplates(prev =>
+              prev.map(t => {
+                if (t.id === templateId) {
+                  const revs = t.revisions.map((r, idx) =>
+                    idx === 0 ? { ...r, status: 'REVIEW' as const, updatedAt: timestamp } : r
+                  );
+                  return {
+                    ...t,
+                    activeStatus: 'REVIEW',
+                    revisions: revs,
+                  };
+                }
+                return t;
+              })
+            );
+            showDemoNotification('Template revision submitted for Admin compliance review.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error submitting revision for review: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
     const timestamp = serializeBusinessInstant(demoClock);
     setTemplates(prev =>
       prev.map(t => {
@@ -3413,12 +3522,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Template revision submitted for Admin compliance review.', 'info');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        const revId = targetTemplate.revisions[0]?.version || 'v1.0';
-        apiSubmitTemplateRevisionReview(session.workspaceId!, templateId, revId, token).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const updateJobTypeConfig = (
@@ -3465,16 +3568,75 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
     isDirectToInvoice: boolean;
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
-  }) => {
+  }): Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string } => {
     const access = verifyPersonaAccess(persona, 'template_editing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
-      return { success: false, error: access.reason };
+      const res = { success: false, error: access.reason };
+      return Object.assign(Promise.resolve(res), res);
     }
     if (!config.name || !config.name.trim()) {
       showDemoNotification('Job type category name cannot be blank.', 'error');
-      return { success: false, error: 'Name cannot be blank' };
+      const res = { success: false, error: 'Name cannot be blank' };
+      return Object.assign(Promise.resolve(res), res);
     }
+
+    if (session?.workspaceId && session?.profile) {
+      const execute = async () => {
+        try {
+          const token = await session.token();
+          const apiRes = await apiCreateJobType(session.workspaceId!, token, {
+            name: config.name.trim(),
+            code: config.code?.trim(),
+            description: config.description?.trim(),
+            brandId: config.brandId,
+            isDirectToInvoice: config.isDirectToInvoice,
+            formsRequired: config.formsRequired,
+            status: config.status,
+          });
+          if (!apiRes.ok || !apiRes.data) {
+            const errMsg = apiRes.problem?.detail || 'Could not create job type';
+            showDemoNotification(errMsg, 'error');
+            return { success: false, error: errMsg };
+          }
+          const serverId = apiRes.data.id;
+          const serverPolicyId = apiRes.data.policyId;
+          const timestamp = serializeBusinessInstant(demoClock);
+          const newJt: JobTypeConfig = {
+            id: serverId,
+            code: config.code?.trim() || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+            name: config.name.trim(),
+            description: config.description?.trim(),
+            brandId: config.brandId,
+            formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+            isDirectToInvoice: config.isDirectToInvoice,
+            version: 'v1.0',
+            status: 'DRAFT',
+            policyStatus: 'DRAFT',
+            currentPolicyId: serverPolicyId,
+            revisionHistory: [{
+              id: serverPolicyId,
+              version: 'v1.0',
+              formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+              isDirectToInvoice: config.isDirectToInvoice,
+              status: 'DRAFT',
+              updatedAt: timestamp,
+              updatedBy: persona.toUpperCase(),
+            }],
+          };
+          setJobTypes(prev => [...prev, newJt]);
+          showDemoNotification(`Job type '${newJt.name}' created as draft (pending review and approval).`, 'success');
+          return { success: true, id: serverId };
+        } catch (err: any) {
+          const errMsg = err?.message || 'Network error creating job type';
+          showDemoNotification(errMsg, 'error');
+          return { success: false, error: errMsg };
+        }
+      };
+      const promise = execute();
+      return Object.assign(promise, { success: true });
+    }
+
     const id = `JT-${String(jobTypes.length + 1).padStart(3, '0')}`;
     const code = config.code?.trim() || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
     const timestamp = serializeBusinessInstant(demoClock);
@@ -3505,20 +3667,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setJobTypes(prev => [...prev, newJt]);
     showDemoNotification(`Job type '${newJt.name}' created.`, 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        apiCreateJobType(session.workspaceId!, token, {
-          name: newJt.name,
-          code: newJt.code,
-          description: newJt.description,
-          brandId: newJt.brandId,
-          isDirectToInvoice: newJt.isDirectToInvoice,
-          formsRequired: newJt.formsRequired,
-          status: newJt.status,
-        }).catch(() => {});
-      }).catch(() => {});
-    }
-    return { success: true, id };
+    const res = { success: true, id };
+    return Object.assign(Promise.resolve(res), res);
   };
 
   const editJobType = (id: string, updates: Partial<JobTypeConfig>) => {
@@ -3583,15 +3733,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
     }
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchJobType(session.workspaceId!, id, token, { action: 'restore' }).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Cannot activate job type without a published compliance policy', 'error');
+          } else {
+            setJobTypes(prev =>
+              prev.map(jt => (jt.id === id ? { ...jt, status: 'ACTIVE' as const } : jt))
+            );
+            showDemoNotification(`Job type restored to active catalog.`, 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error restoring job type: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
     setJobTypes(prev =>
       prev.map(jt => (jt.id === id ? { ...jt, status: 'ACTIVE' as const } : jt))
     );
     showDemoNotification(`Job type restored to active catalog.`, 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        apiPatchJobType(session.workspaceId!, id, token, { action: 'restore' }).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const deleteJobTypeDraft = (id: string) => {
@@ -3611,13 +3775,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Cannot delete job type referenced by existing work orders.', 'error');
       return { success: false, error: 'Referenced by existing jobs' };
     }
-    setJobTypes(prev => prev.filter(jt => jt.id !== id));
-    showDemoNotification(`Draft job type '${target.name}' deleted.`, 'info');
     if (session?.workspaceId && session?.profile) {
       void session.token().then(token => {
-        apiDeleteJobType(session.workspaceId!, id, token).catch(() => {});
+        apiDeleteJobType(session.workspaceId!, id, token).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Failed to delete job type draft on server', 'error');
+          }
+        }).catch(() => {});
       }).catch(() => {});
     }
+    setJobTypes(prev => prev.filter(jt => jt.id !== id));
+    showDemoNotification(`Draft job type '${target.name}' deleted.`, 'info');
     return { success: true };
   };
 
@@ -3627,6 +3795,54 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
     }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return;
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiCreateJobTypePolicyDraft(session.workspaceId!, id, token, {
+          formsRequired: target.formsRequired,
+          isDirectToInvoice: target.isDirectToInvoice,
+        }).then(apiRes => {
+          if (!apiRes.ok || !apiRes.data) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to create policy draft on server', 'error');
+          } else {
+            const polId = apiRes.data.id;
+            const draftVer = apiRes.data.version;
+            setJobTypes(prev =>
+              prev.map(jt => {
+                if (jt.id === id) {
+                  const historyEntry = {
+                    id: polId,
+                    version: draftVer,
+                    formsRequired: [...jt.formsRequired],
+                    isDirectToInvoice: jt.isDirectToInvoice,
+                    status: 'DRAFT' as const,
+                    updatedAt: serializeBusinessInstant(demoClock),
+                    updatedBy: persona.toUpperCase(),
+                  };
+                  return {
+                    ...jt,
+                    version: draftVer,
+                    policyStatus: 'DRAFT' as const,
+                    currentPolicyId: polId,
+                    revisionHistory: [historyEntry, ...(jt.revisionHistory || [])],
+                  };
+                }
+                return jt;
+              })
+            );
+            showDemoNotification('Created new draft policy version. Configure rules and submit for review.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error creating policy draft: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
     setJobTypes(prev =>
       prev.map(jt => {
         if (jt.id === id) {
@@ -3651,17 +3867,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Created new draft policy version. Configure rules and submit for review.', 'info');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        const target = jobTypes.find(jt => jt.id === id);
-        if (target) {
-          apiCreateJobTypePolicyDraft(session.workspaceId!, id, token, {
-            formsRequired: target.formsRequired,
-            isDirectToInvoice: target.isDirectToInvoice,
-          }).catch(() => {});
-        }
-      }).catch(() => {});
-    }
   };
 
   const submitJobTypePolicyForReview = (id: string) => {
@@ -3670,6 +3875,45 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
     }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return;
+    if (target.policyStatus !== 'DRAFT') {
+      showDemoNotification('Only draft policies can be submitted for review.', 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const policyId = target.currentPolicyId || target.revisionHistory?.[0]?.id || target.revisionHistory?.[0]?.version || id;
+        apiSubmitJobTypePolicyReview(session.workspaceId!, id, policyId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Failed to submit policy for review', 'error');
+          } else {
+            setJobTypes(prev =>
+              prev.map(jt => {
+                if (jt.id === id) {
+                  return {
+                    ...jt,
+                    policyStatus: 'REVIEW' as const,
+                    revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+                      idx === 0 ? { ...rev, status: 'REVIEW' as const, updatedAt: serializeBusinessInstant(demoClock) } : rev
+                    ),
+                  };
+                }
+                return jt;
+              })
+            );
+            showDemoNotification('Policy version submitted for compliance review.', 'info');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error submitting policy for review: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
     setJobTypes(prev =>
       prev.map(jt => {
         if (jt.id === id) {
@@ -3685,13 +3929,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Policy version submitted for compliance review.', 'info');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        const target = jobTypes.find(jt => jt.id === id);
-        const policyId = target?.revisionHistory?.[0]?.version || id;
-        apiSubmitJobTypePolicyReview(session.workspaceId!, id, policyId, token).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const approveJobTypePolicy = (id: string) => {
@@ -3700,14 +3937,68 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Office staff cannot publish compliance policies.', 'error');
       return;
     }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return;
+    if (target.policyStatus !== 'REVIEW') {
+      showDemoNotification('Policy must be in REVIEW status before approval.', 'error');
+      return;
+    }
+
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const policyId = target.currentPolicyId || target.revisionHistory?.[0]?.id || target.revisionHistory?.[0]?.version || id;
+        apiApproveJobTypePolicy(session.workspaceId!, id, policyId, token).then(apiRes => {
+          if (!apiRes.ok) {
+            showDemoNotification(apiRes.problem?.detail || 'Policy approval failed on server', 'error');
+          } else {
+            const publishedVer = target.version.replace('-draft', '');
+            const timestamp = serializeBusinessInstant(demoClock);
+            setJobTypes(prev =>
+              prev.map(jt => {
+                if (jt.id === id) {
+                  return {
+                    ...jt,
+                    version: publishedVer,
+                    status: 'ACTIVE' as const,
+                    policyStatus: 'PUBLISHED' as const,
+                    revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+                      idx === 0
+                        ? {
+                            ...rev,
+                            version: publishedVer,
+                            status: 'PUBLISHED' as const,
+                            approvedBy: caller.toUpperCase(),
+                            approvedAt: timestamp,
+                            effectiveAt: timestamp,
+                            updatedAt: timestamp,
+                          }
+                        : rev
+                    ),
+                  };
+                }
+                return jt;
+              })
+            );
+            showDemoNotification('Compliance policy approved & published. Snapshot is now frozen.', 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error approving policy: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
+
+    const publishedVer = target.version.replace('-draft', '');
+    const timestamp = serializeBusinessInstant(demoClock);
     setJobTypes(prev =>
       prev.map(jt => {
         if (jt.id === id) {
-          const publishedVer = jt.version.replace('-draft', '');
-          const timestamp = serializeBusinessInstant(demoClock);
           return {
             ...jt,
             version: publishedVer,
+            status: jt.status === 'DRAFT' ? ('ACTIVE' as const) : jt.status,
             policyStatus: 'PUBLISHED' as const,
             revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
               idx === 0
@@ -3728,13 +4019,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Compliance policy approved & published. Snapshot is now frozen.', 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        const target = jobTypes.find(jt => jt.id === id);
-        const policyId = target?.revisionHistory?.[0]?.version || id;
-        apiApproveJobTypePolicy(session.workspaceId!, id, policyId, token).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const addTemplate = (tpl: {
@@ -3745,16 +4029,76 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     description?: string;
     sampleFileName?: string;
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
-  }) => {
+  }): Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string } => {
     const access = verifyPersonaAccess(persona, 'template_editing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
-      return { success: false, error: access.reason };
+      const res = { success: false, error: access.reason };
+      return Object.assign(Promise.resolve(res), res);
     }
     if (!tpl.name || !tpl.name.trim()) {
       showDemoNotification('Template name cannot be blank.', 'error');
-      return { success: false, error: 'Name cannot be blank' };
+      const res = { success: false, error: 'Name cannot be blank' };
+      return Object.assign(Promise.resolve(res), res);
     }
+
+    if (session?.workspaceId && session?.profile) {
+      const execute = async () => {
+        try {
+          const token = await session.token();
+          const apiRes = await apiCreateTemplate(session.workspaceId!, token, {
+            name: tpl.name.trim(),
+            code: tpl.code?.trim(),
+            templateType: tpl.type === 'TERMS' ? 'QUOTE_TERMS' : 'COMPLIANCE_DISCLAIMER',
+            content: tpl.content || `${tpl.name} standard wording.`,
+            description: tpl.description?.trim(),
+            sampleFileName: tpl.sampleFileName,
+            status: tpl.status,
+          });
+          if (!apiRes.ok || !apiRes.data) {
+            const errMsg = apiRes.problem?.detail || 'Could not create template';
+            showDemoNotification(errMsg, 'error');
+            return { success: false, error: errMsg };
+          }
+          const serverId = apiRes.data.id;
+          const serverRevId = apiRes.data.revisionId;
+          const timestamp = serializeBusinessInstant(demoClock);
+          const initialRev: TemplateRevision = {
+            id: serverRevId,
+            version: 'v1.0',
+            status: 'DRAFT',
+            content: tpl.content || `${tpl.name} standard wording.`,
+            updatedAt: timestamp,
+            updatedBy: persona.toUpperCase(),
+          };
+          const newTpl: TemplateSetting = {
+            id: serverId,
+            code: tpl.code?.trim() || tpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+            name: tpl.name.trim(),
+            type: tpl.type,
+            currentVersion: 'v1.0',
+            activeStatus: 'DRAFT',
+            status: 'DRAFT',
+            currentRevisionId: serverRevId,
+            content: tpl.content || `${tpl.name} standard wording.`,
+            description: tpl.description?.trim(),
+            sampleFileName: tpl.sampleFileName || `${serverId.toLowerCase()}-template.docx`,
+            mappingStatus: 'Mapped',
+            revisions: [initialRev],
+          };
+          setTemplates(prev => [...prev, newTpl]);
+          showDemoNotification(`Template '${newTpl.name}' added as draft (pending review and approval).`, 'success');
+          return { success: true, id: serverId };
+        } catch (err: any) {
+          const errMsg = err?.message || 'Network error creating template';
+          showDemoNotification(errMsg, 'error');
+          return { success: false, error: errMsg };
+        }
+      };
+      const promise = execute();
+      return Object.assign(promise, { success: true });
+    }
+
     const id = `TPL-${String(templates.length + 1).padStart(3, '0')}`;
     const timestamp = serializeBusinessInstant(demoClock);
     const initialStatus = tpl.status || 'ACTIVE';
@@ -3785,20 +4129,8 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
     setTemplates(prev => [...prev, newTpl]);
     showDemoNotification(`Template '${newTpl.name}' added to library.`, 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        apiCreateTemplate(session.workspaceId!, token, {
-          name: newTpl.name,
-          code: newTpl.code,
-          templateType: newTpl.type === 'TERMS' ? 'QUOTE_TERMS' : 'COMPLIANCE_DISCLAIMER',
-          content: newTpl.content,
-          description: newTpl.description,
-          sampleFileName: newTpl.sampleFileName,
-          status: newTpl.status,
-        }).catch(() => {});
-      }).catch(() => {});
-    }
-    return { success: true, id };
+    const res = { success: true, id };
+    return Object.assign(Promise.resolve(res), res);
   };
 
   const archiveTemplate = (id: string) => {
@@ -3824,15 +4156,29 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
       return;
     }
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchTemplate(session.workspaceId!, id, token, { action: 'restore' }).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Cannot activate template without a published revision', 'error');
+          } else {
+            setTemplates(prev =>
+              prev.map(t => (t.id === id ? { ...t, status: 'ACTIVE' as const } : t))
+            );
+            showDemoNotification('Template restored to active catalog.', 'success');
+          }
+        }).catch(err => {
+          showDemoNotification(`Network error restoring template: ${err?.message || 'Unknown error'}`, 'error');
+        });
+      }).catch(err => {
+        showDemoNotification(`Auth error: ${err?.message || 'Unauthorized'}`, 'error');
+      });
+      return;
+    }
     setTemplates(prev =>
       prev.map(t => (t.id === id ? { ...t, status: 'ACTIVE' as const } : t))
     );
     showDemoNotification('Template restored to active catalog.', 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        apiPatchTemplate(session.workspaceId!, id, token, { action: 'restore' }).catch(() => {});
-      }).catch(() => {});
-    }
   };
 
   const deleteTemplateDraft = (id: string) => {
@@ -3868,13 +4214,17 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showDemoNotification('Cannot delete published or archived templates; archive them instead.', 'error');
       return { success: false, error: 'Cannot delete published templates' };
     }
-    setTemplates(prev => prev.filter(t => t.id !== id));
-    showDemoNotification(`Draft template '${target.name}' deleted.`, 'info');
     if (session?.workspaceId && session?.profile) {
       void session.token().then(token => {
-        apiDeleteTemplate(session.workspaceId!, id, token).catch(() => {});
+        apiDeleteTemplate(session.workspaceId!, id, token).then(res => {
+          if (!res.ok) {
+            showDemoNotification(res.problem?.detail || 'Failed to delete template draft on server', 'error');
+          }
+        }).catch(() => {});
       }).catch(() => {});
     }
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    showDemoNotification(`Draft template '${target.name}' deleted.`, 'info');
     return { success: true };
   };
 

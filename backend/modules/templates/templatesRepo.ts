@@ -3,7 +3,7 @@
  * Scoped to authorized workspaces with per-query membership and privilege verification.
  */
 
-import type { D1Database } from '../../db/d1.ts';
+import type { D1Database, D1PreparedStatement } from '../../db/d1.ts';
 import type { AuthContext } from '../../types.ts';
 import { approvedMembership } from '../../workers/privilegedApproval.ts';
 
@@ -104,6 +104,7 @@ export async function getJobType(db: D1Database, workspace: string, auth: AuthCo
     policiesWithForms.push({
       ...pol,
       formsRequired: forms.results.map(f => f.form_type),
+      form_rules: (await db.prepare(`SELECT form_revision_id,required,display_order FROM policy_catalog_form_rules WHERE workspace_id=? AND policy_version_id=? ORDER BY display_order,id`).bind(workspace,pol.id).all()).results,
     });
   }
 
@@ -126,42 +127,50 @@ export async function createJobType(
     formsRequired?: string[];
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   }
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; policyId: string } | null> {
   const jtId = `jt-${crypto.randomUUID()}`;
   const polId = `pol-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const code = data.code?.trim() || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
   const isDirectToInvoice = data.isDirectToInvoice ? 1 : 0;
-  const initialStatus = data.status || 'ACTIVE';
-  const initialPolicyStatus = initialStatus === 'DRAFT' ? 'DRAFT' : 'PUBLISHED';
+  // All new job types start in DRAFT status with a DRAFT compliance policy
+  const initialStatus = 'DRAFT';
+  const initialPolicyStatus = 'DRAFT';
 
-  // 1. Insert Job Type
-  const jtRes = await db.prepare(
-    `INSERT INTO job_types (id, workspace_id, code, name, description, brand_id, status, current_policy_version_id, created_at, updated_at, created_by, updated_by)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-     WHERE ${allowedStaff}`
-  ).bind(jtId, workspace, code, data.name.trim(), data.description?.trim() || null, data.brandId, initialStatus, polId, now, now, auth.userId, auth.userId, ...who(workspace, auth)).run();
+  const statements: D1PreparedStatement[] = [
+    // 1. Insert Job Type in DRAFT status
+    db.prepare(
+      `INSERT INTO job_types (id, workspace_id, code, name, description, brand_id, status, current_policy_version_id, created_at, updated_at, created_by, updated_by)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+       WHERE ${allowedStaff}`
+    ).bind(jtId, workspace, code, data.name.trim(), data.description?.trim() || null, data.brandId, initialStatus, polId, now, now, auth.userId, auth.userId, ...who(workspace, auth)),
 
-  if (jtRes.meta.changes !== 1) return null;
+    // 2. Insert Initial Policy in DRAFT status with null approval metadata
+    db.prepare(
+      `INSERT INTO job_type_compliance_policies (id, job_type_id, version, status, is_direct_to_invoice, completion_rule, effective_at, created_at, updated_at, created_by, approved_by, approved_at)
+       VALUES (?, ?, 'v1.0', ?, ?, 'ALL_MANDATORY_FORMS_SIGNED', NULL, ?, ?, ?, NULL, NULL)`
+    ).bind(polId, jtId, initialPolicyStatus, isDirectToInvoice, now, now, auth.userId),
+  ];
 
-  // 2. Insert Initial Policy
-  await db.prepare(
-    `INSERT INTO job_type_compliance_policies (id, job_type_id, version, status, is_direct_to_invoice, completion_rule, effective_at, created_at, updated_at, created_by, approved_by, approved_at)
-     VALUES (?, ?, 'v1.0', ?, ?, 'ALL_MANDATORY_FORMS_SIGNED', ?, ?, ?, ?, ?, ?)`
-  ).bind(polId, jtId, initialPolicyStatus, isDirectToInvoice, initialPolicyStatus === 'PUBLISHED' ? now : null, now, now, auth.userId, initialPolicyStatus === 'PUBLISHED' ? auth.userId : null, initialPolicyStatus === 'PUBLISHED' ? now : null).run();
-
-  // 3. Insert required forms
+  // 3. Insert required forms if any
   if (!isDirectToInvoice && Array.isArray(data.formsRequired)) {
     for (let i = 0; i < data.formsRequired.length; i++) {
       const formType = data.formsRequired[i];
-      await db.prepare(
-        `INSERT INTO job_type_required_forms (id, policy_version_id, form_type, required, display_order)
-         VALUES (?, ?, ?, 1, ?)`
-      ).bind(`rf-${crypto.randomUUID()}`, polId, formType, i + 1).run();
+      statements.push(
+        db.prepare(
+          `INSERT INTO job_type_required_forms (id, policy_version_id, form_type, required, display_order)
+           VALUES (?, ?, ?, 1, ?)`
+        ).bind(`rf-${crypto.randomUUID()}`, polId, formType, i + 1)
+      );
     }
   }
 
-  return { id: jtId };
+  const results = await db.batch(statements);
+  if (!results[0] || results[0].meta.changes !== 1) {
+    return null;
+  }
+
+  return { id: jtId, policyId: polId };
 }
 
 export async function updateJobType(
@@ -194,11 +203,16 @@ export async function setJobTypeStatus(
   status: 'ACTIVE' | 'ARCHIVED'
 ): Promise<boolean> {
   const now = new Date().toISOString();
+  // Block premature activation: restoring to ACTIVE requires the current policy to be PUBLISHED
   const res = await db.prepare(
     `UPDATE job_types
      SET status = ?, updated_at = ?, updated_by = ?
-     WHERE workspace_id = ? AND id = ? AND ${allowedStaff}`
-  ).bind(status, now, auth.userId, workspace, id, ...who(workspace, auth)).run();
+     WHERE workspace_id = ? AND id = ? AND ${allowedStaff}
+       AND (? != 'ACTIVE' OR EXISTS (
+         SELECT 1 FROM job_type_compliance_policies p
+         WHERE p.id = job_types.current_policy_version_id AND p.status = 'PUBLISHED'
+       ))`
+  ).bind(status, now, auth.userId, workspace, id, ...who(workspace, auth), status).run();
 
   return res.meta.changes === 1;
 }
@@ -228,7 +242,7 @@ export async function createJobTypePolicyDraft(
   workspace: string,
   auth: AuthContext,
   jobTypeId: string,
-  data: { isDirectToInvoice: boolean; formsRequired: string[] }
+  data: { isDirectToInvoice: boolean; formsRequired: string[]; formRules?: Array<{form_revision_id:string; required:boolean}> }
 ): Promise<{ id: string; version: string } | null> {
   const jt = await db.prepare(
     `SELECT * FROM job_types WHERE workspace_id = ? AND id = ? AND ${allowedStaff}`
@@ -246,24 +260,30 @@ export async function createJobTypePolicyDraft(
   const now = new Date().toISOString();
   const isDirectToInvoice = data.isDirectToInvoice ? 1 : 0;
 
-  await db.prepare(
-    `INSERT INTO job_type_compliance_policies (id, job_type_id, version, status, is_direct_to_invoice, completion_rule, effective_at, created_at, updated_at, created_by)
-     VALUES (?, ?, ?, 'DRAFT', ?, 'ALL_MANDATORY_FORMS_SIGNED', NULL, ?, ?, ?)`
-  ).bind(polId, jobTypeId, version, isDirectToInvoice, now, now, auth.userId).run();
+  const statements: D1PreparedStatement[] = [
+    db.prepare(
+      `INSERT INTO job_type_compliance_policies (id, job_type_id, version, status, is_direct_to_invoice, completion_rule, effective_at, created_at, updated_at, created_by)
+       SELECT ?, ?, ?, 'DRAFT', ?, 'ALL_MANDATORY_FORMS_SIGNED', NULL, ?, ?, ? WHERE EXISTS (SELECT 1 FROM job_types WHERE id=? AND workspace_id=?) AND ${allowedStaff}`
+    ).bind(polId, jobTypeId, version, isDirectToInvoice, now, now, auth.userId,jobTypeId,workspace,...who(workspace,auth)),
+  ];
 
   if (!isDirectToInvoice && Array.isArray(data.formsRequired)) {
     for (let i = 0; i < data.formsRequired.length; i++) {
-      await db.prepare(
-        `INSERT INTO job_type_required_forms (id, policy_version_id, form_type, required, display_order)
-         VALUES (?, ?, ?, 1, ?)`
-      ).bind(`rf-${crypto.randomUUID()}`, polId, data.formsRequired[i], i + 1).run();
+      statements.push(
+        db.prepare(
+          `INSERT INTO job_type_required_forms (id, policy_version_id, form_type, required, display_order)
+           VALUES (?, ?, ?, 1, ?)`
+        ).bind(`rf-${crypto.randomUUID()}`, polId, data.formsRequired[i], i + 1)
+      );
     }
   }
 
-  // Update current policy version pointer to the newly created draft
-  await db.prepare(
-    `UPDATE job_types SET current_policy_version_id = ?, updated_at = ?, updated_by = ? WHERE id = ?`
-  ).bind(polId, now, auth.userId, jobTypeId).run();
+  for (const [i, rule] of (data.formRules || []).entries()) {
+    statements.push(db.prepare(`INSERT INTO policy_catalog_form_rules (id,workspace_id,policy_version_id,form_revision_id,required,display_order) VALUES (?,?,?,?,?,?)`).bind(`pfr-${crypto.randomUUID()}`,workspace,polId,rule.form_revision_id,rule.required ? 1 : 0,i));
+  }
+
+  const results = await db.batch(statements);
+  if (!results[0] || results[0].meta.changes !== 1) return null;
 
   return { id: polId, version };
 }
@@ -295,9 +315,11 @@ export async function approveJobTypePolicy(
 ): Promise<boolean> {
   const now = new Date().toISOString();
   // Only owner_admin and super_admin are authorized to approve policies
+  // Strictly require status = 'REVIEW'
   const pol = await db.prepare(
     `SELECT version FROM job_type_compliance_policies
-     WHERE id = ? AND job_type_id = ? AND status IN ('DRAFT', 'REVIEW')
+     WHERE id = ? AND job_type_id = ? AND status = 'REVIEW'
+       AND NOT EXISTS (SELECT 1 FROM policy_catalog_form_rules WHERE policy_version_id = job_type_compliance_policies.id)
        AND EXISTS (SELECT 1 FROM job_types jt WHERE jt.id = ? AND jt.workspace_id = ? AND ${allowedApprover})`
   ).bind(policyId, jobTypeId, jobTypeId, workspace, ...who(workspace, auth)).first<{ version: string }>();
 
@@ -305,26 +327,29 @@ export async function approveJobTypePolicy(
 
   const publishedVer = pol.version.replace('-draft', '');
 
-  const res = await db.prepare(
-    `UPDATE job_type_compliance_policies
-     SET status = 'PUBLISHED',
-         version = ?,
-         effective_at = ?,
-         approved_by = ?,
-         approved_at = ?,
-         updated_at = ?
-     WHERE id = ?`
-  ).bind(publishedVer, now, auth.userId, now, now, policyId).run();
+  const statements: D1PreparedStatement[] = [
+    db.prepare(
+      `UPDATE job_type_compliance_policies
+       SET status = 'PUBLISHED',
+           version = ?,
+           effective_at = ?,
+           approved_by = ?,
+           approved_at = ?,
+           updated_at = ?
+       WHERE id = ? AND status = 'REVIEW'`
+    ).bind(publishedVer, now, auth.userId, now, now, policyId),
+    db.prepare(
+      `UPDATE job_types
+       SET current_policy_version_id = ?,
+           status = CASE WHEN status = 'DRAFT' THEN 'ACTIVE' ELSE status END,
+           updated_at = ?,
+           updated_by = ?
+       WHERE id = ? AND workspace_id = ?`
+    ).bind(policyId, now, auth.userId, jobTypeId, workspace),
+  ];
 
-  if (res.meta.changes !== 1) return false;
-
-  await db.prepare(
-    `UPDATE job_types
-     SET current_policy_version_id = ?, updated_at = ?, updated_by = ?
-     WHERE id = ?`
-  ).bind(policyId, now, auth.userId, jobTypeId).run();
-
-  return true;
+  const results = await db.batch(statements);
+  return results[0]?.meta.changes === 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,28 +399,34 @@ export async function createTemplate(
     sampleFileName?: string;
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   }
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; revisionId: string } | null> {
   const tplId = `tpl-${crypto.randomUUID()}`;
   const revId = `rev-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const code = data.code?.trim() || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
-  const initialStatus = data.status || 'ACTIVE';
-  const initialRevStatus = initialStatus === 'DRAFT' ? 'DRAFT' : 'PUBLISHED';
+  // All new document templates start in DRAFT status with a DRAFT revision
+  const initialStatus = 'DRAFT';
+  const initialRevStatus = 'DRAFT';
 
-  const tplRes = await db.prepare(
-    `INSERT INTO document_templates (id, workspace_id, code, name, template_type, description, status, current_revision_id, sample_file_name, mapping_status, created_at, updated_at, created_by, updated_by)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Mapped', ?, ?, ?, ?
-     WHERE ${allowedStaff}`
-  ).bind(tplId, workspace, code, data.name.trim(), data.templateType, data.description?.trim() || null, initialStatus, revId, data.sampleFileName || `${code}.docx`, now, now, auth.userId, auth.userId, ...who(workspace, auth)).run();
+  const statements: D1PreparedStatement[] = [
+    db.prepare(
+      `INSERT INTO document_templates (id, workspace_id, code, name, template_type, description, status, current_revision_id, sample_file_name, mapping_status, created_at, updated_at, created_by, updated_by)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Mapped', ?, ?, ?, ?
+       WHERE ${allowedStaff}`
+    ).bind(tplId, workspace, code, data.name.trim(), data.templateType, data.description?.trim() || null, initialStatus, revId, data.sampleFileName || `${code}.docx`, now, now, auth.userId, auth.userId, ...who(workspace, auth)),
 
-  if (tplRes.meta.changes !== 1) return null;
+    db.prepare(
+      `INSERT INTO template_revisions (id, template_id, version, status, content, sample_file_name, effective_at, created_at, updated_at, created_by, approved_by, approved_at)
+       VALUES (?, ?, 'v1.0', ?, ?, ?, NULL, ?, ?, ?, NULL, NULL)`
+    ).bind(revId, tplId, initialRevStatus, data.content, data.sampleFileName || `${code}.docx`, now, now, auth.userId),
+  ];
 
-  await db.prepare(
-    `INSERT INTO template_revisions (id, template_id, version, status, content, sample_file_name, effective_at, created_at, updated_at, created_by, approved_by, approved_at)
-     VALUES (?, ?, 'v1.0', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(revId, tplId, initialRevStatus, data.content, data.sampleFileName || `${code}.docx`, initialRevStatus === 'PUBLISHED' ? now : null, now, now, auth.userId, initialRevStatus === 'PUBLISHED' ? auth.userId : null, initialRevStatus === 'PUBLISHED' ? now : null).run();
+  const results = await db.batch(statements);
+  if (!results[0] || results[0].meta.changes !== 1) {
+    return null;
+  }
 
-  return { id: tplId };
+  return { id: tplId, revisionId: revId };
 }
 
 export async function setTemplateStatus(
@@ -406,11 +437,16 @@ export async function setTemplateStatus(
   status: 'ACTIVE' | 'ARCHIVED'
 ): Promise<boolean> {
   const now = new Date().toISOString();
+  // Block premature activation: restoring to ACTIVE requires current revision to be PUBLISHED
   const res = await db.prepare(
     `UPDATE document_templates
      SET status = ?, updated_at = ?, updated_by = ?
-     WHERE workspace_id = ? AND id = ? AND ${allowedStaff}`
-  ).bind(status, now, auth.userId, workspace, id, ...who(workspace, auth)).run();
+     WHERE workspace_id = ? AND id = ? AND ${allowedStaff}
+       AND (? != 'ACTIVE' OR EXISTS (
+         SELECT 1 FROM template_revisions r
+         WHERE r.id = document_templates.current_revision_id AND r.status = 'PUBLISHED'
+       ))`
+  ).bind(status, now, auth.userId, workspace, id, ...who(workspace, auth), status).run();
 
   return res.meta.changes === 1;
 }
@@ -457,14 +493,15 @@ export async function createTemplateRevisionDraft(
   const revId = `rev-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
 
-  await db.prepare(
-    `INSERT INTO template_revisions (id, template_id, version, status, content, sample_file_name, effective_at, created_at, updated_at, created_by)
-     VALUES (?, ?, ?, 'DRAFT', ?, ?, NULL, ?, ?, ?)`
-  ).bind(revId, templateId, version, content, tpl.sample_file_name, now, now, auth.userId).run();
+  const statements: D1PreparedStatement[] = [
+    db.prepare(
+      `INSERT INTO template_revisions (id, template_id, version, status, content, sample_file_name, effective_at, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, 'DRAFT', ?, ?, NULL, ?, ?, ?)`
+    ).bind(revId, templateId, version, content, tpl.sample_file_name, now, now, auth.userId),
+  ];
 
-  await db.prepare(
-    `UPDATE document_templates SET current_revision_id = ?, updated_at = ?, updated_by = ? WHERE id = ?`
-  ).bind(revId, now, auth.userId, templateId).run();
+  const results = await db.batch(statements);
+  if (!results[0] || results[0].meta.changes !== 1) return null;
 
   return { id: revId, version };
 }
@@ -496,9 +533,10 @@ export async function approveTemplateRevision(
 ): Promise<boolean> {
   const now = new Date().toISOString();
   // Only owner_admin and super_admin are authorized to approve revisions
+  // Strictly require status = 'REVIEW'
   const rev = await db.prepare(
     `SELECT version FROM template_revisions
-     WHERE id = ? AND template_id = ? AND status IN ('DRAFT', 'REVIEW')
+     WHERE id = ? AND template_id = ? AND status = 'REVIEW'
        AND EXISTS (SELECT 1 FROM document_templates t WHERE t.id = ? AND t.workspace_id = ? AND ${allowedApprover})`
   ).bind(revisionId, templateId, templateId, workspace, ...who(workspace, auth)).first<{ version: string }>();
 
@@ -506,24 +544,27 @@ export async function approveTemplateRevision(
 
   const publishedVer = rev.version.replace('-draft', '');
 
-  const res = await db.prepare(
-    `UPDATE template_revisions
-     SET status = 'PUBLISHED',
-         version = ?,
-         effective_at = ?,
-         approved_by = ?,
-         approved_at = ?,
-         updated_at = ?
-     WHERE id = ?`
-  ).bind(publishedVer, now, auth.userId, now, now, revisionId).run();
+  const statements: D1PreparedStatement[] = [
+    db.prepare(
+      `UPDATE template_revisions
+       SET status = 'PUBLISHED',
+           version = ?,
+           effective_at = ?,
+           approved_by = ?,
+           approved_at = ?,
+           updated_at = ?
+       WHERE id = ? AND status = 'REVIEW'`
+    ).bind(publishedVer, now, auth.userId, now, now, revisionId),
+    db.prepare(
+      `UPDATE document_templates
+       SET current_revision_id = ?,
+           status = CASE WHEN status = 'DRAFT' THEN 'ACTIVE' ELSE status END,
+           updated_at = ?,
+           updated_by = ?
+       WHERE id = ? AND workspace_id = ?`
+    ).bind(revisionId, now, auth.userId, templateId, workspace),
+  ];
 
-  if (res.meta.changes !== 1) return false;
-
-  await db.prepare(
-    `UPDATE document_templates
-     SET current_revision_id = ?, updated_at = ?, updated_by = ?
-     WHERE id = ?`
-  ).bind(revisionId, now, auth.userId, templateId).run();
-
-  return true;
+  const results = await db.batch(statements);
+  return results[0]?.meta.changes === 1;
 }

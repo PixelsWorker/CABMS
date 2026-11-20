@@ -23,6 +23,33 @@ export interface ApprovalManifest {
 
 export const OPERATION_ID_UUID_REGEX = /^op_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const DECLARED_MANIFEST_KEYS: ReadonlySet<string> = new Set([
+  'operation_id',
+  'nonce',
+  'target_id',
+  'operator_email',
+  'operator_uid',
+  'workspace_scope',
+  'permitted_action',
+  'issued_at',
+  'expires_at',
+  'signing_key_id',
+  'approval_identity',
+]);
+
+function assertClosedManifestSchema(obj: unknown): void {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    throw new ManifestValidationError('Manifest must be a non-null object', 'INVALID_FORMAT');
+  }
+  const unknownKeys = Object.keys(obj).filter(k => !DECLARED_MANIFEST_KEYS.has(k));
+  if (unknownKeys.length > 0) {
+    throw new ManifestValidationError(
+      `Manifest contains unknown fields: ${unknownKeys.join(', ')}`,
+      'UNKNOWN_FIELDS'
+    );
+  }
+}
+
 export interface SignedApprovalManifest {
   manifest: ApprovalManifest;
   signature_algorithm: 'Ed25519';
@@ -136,6 +163,7 @@ export function signApprovalManifest(
   manifest: ApprovalManifest,
   privateKey: crypto.KeyObject | string
 ): SignedApprovalManifest {
+  assertClosedManifestSchema(manifest);
   let keyObj: crypto.KeyObject;
   if (typeof privateKey === 'string' || Buffer.isBuffer(privateKey)) {
     try {
@@ -221,6 +249,7 @@ export function verifyApprovalManifest(
   if (!rawManifest || typeof rawManifest !== 'object') {
     throw new ManifestValidationError('Manifest payload missing', 'MISSING_MANIFEST');
   }
+  assertClosedManifestSchema(rawManifest);
 
   // Create an immediate detached plain data snapshot to prevent getter manipulation or mutating accessors
   const manifest: ApprovalManifest = {
@@ -442,6 +471,9 @@ export function verifyApprovalManifest(
   }
   if (!Array.isArray(manifest.workspace_scope) || manifest.workspace_scope.length === 0) {
     throw new ManifestValidationError('workspace_scope must be non-empty array', 'INVALID_WORKSPACE_SCOPE');
+  }
+  if (manifest.workspace_scope.some(id => typeof id !== 'string' || id.trim().length === 0)) {
+    throw new ManifestValidationError('workspace_scope entries must be non-blank strings', 'INVALID_WORKSPACE_SCOPE');
   }
   if (manifest.workspace_scope.length > 21) {
     throw new ManifestValidationError(

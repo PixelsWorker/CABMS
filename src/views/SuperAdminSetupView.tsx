@@ -33,7 +33,12 @@ let brandSeqCounter = 1;
 
 export const SuperAdminSetupView: React.FC = () => {
   const session = useG01Session();
-  return session ? <LegalDetailsForm /> : <DemoSuperAdminSetupView />;
+  return (
+    <div className="space-y-6">
+      {session && <LegalDetailsForm />}
+      <DemoSuperAdminSetupView />
+    </div>
+  );
 };
 
 const DemoSuperAdminSetupView: React.FC = () => {

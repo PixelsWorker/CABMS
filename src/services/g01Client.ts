@@ -212,3 +212,161 @@ export async function apiPatchLegalDetails(
   const res = await customFetch(req);
   return parseResponse<LegalIssuerRow>(res);
 }
+
+// ---------------------------------------------------------------------------
+// Job Types & Compliance Policies Client API
+// ---------------------------------------------------------------------------
+
+export async function apiListJobTypes(workspaceId: string, token: string): Promise<ApiResponse<any[]>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types`), {
+    method: 'GET',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any[]>(await customFetch(req));
+}
+
+export async function apiGetJobType(workspaceId: string, id: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types/${encodeURIComponent(id)}`), {
+    method: 'GET',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiCreateJobType(workspaceId: string, token: string, data: any): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiPatchJobType(workspaceId: string, id: string, token: string, updates: any): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types/${encodeURIComponent(id)}`), {
+    method: 'PATCH',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiDeleteJobType(workspaceId: string, id: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiCreateJobTypePolicyDraft(workspaceId: string, id: string, token: string, data: any): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types/${encodeURIComponent(id)}/policies`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiSubmitJobTypePolicyReview(workspaceId: string, id: string, policyId: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types/${encodeURIComponent(id)}/policies/${encodeURIComponent(policyId)}/review`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiApproveJobTypePolicy(workspaceId: string, id: string, policyId: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/job-types/${encodeURIComponent(id)}/policies/${encodeURIComponent(policyId)}/approve`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+// ---------------------------------------------------------------------------
+// Document Templates & Revisions Client API
+// ---------------------------------------------------------------------------
+
+export async function apiListTemplates(workspaceId: string, token: string): Promise<ApiResponse<any[]>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates`), {
+    method: 'GET',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any[]>(await customFetch(req));
+}
+
+export async function apiGetTemplate(workspaceId: string, id: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}`), {
+    method: 'GET',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiCreateTemplate(workspaceId: string, token: string, data: any): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(data),
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiPatchTemplate(workspaceId: string, id: string, token: string, updates: any): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}`), {
+    method: 'PATCH',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiDeleteTemplate(workspaceId: string, id: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}`), {
+    method: 'DELETE',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiCreateTemplateRevisionDraft(workspaceId: string, id: string, token: string, content: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}/revisions`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiSubmitTemplateRevisionReview(workspaceId: string, id: string, revId: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revId)}/review`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}
+
+export async function apiApproveTemplateRevision(workspaceId: string, id: string, revId: string, token: string): Promise<ApiResponse<any>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revId)}/approve`), {
+    method: 'POST',
+    signal: AbortSignal.timeout(10000),
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+  });
+  return parseResponse<any>(await customFetch(req));
+}

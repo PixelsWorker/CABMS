@@ -17,6 +17,7 @@ export const G01_MIGRATION_MANIFEST = [
   ['0009_demo_job_steps.sql', '2db1ce46db861185db0c0c1f3fd64ca0eb81cbb875b28436a2e4a8dfa9633344'],
   ['0010_g04_synthetic_appointments.sql', 'a66c18d6aba8f1238d196a3cd02ecf76a7a055998637385a1d5621541c76477d'],
   ['0011_paar_p0_bootstrap_audit.sql', 'df59f5cff0f9cfd47d4a30d10a50228210f8f24fc209d2ee078e916bd2f1a515'],
+  ['0012_templates_and_content.sql', 'e32227d9fdaa208665da021f3961aafd33c2b87c757f7a5a0ff917514561d331'],
 ] as const;
 
 const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../migrations');

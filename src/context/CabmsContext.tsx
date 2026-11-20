@@ -23,6 +23,7 @@ import {
   Tca1CertData,
   Tca2CertData,
   TemplateSetting,
+  TemplateRevision,
   WebsiteEnquiry,
   SampleAttachment,
   Quote,
@@ -51,6 +52,22 @@ import {
   INITIAL_WEBSITE_ENQUIRIES,
 } from '../data/seedData.ts';
 import { getMockDataAdapter } from '../services/index.ts';
+import {
+  apiListJobTypes,
+  apiListTemplates,
+  apiCreateJobType,
+  apiPatchJobType,
+  apiDeleteJobType,
+  apiCreateJobTypePolicyDraft,
+  apiSubmitJobTypePolicyReview,
+  apiApproveJobTypePolicy,
+  apiCreateTemplate,
+  apiPatchTemplate,
+  apiDeleteTemplate,
+  apiCreateTemplateRevisionDraft,
+  apiSubmitTemplateRevisionReview,
+  apiApproveTemplateRevision,
+} from '../services/g01Client.ts';
 import {
   validateJobCompletion,
   deduplicateReviewRequest,
@@ -223,7 +240,7 @@ interface CabmsContextType {
   sendCertificateEmail: (jobId: string, formType: string, simulateFail?: boolean) => { success: boolean; message: string };
   retryCertificateDelivery: (deliveryId: string) => void;
 
-  // Templates & Version Lifecycle (G00-007, G00-025, G00-026)
+  // Templates & Version Lifecycle (G00-007, G00-025, G00-026, C1)
   templates: TemplateSetting[];
   publishTemplateVersion: (templateId: string) => void;
   createTemplateDraftRevision: (templateId: string, newContent: string) => void;
@@ -233,6 +250,34 @@ interface CabmsContextType {
     formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[],
     isDirectToInvoice: boolean
   ) => void;
+  addJobType: (config: {
+    name: string;
+    code?: string;
+    description?: string;
+    brandId: BrandId;
+    formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+    isDirectToInvoice: boolean;
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }) => { success: boolean; id?: string; error?: string };
+  editJobType: (id: string, updates: Partial<JobTypeConfig>) => { success: boolean; error?: string };
+  archiveJobType: (id: string) => void;
+  restoreJobType: (id: string) => void;
+  deleteJobTypeDraft: (id: string) => { success: boolean; error?: string };
+  createJobTypePolicyDraft: (id: string) => void;
+  submitJobTypePolicyForReview: (id: string) => void;
+  approveJobTypePolicy: (id: string) => void;
+  addTemplate: (tpl: {
+    name: string;
+    code?: string;
+    type: TemplateSetting['type'];
+    content: string;
+    description?: string;
+    sampleFileName?: string;
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }) => { success: boolean; id?: string; error?: string };
+  archiveTemplate: (id: string) => void;
+  restoreTemplate: (id: string) => void;
+  deleteTemplateDraft: (id: string) => { success: boolean; error?: string };
 
   // Website Handoff Queue (G00-011)
   websiteEnquiries: WebsiteEnquiry[];
@@ -444,6 +489,62 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [templates, setTemplates] = useState<TemplateSetting[]>(INITIAL_TEMPLATES);
   const [websiteEnquiries, setWebsiteEnquiries] = useState<WebsiteEnquiry[]>(INITIAL_WEBSITE_ENQUIRIES);
   const [sampleAttachments] = useState<SampleAttachment[]>(INITIAL_SAMPLE_ATTACHMENTS);
+
+  useEffect(() => {
+    if (!session?.workspaceId || !session?.profile || activeTab !== 'templates') return;
+    let active = true;
+    void session.token().then(token => {
+      apiListJobTypes(session.workspaceId!, token).then(res => {
+        if (!active || !res.ok || !res.data || res.data.length === 0) return;
+        setJobTypes(res.data.map(row => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          description: row.description || undefined,
+          brandId: row.brand_id as BrandId,
+          formsRequired: row.forms_required || [],
+          isDirectToInvoice: Boolean(row.is_direct_to_invoice),
+          version: row.version || 'v1.0',
+          status: row.status || 'ACTIVE',
+          policyStatus: row.policy_status || 'PUBLISHED',
+          revisionHistory: [{
+            version: row.version || 'v1.0',
+            formsRequired: row.forms_required || [],
+            isDirectToInvoice: Boolean(row.is_direct_to_invoice),
+            status: row.policy_status || 'PUBLISHED',
+            updatedAt: row.updated_at,
+            updatedBy: 'SYSTEM',
+          }],
+        })));
+      }).catch(() => {});
+
+      apiListTemplates(session.workspaceId!, token).then(res => {
+        if (!active || !res.ok || !res.data || res.data.length === 0) return;
+        setTemplates(res.data.map(row => ({
+          id: row.id,
+          code: row.code,
+          name: row.name,
+          type: (row.template_type === 'QUOTE_TERMS' || row.template_type === 'INVOICE_TERMS' ? 'TERMS' : 'COMPLIANCE') as TemplateSetting['type'],
+          currentVersion: row.current_version || 'v1.0',
+          activeStatus: row.revision_status || 'PUBLISHED',
+          status: row.status || 'ACTIVE',
+          content: row.current_content || '',
+          description: row.description || undefined,
+          sampleFileName: row.sample_file_name || undefined,
+          mappingStatus: row.mapping_status || 'Mapped',
+          revisions: [{
+            version: row.current_version || 'v1.0',
+            status: row.revision_status || 'PUBLISHED',
+            content: row.current_content || '',
+            updatedAt: row.updated_at,
+            updatedBy: 'SYSTEM',
+          }],
+        })));
+      }).catch(() => {});
+    }).catch(() => {});
+
+    return () => { active = false; };
+  }, [session?.workspaceId, session?.profile?.user.id, activeTab]);
 
   const createSignedJsaSeed = (jobId: string): JsaFormData => {
     const job = INITIAL_JOBS.find(candidate => candidate.id === jobId);
@@ -3237,6 +3338,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       prev.map(t => (t.id === templateId ? res.updatedTemplate! : t))
     );
     showDemoNotification(`Template version published. Full revision and review audit history retained.`, 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const revId = tpl.revisions[0]?.version || 'v1.0';
+        apiApproveTemplateRevision(session.workspaceId!, templateId, revId, token).catch(() => {});
+      }).catch(() => {});
+    }
   };
 
   const createTemplateDraftRevision = (templateId: string, newContent: string) => {
@@ -3267,6 +3374,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Draft template revision saved. Ready for owner review before publishing.', 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiCreateTemplateRevisionDraft(session.workspaceId!, templateId, token, newContent).catch(() => {});
+      }).catch(() => {});
+    }
   };
 
   const submitTemplateForReview = (templateId: string) => {
@@ -3301,6 +3413,12 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Template revision submitted for Admin compliance review.', 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const revId = targetTemplate.revisions[0]?.version || 'v1.0';
+        apiSubmitTemplateRevisionReview(session.workspaceId!, templateId, revId, token).catch(() => {});
+      }).catch(() => {});
+    }
   };
 
   const updateJobTypeConfig = (
@@ -3337,6 +3455,427 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification('Job type compliance matrix policy updated to new version. Existing in-flight jobs retain historical requirement snapshots.', 'success');
+  };
+
+  const addJobType = (config: {
+    name: string;
+    code?: string;
+    description?: string;
+    brandId: BrandId;
+    formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+    isDirectToInvoice: boolean;
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    if (!config.name || !config.name.trim()) {
+      showDemoNotification('Job type category name cannot be blank.', 'error');
+      return { success: false, error: 'Name cannot be blank' };
+    }
+    const id = `JT-${String(jobTypes.length + 1).padStart(3, '0')}`;
+    const code = config.code?.trim() || config.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const timestamp = serializeBusinessInstant(demoClock);
+    const initialStatus = config.status || 'ACTIVE';
+    const isInitialDraft = initialStatus === 'DRAFT';
+    const newJt: JobTypeConfig = {
+      id,
+      code,
+      name: config.name.trim(),
+      description: config.description?.trim(),
+      brandId: config.brandId,
+      formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+      isDirectToInvoice: config.isDirectToInvoice,
+      version: 'v1.0',
+      status: initialStatus,
+      policyStatus: isInitialDraft ? 'DRAFT' : 'PUBLISHED',
+      revisionHistory: [{
+        version: 'v1.0',
+        formsRequired: config.isDirectToInvoice ? [] : config.formsRequired,
+        isDirectToInvoice: config.isDirectToInvoice,
+        status: isInitialDraft ? 'DRAFT' : 'PUBLISHED',
+        effectiveAt: isInitialDraft ? undefined : timestamp,
+        updatedAt: timestamp,
+        updatedBy: persona.toUpperCase(),
+        approvedBy: isInitialDraft ? undefined : persona.toUpperCase(),
+        approvedAt: isInitialDraft ? undefined : timestamp,
+      }],
+    };
+    setJobTypes(prev => [...prev, newJt]);
+    showDemoNotification(`Job type '${newJt.name}' created.`, 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiCreateJobType(session.workspaceId!, token, {
+          name: newJt.name,
+          code: newJt.code,
+          description: newJt.description,
+          brandId: newJt.brandId,
+          isDirectToInvoice: newJt.isDirectToInvoice,
+          formsRequired: newJt.formsRequired,
+          status: newJt.status,
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+    return { success: true, id };
+  };
+
+  const editJobType = (id: string, updates: Partial<JobTypeConfig>) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return { success: false, error: 'Job type not found' };
+
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          return {
+            ...jt,
+            name: updates.name ? updates.name.trim() : jt.name,
+            code: updates.code ? updates.code.trim() : jt.code,
+            description: updates.description !== undefined ? updates.description.trim() : jt.description,
+            brandId: updates.brandId || jt.brandId,
+            status: updates.status || jt.status,
+            policyStatus: updates.policyStatus || jt.policyStatus,
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification(`Job type '${target.name}' updated successfully.`, 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchJobType(session.workspaceId!, id, token, {
+          name: updates.name,
+          code: updates.code,
+          description: updates.description,
+          brandId: updates.brandId,
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+    return { success: true };
+  };
+
+  const archiveJobType = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => (jt.id === id ? { ...jt, status: 'ARCHIVED' as const } : jt))
+    );
+    showDemoNotification(`Job type archived. Historical references and completed jobs are preserved.`, 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchJobType(session.workspaceId!, id, token, { action: 'archive' }).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const restoreJobType = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => (jt.id === id ? { ...jt, status: 'ACTIVE' as const } : jt))
+    );
+    showDemoNotification(`Job type restored to active catalog.`, 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchJobType(session.workspaceId!, id, token, { action: 'restore' }).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const deleteJobTypeDraft = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    const target = jobTypes.find(jt => jt.id === id);
+    if (!target) return { success: false, error: 'Job type not found' };
+    if (target.status !== 'DRAFT') {
+      showDemoNotification('Cannot delete published or archived job types; archive them instead.', 'error');
+      return { success: false, error: 'Only drafts can be deleted' };
+    }
+    const isReferenced = jobs.some(j => j.jobType === target.name || j.jobType === target.id);
+    if (isReferenced) {
+      showDemoNotification('Cannot delete job type referenced by existing work orders.', 'error');
+      return { success: false, error: 'Referenced by existing jobs' };
+    }
+    setJobTypes(prev => prev.filter(jt => jt.id !== id));
+    showDemoNotification(`Draft job type '${target.name}' deleted.`, 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiDeleteJobType(session.workspaceId!, id, token).catch(() => {});
+      }).catch(() => {});
+    }
+    return { success: true };
+  };
+
+  const createJobTypePolicyDraft = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          const currentVerNum = parseFloat(jt.version.replace('v', '')) || 1.0;
+          const draftVer = `v${(currentVerNum + 0.1).toFixed(1)}-draft`;
+          const historyEntry = {
+            version: draftVer,
+            formsRequired: [...jt.formsRequired],
+            isDirectToInvoice: jt.isDirectToInvoice,
+            status: 'DRAFT' as const,
+            updatedAt: serializeBusinessInstant(demoClock),
+            updatedBy: persona.toUpperCase(),
+          };
+          return {
+            ...jt,
+            version: draftVer,
+            policyStatus: 'DRAFT' as const,
+            revisionHistory: [historyEntry, ...(jt.revisionHistory || [])],
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification('Created new draft policy version. Configure rules and submit for review.', 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const target = jobTypes.find(jt => jt.id === id);
+        if (target) {
+          apiCreateJobTypePolicyDraft(session.workspaceId!, id, token, {
+            formsRequired: target.formsRequired,
+            isDirectToInvoice: target.isDirectToInvoice,
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    }
+  };
+
+  const submitJobTypePolicyForReview = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          return {
+            ...jt,
+            policyStatus: 'REVIEW' as const,
+            revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+              idx === 0 ? { ...rev, status: 'REVIEW' as const, updatedAt: serializeBusinessInstant(demoClock) } : rev
+            ),
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification('Policy version submitted for compliance review.', 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const target = jobTypes.find(jt => jt.id === id);
+        const policyId = target?.revisionHistory?.[0]?.version || id;
+        apiSubmitJobTypePolicyReview(session.workspaceId!, id, policyId, token).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const approveJobTypePolicy = (id: string) => {
+    const caller = authoritativePersonaRef.current || persona;
+    if (caller !== 'owner_admin' && caller !== 'super_admin') {
+      showDemoNotification('Office staff cannot publish compliance policies.', 'error');
+      return;
+    }
+    setJobTypes(prev =>
+      prev.map(jt => {
+        if (jt.id === id) {
+          const publishedVer = jt.version.replace('-draft', '');
+          const timestamp = serializeBusinessInstant(demoClock);
+          return {
+            ...jt,
+            version: publishedVer,
+            policyStatus: 'PUBLISHED' as const,
+            revisionHistory: (jt.revisionHistory || []).map((rev, idx) =>
+              idx === 0
+                ? {
+                    ...rev,
+                    version: publishedVer,
+                    status: 'PUBLISHED' as const,
+                    approvedBy: caller.toUpperCase(),
+                    approvedAt: timestamp,
+                    effectiveAt: timestamp,
+                    updatedAt: timestamp,
+                  }
+                : rev
+            ),
+          };
+        }
+        return jt;
+      })
+    );
+    showDemoNotification('Compliance policy approved & published. Snapshot is now frozen.', 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        const target = jobTypes.find(jt => jt.id === id);
+        const policyId = target?.revisionHistory?.[0]?.version || id;
+        apiApproveJobTypePolicy(session.workspaceId!, id, policyId, token).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const addTemplate = (tpl: {
+    name: string;
+    code?: string;
+    type: TemplateSetting['type'];
+    content: string;
+    description?: string;
+    sampleFileName?: string;
+    status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  }) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    if (!tpl.name || !tpl.name.trim()) {
+      showDemoNotification('Template name cannot be blank.', 'error');
+      return { success: false, error: 'Name cannot be blank' };
+    }
+    const id = `TPL-${String(templates.length + 1).padStart(3, '0')}`;
+    const timestamp = serializeBusinessInstant(demoClock);
+    const initialStatus = tpl.status || 'ACTIVE';
+    const isInitialDraft = initialStatus === 'DRAFT';
+    const initialRevStatus = isInitialDraft ? 'DRAFT' : 'PUBLISHED';
+    const initialRev: TemplateRevision = {
+      version: 'v1.0',
+      status: initialRevStatus,
+      content: tpl.content || `${tpl.name} standard wording.`,
+      updatedAt: timestamp,
+      updatedBy: persona.toUpperCase(),
+      approvedBy: isInitialDraft ? undefined : persona.toUpperCase(),
+      approvedAt: isInitialDraft ? undefined : timestamp,
+    };
+    const newTpl: TemplateSetting = {
+      id,
+      code: tpl.code?.trim() || tpl.name.toLowerCase().replace(/[^a-z0-9]+/g, '_'),
+      name: tpl.name.trim(),
+      type: tpl.type,
+      currentVersion: 'v1.0',
+      activeStatus: initialRevStatus,
+      status: initialStatus,
+      content: tpl.content || `${tpl.name} standard wording.`,
+      description: tpl.description?.trim(),
+      sampleFileName: tpl.sampleFileName || `${id.toLowerCase()}-template.docx`,
+      mappingStatus: 'Mapped',
+      revisions: [initialRev],
+    };
+    setTemplates(prev => [...prev, newTpl]);
+    showDemoNotification(`Template '${newTpl.name}' added to library.`, 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiCreateTemplate(session.workspaceId!, token, {
+          name: newTpl.name,
+          code: newTpl.code,
+          templateType: newTpl.type === 'TERMS' ? 'QUOTE_TERMS' : 'COMPLIANCE_DISCLAIMER',
+          content: newTpl.content,
+          description: newTpl.description,
+          sampleFileName: newTpl.sampleFileName,
+          status: newTpl.status,
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+    return { success: true, id };
+  };
+
+  const archiveTemplate = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setTemplates(prev =>
+      prev.map(t => (t.id === id ? { ...t, status: 'ARCHIVED' as const } : t))
+    );
+    showDemoNotification('Template archived. Existing signed documents retain their frozen text.', 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchTemplate(session.workspaceId!, id, token, { action: 'archive' }).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const restoreTemplate = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return;
+    }
+    setTemplates(prev =>
+      prev.map(t => (t.id === id ? { ...t, status: 'ACTIVE' as const } : t))
+    );
+    showDemoNotification('Template restored to active catalog.', 'success');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiPatchTemplate(session.workspaceId!, id, token, { action: 'restore' }).catch(() => {});
+      }).catch(() => {});
+    }
+  };
+
+  const deleteTemplateDraft = (id: string) => {
+    const access = verifyPersonaAccess(persona, 'template_editing');
+    if (!access.allowed) {
+      showDemoNotification(`DENIED: ${access.reason}`, 'error');
+      return { success: false, error: access.reason };
+    }
+    const target = templates.find(t => t.id === id);
+    if (!target) return { success: false, error: 'Template not found' };
+    const hasPublishedRevision = target.revisions.some(r => r.status === 'PUBLISHED');
+    if (hasPublishedRevision && target.status !== 'DRAFT') {
+      if (target.activeStatus === 'DRAFT') {
+        setTemplates(prev =>
+          prev.map(t => {
+            if (t.id === id) {
+              const nonDraftRevisions = t.revisions.filter(r => r.status !== 'DRAFT');
+              const publishedRev = nonDraftRevisions[0] || t.revisions[0];
+              return {
+                ...t,
+                activeStatus: publishedRev.status,
+                currentVersion: publishedRev.version,
+                content: publishedRev.content,
+                revisions: nonDraftRevisions,
+              };
+            }
+            return t;
+          })
+        );
+        showDemoNotification(`Draft revision on '${target.name}' discarded; restored to published revision.`, 'info');
+        return { success: true };
+      }
+      showDemoNotification('Cannot delete published or archived templates; archive them instead.', 'error');
+      return { success: false, error: 'Cannot delete published templates' };
+    }
+    setTemplates(prev => prev.filter(t => t.id !== id));
+    showDemoNotification(`Draft template '${target.name}' deleted.`, 'info');
+    if (session?.workspaceId && session?.profile) {
+      void session.token().then(token => {
+        apiDeleteTemplate(session.workspaceId!, id, token).catch(() => {});
+      }).catch(() => {});
+    }
+    return { success: true };
   };
 
   // Certificate Delivery Workflow (G00-022) & Certificate Policy A & MAN-SEC-01 Permission Guard
@@ -3849,6 +4388,18 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         createTemplateDraftRevision,
         submitTemplateForReview,
         updateJobTypeConfig,
+        addJobType,
+        editJobType,
+        archiveJobType,
+        restoreJobType,
+        deleteJobTypeDraft,
+        createJobTypePolicyDraft,
+        submitJobTypePolicyForReview,
+        approveJobTypePolicy,
+        addTemplate,
+        archiveTemplate,
+        restoreTemplate,
+        deleteTemplateDraft,
         websiteEnquiries: authorizedEnquiries,
         simulateWebsiteSubmission,
         convertEnquiryToJob,

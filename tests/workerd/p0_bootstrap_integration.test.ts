@@ -3046,10 +3046,10 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
-    // Ensure we are past the start of the current second so issued_at (now - 50ms) is in the SAME second
+    // Ensure we run early in a fresh second (between 100ms and 600ms) so issued_at and SQLite's 'now' share the same calendar second
     const currentMs = Date.now() % 1000;
-    if (currentMs < 100) {
-      await new Promise(r => setTimeout(r, 120 - currentMs));
+    if (currentMs < 100 || currentMs > 600) {
+      await new Promise(r => setTimeout(r, 1000 - currentMs + 100));
     }
     const enrollNow = Date.now();
     const issuedDate = new Date(enrollNow - 50);
@@ -3090,11 +3090,13 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     );
 
     // Test expired manifest recovery where manifest expired but audit occurred within validity window
+    const postExpiryNowMs = Date.parse(isoExpires) + 1000;
     const recoveryOutcome = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
       expectedTargetId: SYNTHETIC_TARGET,
       expectedOperatorUid: SYNTHETIC_UID,
       expectedOperatorEmail: SYNTHETIC_EMAIL,
       allowExpiredForRecovery: true,
+      nowMs: postExpiryNowMs,
       settled: true,
     });
     assert.equal(
@@ -3113,6 +3115,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       expectedOperatorUid: SYNTHETIC_UID,
       expectedOperatorEmail: SYNTHETIC_EMAIL,
       allowExpiredForRecovery: true,
+      nowMs: postExpiryNowMs,
       settled: true,
     });
     assert.equal(
@@ -3247,21 +3250,22 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
-    // Manifest valid for only 50ms
-    const now = Date.now();
-    const isoIssued = new Date(now - 1000).toISOString();
-    const isoExpires = new Date(now + 50).toISOString();
+    // Fixed past validity window
+    const pastNow = Date.now() - 100_000;
+    const isoIssued = new Date(pastNow - 10_000).toISOString();
+    const isoExpires = new Date(pastNow + 10_000).toISOString();
     const manifest = createValidSyntheticManifest({
       issued_at: isoIssued,
       expires_at: isoExpires,
     });
     const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
-    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+    // Pass in-window nowMs to the verifier so verification succeeds without scheduling deadline
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, {
+      ...DEFAULT_VERIFY_OPTIONS,
+      nowMs: pastNow,
+    });
 
-    // Wait until past expires_at (100ms)
-    await new Promise(r => setTimeout(r, 100));
-
-    // Execute enrollment now (wall clock is past expires_at)
+    // Execute enrollment now (database clock 'now' is current time, > 90 seconds past expires_at)
     const outcome = await enrollFirstSuperAdmin(db, verified);
     assert.equal(
       outcome.status,
@@ -3382,6 +3386,8 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
   it('Regression CR-45: LoopbackTripwire rejects relative socket paths and non-numeric string destinations as IPC violations', () => {
     const tripwire = new LoopbackTripwire();
     tripwire.activate();
+    const sock3 = new net.Socket();
+    sock3.on('error', () => {});
 
     try {
       // 1. Relative socket path passed as string (e.g. 'relative_ipc.sock')
@@ -3405,8 +3411,6 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
 
       // Positive control: valid loopback TCP connection with explicit port is allowed
       const beforeCount = tripwire.nonLoopbackAttempts.length;
-      const sock3 = new net.Socket();
-      sock3.on('error', () => {});
       sock3.connect(65534, '127.0.0.1');
       assert.equal(
         tripwire.nonLoopbackAttempts.length,
@@ -3415,6 +3419,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
       );
     } finally {
       tripwire.deactivate();
+      sock3.destroy();
     }
   });
 
@@ -3474,47 +3479,345 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
 
   // --- Regression CR-47: Short Filesystem Write Detection in Receipt Export ---
   it('Regression CR-47: publishAuditReceipt detects partial filesystem write and does not publish a truncated receipt', async () => {
+    // Scenario A: Short write returning byte count prefix instead of throwing
+    {
+      const db = createLocalD1Database();
+      await runLocalMigrations(db, { disposableTest: true });
+
+      const manifest = createValidSyntheticManifest();
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+      const approvedRoot = createVerifiedTempDir('cabms-p0-cr47-short-root-');
+      const evidenceDir = path.join(approvedRoot, 'receipts');
+      fs.mkdirSync(evidenceDir);
+
+      const origWriteSync = fs.writeSync;
+      let hasWrittenPartial = false;
+      (fs as any).writeSync = (fd: number, buffer: any, offset: any, length: any, position: any) => {
+        const content = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer);
+        if (typeof fd === 'number' && content.includes(manifest.operation_id)) {
+          if (!hasWrittenPartial) {
+            hasWrittenPartial = true;
+            const partialLen = Math.min(10, length ?? buffer.length);
+            return (origWriteSync as any)(fd, buffer, offset ?? 0, partialLen, position);
+          }
+          return 0; // Short write returns 0 bytes on subsequent call
+        }
+        return (origWriteSync as any)(fd, buffer, offset, length, position);
+      };
+
+      try {
+        const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+          evidenceDir,
+          approvedEvidenceRoot: approvedRoot,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+        });
+
+        assert.equal(cliResult.outcome.status, 'SUCCESS', 'Database enrollment transaction must be preserved');
+        assert.equal(cliResult.auditReceiptPath, undefined, 'CR-47: Must NOT publish receipt path on incomplete short write');
+        assert.ok(cliResult.receiptExportError, 'receiptExportError must be populated');
+        assert.match(cliResult.receiptExportError, /incomplete write/i);
+
+        // Verify no receipt was published in evidence directory
+        const files = fs.readdirSync(evidenceDir);
+        assert.equal(files.length, 0, 'Evidence directory must contain no published receipt after short write');
+        assert.equal(getCliExitCode(cliResult), 4, 'Exit code must be 4 (RECEIPT_EXPORT_ERROR) for committed DB with write failure');
+      } finally {
+        fs.writeSync = origWriteSync;
+        try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
+      }
+    }
+
+    // Scenario B: Thrown error (e.g. ENOSPC) during receipt write
+    {
+      const db = createLocalD1Database();
+      await runLocalMigrations(db, { disposableTest: true });
+
+      const manifest = createValidSyntheticManifest();
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+      const approvedRoot = createVerifiedTempDir('cabms-p0-cr47-enospc-root-');
+      const evidenceDir = path.join(approvedRoot, 'receipts');
+      fs.mkdirSync(evidenceDir);
+
+      const origWriteSync = fs.writeSync;
+      (fs as any).writeSync = (fd: number, buffer: any, ...rest: any[]) => {
+        const content = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer);
+        if (typeof fd === 'number' && content.includes(manifest.operation_id)) {
+          throw new Error('ENOSPC: no space left on device, write failed during receipt export');
+        }
+        return (origWriteSync as any)(fd, buffer, ...rest);
+      };
+
+      try {
+        const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+          evidenceDir,
+          approvedEvidenceRoot: approvedRoot,
+          expectedTargetId: SYNTHETIC_TARGET,
+          expectedOperatorUid: SYNTHETIC_UID,
+          expectedOperatorEmail: SYNTHETIC_EMAIL,
+        });
+
+        assert.equal(cliResult.outcome.status, 'SUCCESS', 'Database enrollment transaction must be preserved');
+        assert.equal(cliResult.auditReceiptPath, undefined, 'CR-47: Must NOT publish receipt path on thrown write error');
+        assert.ok(cliResult.receiptExportError, 'receiptExportError must be populated');
+        assert.match(cliResult.receiptExportError, /ENOSPC/i);
+
+        const files = fs.readdirSync(evidenceDir);
+        assert.equal(files.length, 0, 'Evidence directory must contain no published receipt after thrown error');
+        assert.equal(getCliExitCode(cliResult), 4, 'Exit code must be 4 (RECEIPT_EXPORT_ERROR) for committed DB with thrown error');
+      } finally {
+        fs.writeSync = origWriteSync;
+        try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
+      }
+    }
+  });
+
+  // --- Regression CR-48: Closed Manifest Schema Rejects Unknown Fields ---
+  it('Regression CR-48: closed manifest schema rejects unknown fields in signApprovalManifest and verifyApprovalManifest', () => {
+    const validManifest = createValidSyntheticManifest();
+    const manifestWithExtra = {
+      ...validManifest,
+      extra_unapproved_field: 'malicious_or_accidental',
+    };
+
+    // signApprovalManifest must reject unknown fields
+    assert.throws(
+      () => signApprovalManifest(manifestWithExtra as any, ephemeralKeyPair.privateKey),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'UNKNOWN_FIELDS'
+    );
+
+    // If an envelope with an extra field in manifest is passed to verifyApprovalManifest, it must be rejected
+    const signed = signApprovalManifest(validManifest, ephemeralKeyPair.privateKey);
+    const envelopeWithExtra = {
+      ...signed,
+      manifest: {
+        ...signed.manifest,
+        unapproved_extension: 'value',
+      },
+    };
+    assert.throws(
+      () => verifyApprovalManifest(envelopeWithExtra as any, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'UNKNOWN_FIELDS'
+    );
+  });
+
+  // --- Regression CR-49: Reject Blank or Whitespace-Only Workspace IDs ---
+  it('Regression CR-49: verifyApprovalManifest rejects blank or whitespace-only workspace IDs in workspace_scope', () => {
+    const manifestWithBlank = createValidSyntheticManifest({
+      workspace_scope: ['solarcell', '   ', 'cctv'],
+    });
+    const signed = signApprovalManifest(manifestWithBlank, ephemeralKeyPair.privateKey);
+    assert.throws(
+      () => verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS),
+      (err: any) => err instanceof ManifestValidationError && err.code === 'INVALID_WORKSPACE_SCOPE'
+    );
+  });
+
+  // --- Regression CR-50: Total Audit Ledger Cardinality of Exactly One Row ---
+  it('Regression CR-50: C03 assertion and reconciliation enforce total audit ledger cardinality of exactly one row', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    // Seed an extra audit row into paar_p0_bootstrap_audit_manifests before enrollment
+    await db.exec(`
+      INSERT INTO paar_p0_bootstrap_audit_manifests (
+        id, operation_id, nonce, target_id, operator_email, operator_uid,
+        workspace_scope, permitted_action, signing_key_id, signature_algorithm,
+        signature_bytes, canonical_manifest_json, audit_reference, created_at
+      ) VALUES (
+        'extra_audit_id', 'op_00000000-0000-0000-0000-000000000000', 'nonce', 'target',
+        'operator@example.com', 'op_uid', 'solarcell', 'bootstrap_super_admin',
+        'key_id', 'Ed25519', 'sig', '{}', 'audit_ref', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+    `);
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    // Enrollment must fail postcondition C03 assertion and roll back
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'NOT_ENROLLED', 'Enrollment must fail C03 postcondition when audit count > 1');
+    assert.equal(outcome.rollbackProven, true, 'Rollback must be proven');
+
+    // Reconciliation must not return CONFIRMED_ENROLLED if totalAuditCount > 1
+    const recon = await reconcileEnrollmentStatus(
+      db,
+      verified.manifest.operation_id,
+      verified.manifest.operator_uid,
+      verified.audit_reference,
+      verified.manifest.workspace_scope
+    );
+    assert.notEqual(recon, 'CONFIRMED_ENROLLED', 'Reconciliation must reject ledger with total audit count > 1');
+  });
+
+  // --- Regression CR-51: Reconciliation Fails Closed When Workspace Scope Column Disagrees With Canonical Scope ---
+  it('Regression CR-51: reconciliation fails closed to INCONSISTENT when workspace_scope column disagrees with canonical scope', async () => {
+    const db = createLocalD1Database();
+    await runLocalMigrations(db, { disposableTest: true });
+
+    const manifest = createValidSyntheticManifest();
+    const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+    const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
+
+    const outcome = await enrollFirstSuperAdmin(db, verified);
+    assert.equal(outcome.status, 'SUCCESS', 'Enrollment succeeds initially');
+
+    // Tamper with the workspace_scope column while leaving canonical_manifest_json intact
+    const rawDb = (db as any).getSqliteHandle?.() ?? (db as any);
+    rawDb.exec(`
+      DROP TRIGGER IF EXISTS paar_p0_audit_no_update;
+      UPDATE paar_p0_bootstrap_audit_manifests
+      SET workspace_scope = 'solarcell,unapproved_scope'
+      WHERE operation_id = '${manifest.operation_id}';
+    `);
+
+    const recon = await reconcileEnrollmentStatus(
+      db,
+      verified.manifest.operation_id,
+      verified.manifest.operator_uid,
+      verified.audit_reference,
+      verified.manifest.workspace_scope,
+      {
+        verifiedManifest: {
+          signature_bytes: verified.signature_bytes,
+          signature_algorithm: verified.signature_algorithm,
+          signing_key_id: verified.signing_key_id,
+          canonical_manifest_json: verified.canonical_manifest_json,
+        },
+      }
+    );
+    assert.equal(
+      recon,
+      'INCONSISTENT',
+      'CR-51: Reconciliation must return INCONSISTENT when workspace_scope column disagrees with signed canonical scope'
+    );
+  });
+
+  // --- Regression CR-52: LoopbackTripwire Pins Implicit Omitted Localhost Options ---
+  it('Regression CR-52: LoopbackTripwire pins implicit omitted localhost when connecting with options object without host', () => {
+    const tripwire = new LoopbackTripwire();
+    tripwire.activate();
+
+    let capturedOptions: any;
+    const origConnect = (LoopbackTripwire as any).originalGlobalConnect;
+    // Intercept underlying connect to verify delegated options
+    (LoopbackTripwire as any).originalGlobalConnect = function (this: any, ...args: any[]) {
+      capturedOptions = args[0];
+      return this;
+    };
+
+    try {
+      const sock = new net.Socket();
+      sock.on('error', () => {});
+      const callerOptions = { port: 65534, lookup: () => {} };
+      // Call connect without host
+      sock.connect(callerOptions as any);
+
+      // Caller options object must not be mutated
+      assert.equal((callerOptions as any).host, undefined, 'Caller options must not be mutated');
+      // Delegated options must have explicit loopback literal pinned
+      assert.equal(capturedOptions?.host, '127.0.0.1', 'Delegated options must have host pinned to 127.0.0.1');
+      assert.equal(capturedOptions?.port, 65534, 'Port must be preserved');
+    } finally {
+      (LoopbackTripwire as any).originalGlobalConnect = origConnect;
+      tripwire.deactivate();
+    }
+  });
+
+  // --- Regression CR-53: Reject Concurrent / Overlapping Tripwires & Mode A Operations ---
+  it('Regression CR-53: LoopbackTripwire and runModeACliEnrollment reject concurrent / overlapping activations', async () => {
+    const tripwire1 = new LoopbackTripwire();
+    tripwire1.activate();
+
+    try {
+      // Activating second tripwire must throw SecurityBoundaryError
+      const tripwire2 = new LoopbackTripwire();
+      assert.throws(
+        () => tripwire2.activate(),
+        (err: any) => err instanceof SecurityBoundaryError && /Concurrent Mode A loopback tripwire/i.test(err.message)
+      );
+
+      // Calling runModeACliEnrollment while tripwire is active must reject before database work
+      const db = createLocalD1Database();
+      const manifest = createValidSyntheticManifest();
+      const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
+
+      await assert.rejects(
+        async () => {
+          await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+            expectedTargetId: SYNTHETIC_TARGET,
+            expectedOperatorUid: SYNTHETIC_UID,
+            expectedOperatorEmail: SYNTHETIC_EMAIL,
+          });
+        },
+        (err: any) => err instanceof SecurityBoundaryError && /Concurrent Mode A operations/i.test(err.message)
+      );
+    } finally {
+      tripwire1.deactivate();
+    }
+  });
+
+  // --- Regression CR-54: recoverAuditReceipt Reuses Existing Matching Receipt and Rejects Mismatches ---
+  it('Regression CR-54: recoverAuditReceipt reuses existing matching receipt and rejects mismatches without overwriting', async () => {
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
     const manifest = createValidSyntheticManifest();
     const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
 
-    const approvedRoot = createVerifiedTempDir('cabms-p0-cr47-root-');
+    const approvedRoot = createVerifiedTempDir('cabms-p0-cr54-root-');
     const evidenceDir = path.join(approvedRoot, 'receipts');
     fs.mkdirSync(evidenceDir);
 
-    const origWriteSync = fs.writeSync;
-    // Simulate short write: throw error during receipt write
-    (fs as any).writeSync = (fd: number, buffer: any, ...rest: any[]) => {
-      const content = Buffer.isBuffer(buffer) ? buffer.toString('utf8') : String(buffer);
-      if (typeof fd === 'number' && content.includes(manifest.operation_id)) {
-        throw new Error('ENOSPC: no space left on device, write failed during receipt export');
-      }
-      return (origWriteSync as any)(fd, buffer, ...rest);
-    };
+    // 1. Run enrollment and export receipt
+    const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
+      evidenceDir,
+      approvedEvidenceRoot: approvedRoot,
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+    });
+    assert.equal(cliResult.outcome.status, 'SUCCESS');
+    assert.ok(cliResult.auditReceiptPath);
+    const receiptPath = cliResult.auditReceiptPath!;
+    assert.ok(fs.existsSync(receiptPath));
+    const originalMtime = fs.statSync(receiptPath).mtimeMs;
 
-    try {
-      const cliResult = await runModeACliEnrollment(db, signed, ephemeralKeyPair.publicKey, {
-        evidenceDir,
-        approvedEvidenceRoot: approvedRoot,
-        expectedTargetId: SYNTHETIC_TARGET,
-        expectedOperatorUid: SYNTHETIC_UID,
-        expectedOperatorEmail: SYNTHETIC_EMAIL,
-      });
+    // 2. Recovery on the same directory should accept and reuse the existing valid receipt without error
+    const recoveryResult = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      evidenceDir,
+      approvedEvidenceRoot: approvedRoot,
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      settled: true,
+    });
+    assert.equal(recoveryResult.status, 'RECOVERED');
+    assert.equal(recoveryResult.auditReceiptPath, receiptPath);
+    // Ensure file was not overwritten
+    assert.equal(fs.statSync(receiptPath).mtimeMs, originalMtime, 'Existing matching receipt must not be overwritten');
 
-      assert.equal(cliResult.outcome.status, 'SUCCESS', 'Database enrollment transaction must be preserved');
-      assert.equal(cliResult.auditReceiptPath, undefined, 'CR-47: Must NOT publish receipt path on incomplete write');
-      assert.ok(cliResult.receiptExportError, 'receiptExportError must be populated');
-      assert.match(cliResult.receiptExportError, /ENOSPC|incomplete write|write failed/i);
+    // 3. If the existing receipt is tampered/mismatched, recovery must reject without overwriting
+    fs.writeFileSync(receiptPath, JSON.stringify({ corrupted: true }));
+    const tamperedMtime = fs.statSync(receiptPath).mtimeMs;
 
-      // Verify no receipt was published in evidence directory
-      const files = fs.readdirSync(evidenceDir);
-      assert.equal(files.length, 0, 'Evidence directory must contain no published receipt after failed write');
-      assert.equal(getCliExitCode(cliResult), 4, 'Exit code must be 4 (RECEIPT_EXPORT_ERROR) for committed DB with write failure');
-    } finally {
-      fs.writeSync = origWriteSync;
-      try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
-    }
+    const failedRecovery = await recoverAuditReceipt(db, signed, ephemeralKeyPair.publicKey, {
+      evidenceDir,
+      approvedEvidenceRoot: approvedRoot,
+      expectedTargetId: SYNTHETIC_TARGET,
+      expectedOperatorUid: SYNTHETIC_UID,
+      expectedOperatorEmail: SYNTHETIC_EMAIL,
+      settled: true,
+    });
+    assert.equal(failedRecovery.status, 'INDETERMINATE');
+    assert.match(failedRecovery.error ?? '', /does not match authenticated audit record/i);
+    // Ensure tampered file was NOT overwritten
+    assert.equal(fs.statSync(receiptPath).mtimeMs, tamperedMtime, 'Mismatched receipt must not be overwritten');
+
+    try { fs.rmSync(approvedRoot, { recursive: true, force: true }); } catch {}
   });
 });

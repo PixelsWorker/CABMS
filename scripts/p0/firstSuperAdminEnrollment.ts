@@ -254,8 +254,9 @@ export async function enrollFirstSuperAdmin(
         AND (SELECT COUNT(DISTINCT workspace_id) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND provider_id = 'firebase' AND provider_subject_id = ? AND revoked_at IS NULL AND workspace_id IN (${scopePlaceholders})) = ?
         -- C03-06: No prior revoked approvals for this user/role
         AND (SELECT COUNT(*) FROM privileged_identity_approvals WHERE user_id = 'usr_primary_super_admin' AND role = 'super_admin' AND revoked_at IS NOT NULL) = 0
-        -- C03-07: Matching audit record with operation_id, audit_reference, and created_at within manifest validity window
+        -- C03-07: Matching audit record with operation_id, audit_reference, and created_at within manifest validity window, and total ledger contains exactly one row
         AND (SELECT COUNT(*) FROM paar_p0_bootstrap_audit_manifests WHERE operation_id = ? AND audit_reference = ? AND created_at >= ? AND created_at <= ?) = 1
+        AND (SELECT COUNT(*) FROM paar_p0_bootstrap_audit_manifests) = 1
         -- C03-08: Matching bootstrap completion record
         AND (SELECT COUNT(*) FROM g01_bootstrap_completion WHERE singleton = 1 AND operation_id = ? AND audit_reference = ? AND original_firebase_uid = ?) = 1
         -- C03-09: g01_effective_super_admin_uid resolves to operator_uid
@@ -354,6 +355,9 @@ export async function reconcileEnrollmentStatus(
   ) {
     return 'INDETERMINATE';
   }
+
+  const expectedScopeSnapshot = [...expectedScope];
+  const isSettled = options?.settled === true;
 
   if (
     typeof operationId !== 'string' ||
@@ -481,17 +485,20 @@ export async function reconcileEnrollmentStatus(
         provider_subject_id: r.k4!,
       }));
 
-    const callerExpectedWorkspaces = [...expectedScope].sort();
+    const callerExpectedWorkspaces = [...expectedScopeSnapshot].sort();
 
-    // Read workspace IDs from lossless array in canonical_manifest_json when available
+    const setsEqual = (a: string[], b: string[]) =>
+      a.length === b.length && a.every((val, idx) => val === b[idx]);
+
+    // Read workspace IDs strictly from lossless array in canonical_manifest_json
     let manifestArrayMalformed = false;
-    const auditWorkspaces = (() => {
-      if (!auditRow) return [];
+    let auditWorkspaces: string[] = [];
+    if (auditRow) {
       if (auditRow.canonical_manifest_json) {
         try {
           const parsed = JSON.parse(auditRow.canonical_manifest_json) as Record<string, unknown>;
           if (Array.isArray(parsed.workspace_scope)) {
-            return (parsed.workspace_scope as unknown[]).map(String).sort();
+            auditWorkspaces = (parsed.workspace_scope as unknown[]).map(String).sort();
           } else {
             manifestArrayMalformed = true;
           }
@@ -501,10 +508,15 @@ export async function reconcileEnrollmentStatus(
       } else {
         manifestArrayMalformed = true;
       }
-      return auditRow.workspace_scope
+
+      // Validate the workspace_scope column against the canonical scope
+      const columnWorkspaces = auditRow.workspace_scope
         ? auditRow.workspace_scope.split(',').map(s => s.trim()).filter(Boolean).sort()
         : [];
-    })();
+      if (!setsEqual(auditWorkspaces, columnWorkspaces)) {
+        manifestArrayMalformed = true;
+      }
+    }
 
     const expectedWorkspaces = callerExpectedWorkspaces;
 
@@ -517,9 +529,6 @@ export async function reconcileEnrollmentStatus(
       .filter(a => a.role === 'super_admin')
       .map(a => a.workspace_id)
       .sort();
-
-    const setsEqual = (a: string[], b: string[]) =>
-      a.length === b.length && a.every((val, idx) => val === b[idx]);
 
     const auditMatchesCaller = setsEqual(callerExpectedWorkspaces, auditWorkspaces);
 
@@ -547,6 +556,7 @@ export async function reconcileEnrollmentStatus(
     if (
       compRow &&
       auditRow &&
+      totalAuditCount === 1 &&
       protectedRow &&
       userRow &&
       userRow.disabled === 0 &&
@@ -578,7 +588,7 @@ export async function reconcileEnrollmentStatus(
       membershipRows.length === 0 &&
       approvalRows.length === 0
     ) {
-      if (options?.settled !== true) {
+      if (!isSettled) {
         return 'INDETERMINATE';
       }
       return 'NOT_ENROLLED';

@@ -152,153 +152,160 @@ export class LoopbackTripwire {
   public loopbackAttempts: Array<{ host: string; port: number }> = [];
   public active = false;
 
+  public static hasActiveInstances(): boolean {
+    return LoopbackTripwire.activeInstances.size > 0;
+  }
+
   public activate(): void {
     if (this.active) return;
+    if (LoopbackTripwire.activeInstances.size > 0) {
+      throw new SecurityBoundaryError('Concurrent Mode A loopback tripwire operations are not permitted in the same process');
+    }
     this.active = true;
     if (LoopbackTripwire.activeInstances.size === 0) {
       LoopbackTripwire.originalGlobalConnect = net.Socket.prototype.connect;
     }
     LoopbackTripwire.activeInstances.add(this);
 
-    if (LoopbackTripwire.activeInstances.size === 1) {
-      const underlyingConnect = LoopbackTripwire.originalGlobalConnect!;
-      net.Socket.prototype.connect = function (...args: any[]) {
-        let host: string | undefined;
-        let port = 0;
-        let isIpc = false;
+    const activeTripwire = this;
+    const underlyingConnect = LoopbackTripwire.originalGlobalConnect!;
+    net.Socket.prototype.connect = function (...args: any[]) {
+      let host: string | undefined;
+      let port = 0;
+      let isIpc = false;
 
-        let firstArg = args[0];
-        if (Array.isArray(firstArg)) {
-          firstArg = firstArg[0];
+      let firstArg = args[0];
+      if (Array.isArray(firstArg)) {
+        firstArg = firstArg[0];
+      }
+
+      if (typeof firstArg === 'object' && firstArg !== null) {
+        if ('path' in firstArg && typeof (firstArg as any).path === 'string') {
+          isIpc = true;
+          host = (firstArg as any).path;
+          port = 0;
+        } else {
+          host = firstArg.host || firstArg.path;
+          port = firstArg.port || 0;
         }
-
-        if (typeof firstArg === 'object' && firstArg !== null) {
-          if ('path' in firstArg && typeof (firstArg as any).path === 'string') {
+      } else if (typeof firstArg === 'number') {
+        port = firstArg;
+        if (typeof args[1] === 'string') {
+          host = args[1];
+        } else if (typeof args[1] === 'object' && args[1] !== null) {
+          if ('path' in args[1] && typeof (args[1] as any).path === 'string') {
             isIpc = true;
-            host = (firstArg as any).path;
+            host = (args[1] as any).path;
             port = 0;
           } else {
-            host = firstArg.host || firstArg.path;
-            port = firstArg.port || 0;
+            host = args[1].host || args[1].path;
           }
-        } else if (typeof firstArg === 'number') {
-          port = firstArg;
+        }
+      } else if (typeof firstArg === 'string') {
+        const trimmed = firstArg.trim();
+        if (/^\d+$/.test(trimmed)) {
+          port = parseInt(trimmed, 10);
           if (typeof args[1] === 'string') {
             host = args[1];
           } else if (typeof args[1] === 'object' && args[1] !== null) {
-            if ('path' in args[1] && typeof (args[1] as any).path === 'string') {
-              isIpc = true;
-              host = (args[1] as any).path;
-              port = 0;
-            } else {
-              host = args[1].host || args[1].path;
-            }
+            host = args[1].host || args[1].path;
           }
+        } else {
+          // Under Node net.connect conventions, non-numeric strings are IPC paths
+          isIpc = true;
+          host = firstArg;
+          port = 0;
+        }
+      }
+
+      // If host and port cannot be identified (e.g. malformed options or array), fail closed immediately
+      if (!host && port === 0) {
+        host = 'malformed_unknown';
+      }
+
+      const wasHostOmitted = !host;
+      if (!host) {
+        host = '127.0.0.1';
+      }
+
+      // Normalize host string (case-insensitive, strip brackets, strip port suffix)
+      let normalizedHost = String(host).trim().toLowerCase();
+      if (normalizedHost.startsWith('[') && normalizedHost.endsWith(']')) {
+        normalizedHost = normalizedHost.slice(1, -1);
+      }
+      if (/^[^:]+:\d+$/.test(normalizedHost)) {
+        normalizedHost = normalizedHost.split(':')[0];
+      }
+
+      // Check IPC destinations (Unix domain sockets, Windows named pipes, and options.path)
+      // Mode A rejects IPC destinations by default to prevent socket-based proxy/egress bypass
+      if (
+        isIpc ||
+        normalizedHost.startsWith('\\\\.\\pipe\\') ||
+        normalizedHost.startsWith('/') ||
+        normalizedHost.includes('.sock') ||
+        (typeof firstArg === 'object' && firstArg !== null && 'path' in firstArg)
+      ) {
+        activeTripwire.nonLoopbackAttempts.push({ host, port: 0 });
+        const err = new Error(`LoopbackTripwire blocked IPC destination attempt to ${host}`);
+        process.nextTick(() => {
+          this.destroy(err);
+        });
+        return this;
+      }
+
+      // Check loopback targets (strictly IPv4/IPv6 loopback literals and canonical loopback hostnames)
+      const isNamedLoopback =
+        normalizedHost === 'localhost' ||
+        normalizedHost === 'ip6-localhost' ||
+        normalizedHost === 'ip6-loopback';
+      const isIpv6Loopback =
+        normalizedHost === '::1' ||
+        normalizedHost === '0:0:0:0:0:0:0:1' ||
+        normalizedHost === '::ffff:127.0.0.1';
+
+      // IPv4 loopback subnet 127.0.0.0/8 (127.0.0.0 - 127.255.255.255)
+      const ipv4Match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalizedHost);
+      const isIpv4Loopback = !!(
+        ipv4Match &&
+        Number(ipv4Match[1]) <= 255 &&
+        Number(ipv4Match[2]) <= 255 &&
+        Number(ipv4Match[3]) <= 255
+      );
+
+      const isLoopback = isNamedLoopback || isIpv6Loopback || isIpv4Loopback;
+
+      // Pin named loopback and implicit omitted localhost directly to loopback IP literal without mutating caller options object
+      const delegateArgs = [...args];
+      if (isNamedLoopback || wasHostOmitted) {
+        const literal = (isNamedLoopback && normalizedHost.startsWith('ip6')) ? '::1' : '127.0.0.1';
+        if (typeof firstArg === 'object' && firstArg !== null) {
+          delegateArgs[0] = { ...firstArg, host: literal };
+        } else if (typeof args[1] === 'string') {
+          delegateArgs[1] = literal;
         } else if (typeof firstArg === 'string') {
-          const trimmed = firstArg.trim();
-          if (/^\d+$/.test(trimmed)) {
-            port = parseInt(trimmed, 10);
-            if (typeof args[1] === 'string') {
-              host = args[1];
-            } else if (typeof args[1] === 'object' && args[1] !== null) {
-              host = args[1].host || args[1].path;
-            }
+          delegateArgs[0] = literal;
+        } else if (typeof firstArg === 'number') {
+          if (typeof args[1] === 'object' && args[1] !== null) {
+            delegateArgs[1] = { ...args[1], host: literal };
           } else {
-            // Under Node net.connect conventions, non-numeric strings are IPC paths
-            isIpc = true;
-            host = firstArg;
-            port = 0;
+            delegateArgs.splice(1, 0, literal);
           }
         }
+      }
 
-        // If host and port cannot be identified (e.g. malformed options or array), fail closed immediately
-        if (!host && port === 0) {
-          host = 'malformed_unknown';
-        }
+      if (!isLoopback) {
+        activeTripwire.nonLoopbackAttempts.push({ host, port });
+        const err = new Error(`LoopbackTripwire blocked non-loopback connection attempt to ${host}:${port}`);
+        process.nextTick(() => {
+          this.destroy(err);
+        });
+        return this;
+      }
 
-        if (!host) {
-          host = '127.0.0.1';
-        }
-
-        // Normalize host string (case-insensitive, strip brackets, strip port suffix)
-        let normalizedHost = String(host).trim().toLowerCase();
-        if (normalizedHost.startsWith('[') && normalizedHost.endsWith(']')) {
-          normalizedHost = normalizedHost.slice(1, -1);
-        }
-        if (/^[^:]+:\d+$/.test(normalizedHost)) {
-          normalizedHost = normalizedHost.split(':')[0];
-        }
-
-        // Check IPC destinations (Unix domain sockets, Windows named pipes, and options.path)
-        // Mode A rejects IPC destinations by default to prevent socket-based proxy/egress bypass
-        if (
-          isIpc ||
-          normalizedHost.startsWith('\\\\.\\pipe\\') ||
-          normalizedHost.startsWith('/') ||
-          normalizedHost.includes('.sock') ||
-          (typeof firstArg === 'object' && firstArg !== null && 'path' in firstArg)
-        ) {
-          for (const inst of LoopbackTripwire.activeInstances) {
-            inst.nonLoopbackAttempts.push({ host, port: 0 });
-          }
-          const err = new Error(`LoopbackTripwire blocked IPC destination attempt to ${host}`);
-          process.nextTick(() => {
-            this.destroy(err);
-          });
-          return this;
-        }
-
-        // Check loopback targets (strictly IPv4/IPv6 loopback literals and canonical loopback hostnames)
-        const isNamedLoopback =
-          normalizedHost === 'localhost' ||
-          normalizedHost === 'ip6-localhost' ||
-          normalizedHost === 'ip6-loopback';
-        const isIpv6Loopback =
-          normalizedHost === '::1' ||
-          normalizedHost === '0:0:0:0:0:0:0:1' ||
-          normalizedHost === '::ffff:127.0.0.1';
-
-        // IPv4 loopback subnet 127.0.0.0/8 (127.0.0.0 - 127.255.255.255)
-        const ipv4Match = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalizedHost);
-        const isIpv4Loopback = !!(
-          ipv4Match &&
-          Number(ipv4Match[1]) <= 255 &&
-          Number(ipv4Match[2]) <= 255 &&
-          Number(ipv4Match[3]) <= 255
-        );
-
-        const isLoopback = isNamedLoopback || isIpv6Loopback || isIpv4Loopback;
-
-        // Pin named loopback destination directly to loopback IP literal without mutating caller options object
-        const delegateArgs = [...args];
-        if (isNamedLoopback) {
-          const literal = normalizedHost.startsWith('ip6') ? '::1' : '127.0.0.1';
-          if (typeof firstArg === 'object' && firstArg !== null) {
-            delegateArgs[0] = { ...firstArg, host: literal };
-          } else if (typeof args[1] === 'string') {
-            delegateArgs[1] = literal;
-          } else if (typeof firstArg === 'string') {
-            delegateArgs[0] = literal;
-          }
-        }
-
-        if (!isLoopback) {
-          for (const inst of LoopbackTripwire.activeInstances) {
-            inst.nonLoopbackAttempts.push({ host, port });
-          }
-          const err = new Error(`LoopbackTripwire blocked non-loopback connection attempt to ${host}:${port}`);
-          process.nextTick(() => {
-            this.destroy(err);
-          });
-          return this;
-        }
-
-        for (const inst of LoopbackTripwire.activeInstances) {
-          inst.loopbackAttempts.push({ host, port });
-        }
-        return underlyingConnect.apply(this, delegateArgs as any);
-      };
-    }
+      activeTripwire.loopbackAttempts.push({ host, port });
+      return LoopbackTripwire.originalGlobalConnect!.apply(this, delegateArgs as any);
+    };
   }
 
   public deactivate(): void {
@@ -485,7 +492,6 @@ function publishAuditReceipt(
     const postLinkDestStat = fs.statSync(auditReceiptPath);
     if (postLinkDestStat.ino !== 0 && initialFdStat.ino !== 0) {
       if (postLinkDestStat.ino !== initialFdStat.ino || postLinkDestStat.dev !== initialFdStat.dev) {
-        try { fs.unlinkSync(auditReceiptPath); } catch {}
         throw new SecurityBoundaryError('Published receipt inode does not match created file descriptor (publication swapped)');
       }
     }
@@ -633,6 +639,9 @@ export async function recoverAuditReceipt(
   });
 
   // 6. Deep read-only reconciliation under tripwire (ZERO write statements sent to D1)
+  if (LoopbackTripwire.hasActiveInstances()) {
+    throw new SecurityBoundaryError('Concurrent Mode A operations are not permitted in the same process');
+  }
   const tripwire = new LoopbackTripwire();
   tripwire.activate();
   let reconStatus: ReconciliationOutcome;
@@ -729,6 +738,59 @@ export async function recoverAuditReceipt(
   if (!resolvedEvidenceDir) {
     return {
       status: 'RECOVERED',
+    };
+  }
+
+  const receiptFilename = `p0_audit_receipt_${verified.manifest.operation_id}.json`;
+  const candidateReceiptPath = path.join(resolvedEvidenceDir, receiptFilename);
+  const relCandidate = path.relative(resolvedEvidenceDir, candidateReceiptPath);
+  if (relCandidate.startsWith('..') || path.isAbsolute(relCandidate) || path.dirname(candidateReceiptPath) !== resolvedEvidenceDir) {
+    throw new SecurityBoundaryError('Receipt destination path escapes evidence directory');
+  }
+
+  if (fs.existsSync(candidateReceiptPath)) {
+    if (approvedRoot) {
+      const realPublished = fs.realpathSync(candidateReceiptPath);
+      const relPublished = path.relative(approvedRoot, realPublished);
+      if (relPublished.startsWith('..') || path.isAbsolute(relPublished)) {
+        throw new SecurityBoundaryError('Receipt destination file canonical realpath escapes approved root boundary');
+      }
+      const realParent = fs.realpathSync(path.dirname(candidateReceiptPath));
+      const expectedParent = fs.realpathSync(resolvedEvidenceDir);
+      if (realParent !== expectedParent) {
+        throw new SecurityBoundaryError('Receipt parent directory was swapped');
+      }
+    }
+
+    try {
+      const rawContent = fs.readFileSync(candidateReceiptPath, 'utf8');
+      const existingReceipt = JSON.parse(rawContent);
+      const isMatch =
+        existingReceipt &&
+        typeof existingReceipt === 'object' &&
+        existingReceipt.operation_id === verified.manifest.operation_id &&
+        existingReceipt.audit_reference === verified.audit_reference &&
+        existingReceipt.canonical_manifest_json === verified.canonical_manifest_json &&
+        existingReceipt.signature_bytes === verified.signature_bytes &&
+        existingReceipt.signature_algorithm === verified.signature_algorithm &&
+        existingReceipt.signing_key_id === verified.signing_key_id &&
+        existingReceipt.target_id === verified.manifest.target_id &&
+        existingReceipt.operator_uid === verified.manifest.operator_uid &&
+        existingReceipt.operator_email === verified.manifest.operator_email &&
+        existingReceipt.nonce === verified.manifest.nonce &&
+        existingReceipt.permitted_action === verified.manifest.permitted_action;
+
+      if (isMatch) {
+        return {
+          status: 'RECOVERED',
+          auditReceiptPath: candidateReceiptPath,
+        };
+      }
+    } catch {}
+
+    return {
+      status: 'INDETERMINATE',
+      error: `Receipt recovery failed: destination file already exists and does not match authenticated audit record: ${receiptFilename}`,
     };
   }
 
@@ -830,6 +892,9 @@ export async function runModeACliEnrollment(
   }
 
   // 4. Verify manifest, execute enrollment, and reconcile under active LoopbackTripwire
+  if (LoopbackTripwire.hasActiveInstances()) {
+    throw new SecurityBoundaryError('Concurrent Mode A operations are not permitted in the same process');
+  }
   const tripwire = new LoopbackTripwire();
   tripwire.activate();
   let verified: VerifiedApprovalManifest;

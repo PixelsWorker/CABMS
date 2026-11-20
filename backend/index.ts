@@ -26,6 +26,7 @@ import { StructuredLogger } from './workers/logger.ts';
 import { approvedMembership } from './workers/privilegedApproval.ts';
 import { handleDemoJourney, handleDemoJob } from './workers/routes/demoJourney.ts';
 import { handleDemoAppointments } from './workers/routes/demoAppointments.ts';
+import { handleJobTypesRoute, handleTemplatesRoute } from './workers/routes/templatesAndContent.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
   return {
@@ -165,6 +166,18 @@ export function createWorker(authentication: AuthenticationService = productionA
       const journeyMatch = /^\/api\/v1\/workspaces\/([^/]+)\/(enquiries|jobs)(?:\/([^/]+)\/conversion)?$/.exec(pathname);
       if (journeyMatch && !(journeyMatch[2] === 'jobs' && journeyMatch[3])) {
         return addCors(await handleDemoJourney(request, env, journeyMatch[1], journeyMatch[2], journeyMatch[3], requestId, authentication), env);
+      }
+
+      // Job Types & Compliance Policies
+      const jobTypesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/job-types(?:\/([^/]+)(?:\/(policies)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);
+      if (jobTypesMatch) {
+        return addCors(await handleJobTypesRoute(request, env, jobTypesMatch[1], jobTypesMatch[2], jobTypesMatch[3], jobTypesMatch[4], jobTypesMatch[5], requestId, authentication), env);
+      }
+
+      // Document Templates & Revisions
+      const templatesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/templates(?:\/([^/]+)(?:\/(revisions)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);
+      if (templatesMatch) {
+        return addCors(await handleTemplatesRoute(request, env, templatesMatch[1], templatesMatch[2], templatesMatch[3], templatesMatch[4], templatesMatch[5], requestId, authentication), env);
       }
 
       // Unknown API route

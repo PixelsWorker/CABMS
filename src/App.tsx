@@ -41,8 +41,8 @@ export const AppContent: React.FC = () => {
   if (session ? session.loading || !session.profile : !isSimulatedSignedIn) {
     return (
       <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
-        {!session && <DemoBanner />}
-        {!session && <DemoControlsBar />}
+        <DemoBanner />
+        <DemoControlsBar />
         <main id="cabms-main-content" tabIndex={-1} className="cabms-main flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <SignInScreen />
         </main>
@@ -63,12 +63,12 @@ export const AppContent: React.FC = () => {
   return (
     <div className="cabms-app-shell font-sans selection:bg-amber-500 selection:text-slate-950" data-company-panel={activeBrandId}>
       {/* 1. Mandatory Persistent Demo Banner */}
-      {!session && <DemoBanner />}
+      <DemoBanner />
       {session && <div className="cabms-card p-3 text-sm" role="status">G01 uses the authenticated backend for settings and saved demo enquiries and jobs. Dashboard operational figures, schedules, customers and other workflows remain synthetic G00 demonstrations.</div>}
       {session?.error && <p role="alert" className="cabms-card p-3">{session.error}</p>}
 
       {/* 2. Interactive Demo Controls & Virtual Clock Bar */}
-      {!session && <DemoControlsBar />}
+      <DemoControlsBar />
 
       {/* 3. Header & Navigation */}
       <Navigation>

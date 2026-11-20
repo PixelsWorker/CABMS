@@ -908,7 +908,12 @@ const SimulatedJobsView: React.FC = () => {
 
 export const JobsView: React.FC = () => {
  const session = useG01Session();
- return session ? <PersistentJobs key={JSON.stringify([session.workspaceId, session.profile?.user.id])} /> : <SimulatedJobsView />;
+ return (
+   <div className="space-y-6">
+     {session && <PersistentJobs key={JSON.stringify([session.workspaceId, session.profile?.user.id])} />}
+     <SimulatedJobsView />
+   </div>
+ );
 };
 function PersistentJobs() {
  const state = useWorkspaceDemoData(false);

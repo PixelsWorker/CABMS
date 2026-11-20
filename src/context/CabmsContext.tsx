@@ -56,6 +56,7 @@ import {
 import { getMockDataAdapter } from '../services/index.ts';
 import {
   apiListJobTypes,
+  apiGetJobType,
   apiListTemplates,
   apiGetTemplate,
   apiCreateJobType,
@@ -264,7 +265,7 @@ interface CabmsContextType {
     formRules?: Array<{form_revision_id:string;required:boolean}>;
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   }) => Promise<{ success: boolean; id?: string; error?: string }> & { success: boolean; id?: string; error?: string };
-  editJobType: (id: string, updates: Partial<JobTypeConfig>) => { success: boolean; error?: string };
+  editJobType: (id: string, updates: Partial<JobTypeConfig>) => Promise<{ success: boolean; error?: string }>;
   archiveJobType: (id: string) => void;
   restoreJobType: (id: string) => void;
   deleteJobTypeDraft: (id: string) => { success: boolean; error?: string };
@@ -500,15 +501,26 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!session?.workspaceId || !session?.profile || activeTab !== 'templates') return;
     let active = true;
     setTemplates([]);
+    setJobTypes([]);
     void session.token().then(token => {
-      apiListJobTypes(session.workspaceId!, token).then(res => {
+      apiListJobTypes(session.workspaceId!, token).then(async res => {
         if (!active) return;
         if (!res.ok) {
           showDemoNotification(res.problem?.detail || 'Failed to fetch job types from server', 'error');
           return;
         }
         if (!res.data) return;
-        setJobTypes(res.data.map(row => ({
+        const details = await Promise.all(res.data.map(row=>apiGetJobType(session.workspaceId!,row.id,token)));
+        if (!active) return;
+        if (details.some(detail=>!detail.ok || !Array.isArray(detail.data?.policies))) {
+          showDemoNotification('Unable to load complete job type policy history. Refresh and try again.', 'error');
+          return;
+        }
+        setJobTypes(res.data.map((row,index) => {
+          const policies = details[index].data.policies as Array<{id:string;version:string;status:'DRAFT'|'REVIEW'|'PUBLISHED'|'ARCHIVED';formsRequired:JobTypeConfig['formsRequired'];is_direct_to_invoice:number;effective_at?:string;updated_at:string;created_by?:string;approved_by?:string;approved_at?:string}>;
+          const ordered = [...policies].sort((a,b)=>Number(['DRAFT','REVIEW'].includes(b.status))-Number(['DRAFT','REVIEW'].includes(a.status)));
+          const pending = ordered.find(p=>p.status==='DRAFT' || p.status==='REVIEW');
+          return {
           id: row.id,
           code: row.code,
           name: row.name,
@@ -519,18 +531,10 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           isDirectToInvoice: Boolean(row.is_direct_to_invoice),
           version: row.version || 'v1.0',
           status: row.status || 'DRAFT',
-          policyStatus: row.policy_status || 'DRAFT',
+          policyStatus: pending?.status || row.policy_status || 'DRAFT',
           currentPolicyId: row.current_policy_version_id || undefined,
-          revisionHistory: [{
-            id: row.current_policy_version_id || undefined,
-            version: row.version || 'v1.0',
-            formsRequired: row.forms_required || [],
-            isDirectToInvoice: Boolean(row.is_direct_to_invoice),
-            status: row.policy_status || 'DRAFT',
-            updatedAt: row.updated_at,
-            updatedBy: 'SYSTEM',
-          }],
-        })));
+          revisionHistory: ordered.map(policy=>({id:policy.id,version:policy.version,formsRequired:policy.formsRequired || [],isDirectToInvoice:Boolean(policy.is_direct_to_invoice),status:policy.status,effectiveAt:policy.effective_at || undefined,updatedAt:policy.updated_at,updatedBy:policy.created_by || 'SYSTEM',approvedBy:policy.approved_by,approvedAt:policy.approved_at})),
+        };}));
       }).catch(err => {
         if (active) showDemoNotification(`Failed to load job types: ${err?.message || 'Network error'}`, 'error');
       });
@@ -3700,7 +3704,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return Object.assign(Promise.resolve(res), res);
   };
 
-  const editJobType = (id: string, updates: Partial<JobTypeConfig>) => {
+  const editJobType = async (id: string, updates: Partial<JobTypeConfig>) => {
     const access = verifyPersonaAccess(persona, 'template_editing');
     if (!access.allowed) {
       showDemoNotification(`DENIED: ${access.reason}`, 'error');
@@ -3708,6 +3712,24 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
     const target = jobTypes.find(jt => jt.id === id);
     if (!target) return { success: false, error: 'Job type not found' };
+
+    if (session?.workspaceId && session?.profile) {
+      try {
+        const token = await session.token();
+        const result = await apiPatchJobType(session.workspaceId, id, token, {
+          name: updates.name, code: updates.code, description: updates.description, brandId: updates.brandId,
+        });
+        if (!result.ok) {
+          const error = result.problem?.detail || 'The server did not save the job type.';
+          showDemoNotification(error, 'error');
+          return { success: false, error };
+        }
+      } catch {
+        const error = 'Could not save the job type. Check your connection and try again.';
+        showDemoNotification(error, 'error');
+        return { success: false, error };
+      }
+    }
 
     setJobTypes(prev =>
       prev.map(jt => {
@@ -3726,16 +3748,6 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       })
     );
     showDemoNotification(`Job type '${target.name}' updated successfully.`, 'success');
-    if (session?.workspaceId && session?.profile) {
-      void session.token().then(token => {
-        apiPatchJobType(session.workspaceId!, id, token, {
-          name: updates.name,
-          code: updates.code,
-          description: updates.description,
-          brandId: updates.brandId,
-        }).catch(() => {});
-      }).catch(() => {});
-    }
     return { success: true };
   };
 

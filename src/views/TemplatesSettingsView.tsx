@@ -193,16 +193,16 @@ export const TemplatesSettingsView: React.FC = () => {
     setEditJtDescription(jt.description || '');
   };
 
-  const handleSaveEditJobType = (e: React.FormEvent) => {
+  const handleSaveEditJobType = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingJobTypeId) return;
-    editJobType(editingJobTypeId, {
+    const result = await editJobType(editingJobTypeId, {
       name: editJtName,
       code: editJtCode,
       brandId: editJtBrandId,
       description: editJtDescription,
     });
-    setEditingJobTypeId(null);
+    if (result.success) setEditingJobTypeId(null);
   };
 
   const handleCreateJobType = async (e: React.FormEvent) => {

@@ -314,6 +314,15 @@ describe('C1 Templates & Content — Cloudflare Worker & Local D1 Binding Integr
     assert.equal(detail.status, 'ACTIVE');
     assert.equal(detail.revision_status, 'PUBLISHED');
 
+    const draftRes = await req(`templates/${created.id}/revisions`,officeStaffAuth,'POST',{content:'Pending change'});
+    assert.equal(draftRes.status,201); const draft = await draftRes.json() as {id:string;updated_at:string};
+    const update = (stamp:string,content:string)=>fetch(`${BASE_URL}/api/v1/workspaces/solarcell/templates/${created.id}/revisions/${draft.id}`,{method:'PUT',headers:{Authorization:officeStaffAuth,'Content-Type':'application/json','If-Match':`"${stamp}"`},body:JSON.stringify({content})});
+    assert.equal((await update(draft.updated_at,'Saved change')).status,200);
+    assert.equal((await update(draft.updated_at,'Stale change')).status,412);
+    const afterDraft = await (await req(`templates/${created.id}`,officeStaffAuth)).json() as any;
+    assert.equal(afterDraft.current_revision_id,created.revisionId);
+    assert.equal(afterDraft.revisions.find((r:any)=>r.id===draft.id).content,'Saved change');
+
     // 9. Immutability trigger proof: direct SQL modification of published revision fails
     assert.throws(
       () => execute(`UPDATE template_revisions SET content = 'tampered' WHERE id = '${created.revisionId}'`),
@@ -329,25 +338,52 @@ describe('C1 Templates & Content — Cloudflare Worker & Local D1 Binding Integr
       { key: 'result', label: 'Result', type: 'PASS_FAIL', required: true },
       { key: 'sign', label: 'Sign-off', type: 'SIGNATURE', required: true },
     ] }] };
-    const response = await req('form-definitions', officeStaffAuth, 'POST', { title: 'Solar Inverter Inspection Checklist', code: 'solar_inverter_inspection', brand_id: 'solarcell', schema });
+    const draftResponse = await req('form-definitions',officeStaffAuth,'POST',{title:'Unused draft',code:'UNUSED-001',description:'Draft for deletion',category:'Custom',brand_id:'solarcell',schema});
+    assert.equal(draftResponse.status,201); const draft = await draftResponse.json() as {id:string};
+    assert.equal((await req(`form-definitions/${draft.id}`,officeStaffAuth,'DELETE')).status,200);
+    assert.equal((await req(`form-definitions/${draft.id}`,officeStaffAuth)).status,404);
+    const typeResponse = await req('document-types',officeStaffAuth,'POST',{code:'INVERTER-001',title:'Inverter certificate'});
+    assert.equal(typeResponse.status,201); const type = await typeResponse.json() as {id:string};
+    assert.equal((await req(`document-types/${type.id}/publish`,officeStaffAuth,'POST')).status,403);
+    assert.equal((await req(`document-types/${type.id}/review`,officeStaffAuth,'POST')).status,200);
+    assert.equal((await req(`document-types/${type.id}/publish`,ownerAdminAuth,'POST')).status,200);
+    const response = await req('form-definitions', officeStaffAuth, 'POST', { title: 'Solar Inverter Inspection Checklist', code: 'solar_inverter_inspection', description: 'Inspection checklist', category: 'Inspection', brand_id: 'solarcell', schema });
     assert.equal(response.status, 201);
     const form = await response.json() as { id: string; revision_id: string };
-    const edited = { sections: [{ title: 'Updated inspection', fields: [schema.sections[0].fields[1], schema.sections[0].fields[0], schema.sections[0].fields[2]] }] };
+    const edited = { sections: [{ title: 'Updated inspection', fields: [schema.sections[0].fields[1], schema.sections[0].fields[0], {key:'details',label:'Failure details',type:'LONG_TEXT',required:false,validation:{max_length:1000},visible_when:{field:'result',equals:'FAIL'}}, schema.sections[0].fields[2]] }] };
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}`, officeStaffAuth, 'PUT', edited)).status, 200);
     const detail = await (await req(`form-definitions/${form.id}`, officeStaffAuth)).json() as any;
     assert.equal(detail.revisions[0].sections[0].fields[0].key, 'result');
+    assert.equal(detail.revisions[0].sections[0].fields[2].visible_when.field, 'result');
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/review`, officeStaffAuth, 'POST')).status, 200);
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}`, officeStaffAuth, 'PUT', edited)).status, 400);
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/approve`, officeStaffAuth, 'POST')).status, 403);
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/approve`, ownerAdminAuth, 'POST')).status, 200);
+    assert.equal((await req(`form-definitions/${form.id}`,officeStaffAuth,'PATCH',{action:'archive'})).status,200);
+    assert.equal((await req(`form-definitions/${form.id}`,officeStaffAuth,'PATCH',{action:'restore'})).status,200);
+    const restored = await (await req(`form-definitions/${form.id}`,officeStaffAuth)).json() as any;
+    assert.equal(restored.status,'ACTIVE');
+    assert.equal(restored.published_revision_id,form.revision_id);
     const published = await (await req('form-definitions?published=1', officeStaffAuth)).json() as any[];
     assert.ok(published.some(item => item.id === form.id && item.published_revision_id === form.revision_id));
+    const jobTypeResponse = await req('job-types',officeStaffAuth,'POST',{name:'Inverter Inspection',code:'inverter_check',brandId:'solarcell',isDirectToInvoice:false,formsRequired:[],formRules:[{form_revision_id:form.revision_id,required:true}]});
+    assert.equal(jobTypeResponse.status,201); const jobType = await jobTypeResponse.json() as {id:string;policyId:string};
+    const jobTypeDetail = await (await req(`job-types/${jobType.id}`,officeStaffAuth)).json() as any;
+    assert.ok(jobTypeDetail.policies.find((p:any)=>p.id===jobType.policyId).form_rules.some((r:any)=>r.form_revision_id===form.revision_id));
+    assert.equal((await req(`job-types/${jobType.id}/policies/${jobType.policyId}/review`,officeStaffAuth,'POST')).status,200);
+    assert.equal((await req(`job-types/${jobType.id}/policies/${jobType.policyId}/approve`,ownerAdminAuth,'POST')).status,400);
+    const outputResponse = await req('templates', officeStaffAuth, 'POST', { name:'Inverter certificate', templateType:'COMPLIANCE_DISCLAIMER', content:'Inspection output', output:{category:'Compliance',brand_id:'solarcell',document_type_id:type.id,linked_form_revision_id:form.revision_id,layout:{},dynamic_fields:{}} });
+    assert.equal(outputResponse.status,201);
+    const output = await outputResponse.json() as { id:string; revisionId:string };
+    const outputDetail = await (await req(`templates/${output.id}`,officeStaffAuth)).json() as any;
+    assert.equal(outputDetail.revisions[0].output.linked_form_revision_id,form.revision_id);
+    assert.equal(outputDetail.revisions[0].output.document_type_id,type.id);
     const newDraft = await req(`form-definitions/${form.id}/revisions`, officeStaffAuth, 'POST');
     assert.equal(newDraft.status, 201);
     const revision = await newDraft.json() as { revision_id: string };
     const reloaded = await (await req(`form-definitions/${form.id}`, officeStaffAuth)).json() as any;
     assert.equal(reloaded.published_revision_id, form.revision_id);
-    assert.ok(reloaded.revisions.some((r: any) => r.id === revision.revision_id && r.sections[0].fields.length === 3));
+    assert.ok(reloaded.revisions.some((r: any) => r.id === revision.revision_id && r.sections[0].fields.length === 4 && r.sections[0].fields[2].visible_when.equals === 'FAIL'));
     assert.throws(() => execute(`UPDATE form_fields SET label = 'tampered' WHERE section_id IN (SELECT id FROM form_sections WHERE revision_id = '${form.revision_id}')`), /immutable/);
   });
 

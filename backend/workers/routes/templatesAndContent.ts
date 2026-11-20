@@ -29,6 +29,7 @@ import {
   setTemplateStatus,
   deleteTemplateDraft,
   createTemplateRevisionDraft,
+  updateTemplateDraftContent,
   submitTemplateRevisionReview,
   approveTemplateRevision,
 } from '../../modules/templates/templatesRepo.ts';
@@ -78,6 +79,14 @@ export async function handleJobTypesRoute(
     if (!input || typeof input !== 'object' || !input.name || !input.brandId) {
       return validationErrorResponse('Name and brandId are required', [], requestId);
     }
+    if (input.formRules !== undefined) {
+      if (input.brandId !== workspace || !Array.isArray(input.formRules) || input.formRules.length > 100 || input.formRules.some((r: any) => !r || typeof r.form_revision_id !== 'string' || typeof r.required !== 'boolean') || new Set(input.formRules.map((r: any) => r.form_revision_id)).size !== input.formRules.length || (input.isDirectToInvoice && input.formRules.some((r: any) => r.required))) return validationErrorResponse('Invalid policy form rules',[],requestId);
+      if (input.formRules.length && !await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='policy_catalog_form_rules'`).first()) return createProblemResponse(503,'CATALOG_NOT_READY','catalog-not-ready','Form catalog unavailable','The form catalog has not been initialized for this environment.',requestId);
+      for (const rule of input.formRules) {
+        const applicable = await env.DB.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions f ON f.id=r.form_definition_id AND f.workspace_id=r.workspace_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND f.status='ACTIVE' AND f.brand_id=?`).bind(rule.form_revision_id,workspace,input.brandId).first();
+        if (!applicable) return validationErrorResponse('Every form rule must reference an applicable published form',[],requestId);
+      }
+    }
     const res = await createJobType(env.DB, workspace, auth, input);
     if (!res) return createProblemResponse(400, 'CREATION_FAILED', 'creation-failed', 'Creation Failed', 'Could not create job type', requestId);
     return reply(res, 201);
@@ -122,6 +131,13 @@ export async function handleJobTypesRoute(
     try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
     if (!input || typeof input !== 'object' || Array.isArray(input) || (input.formRules !== undefined && (!Array.isArray(input.formRules) || input.formRules.length > 100 || input.formRules.some((rule: any) => !rule || typeof rule.form_revision_id !== 'string' || typeof rule.required !== 'boolean') || new Set(input.formRules.map((rule: any) => rule.form_revision_id)).size !== input.formRules.length)) || (input.isDirectToInvoice && input.formRules?.some((rule: any) => rule.required))) {
       return validationErrorResponse('Invalid policy form rules', [], requestId);
+    }
+    if (input.formRules?.length && !await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='policy_catalog_form_rules'`).first()) {
+      return createProblemResponse(503, 'CATALOG_NOT_READY', 'catalog-not-ready', 'Form catalog unavailable', 'The form catalog has not been initialized for this environment.', requestId);
+    }
+    for (const rule of input.formRules || []) {
+      const applicable = await env.DB.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions f ON f.id=r.form_definition_id AND f.workspace_id=r.workspace_id JOIN job_types jt ON jt.workspace_id=r.workspace_id AND jt.brand_id=f.brand_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND f.status='ACTIVE' AND jt.id=?`).bind(rule.form_revision_id,workspace,jobTypeId).first();
+      if (!applicable) return validationErrorResponse('Every form rule must reference an applicable published form',[],requestId);
     }
     const res = await createJobTypePolicyDraft(env.DB, workspace, auth, jobTypeId, input || {});
     if (!res) return resourceNotFoundResponse('Job type not found', requestId);
@@ -191,6 +207,21 @@ export async function handleTemplatesRoute(
     if (!input || typeof input !== 'object' || !input.name || !input.templateType || !input.content) {
       return validationErrorResponse('Name, templateType, and content are required', [], requestId);
     }
+    if (input.output !== undefined) {
+      const out = input.output;
+      const object = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+      if (!object(out) || !['Compliance','Terms','Email','Contract'].includes(out.category) || out.brand_id !== workspace || !object(out.layout) || !object(out.dynamic_fields) || JSON.stringify(out).length > 16000 || (out.linked_form_revision_id != null && typeof out.linked_form_revision_id !== 'string')) return validationErrorResponse('Invalid output configuration', [], requestId);
+      if (!await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first()) return createProblemResponse(503,'CATALOG_NOT_READY','catalog-not-ready','Form catalog unavailable','The form catalog has not been initialized for this environment.',requestId);
+      if (out.document_type_id != null) {
+        if (typeof out.document_type_id !== 'string') return validationErrorResponse('Invalid document type reference',[],requestId);
+        const documentType = await env.DB.prepare(`SELECT id FROM document_type_catalog WHERE id=? AND workspace_id=? AND status='PUBLISHED'`).bind(out.document_type_id,workspace).first();
+        if (!documentType) return validationErrorResponse('Document type must be published in this workspace',[],requestId);
+      }
+      if (out.linked_form_revision_id) {
+        const form = await env.DB.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions d ON d.id=r.form_definition_id AND d.workspace_id=r.workspace_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND d.status='ACTIVE' AND d.brand_id=?`).bind(out.linked_form_revision_id,workspace,out.brand_id).first();
+        if (!form) return validationErrorResponse('Linked form revision must be published and in this workspace and brand',[],requestId);
+      }
+    }
     const res = await createTemplate(env.DB, workspace, auth, input);
     if (!res) return createProblemResponse(400, 'CREATION_FAILED', 'creation-failed', 'Creation Failed', 'Could not create template', requestId);
     return reply(res, 201);
@@ -234,6 +265,18 @@ export async function handleTemplatesRoute(
     const res = await createTemplateRevisionDraft(env.DB, workspace, auth, templateId, input.content.trim());
     if (!res) return resourceNotFoundResponse('Template not found', requestId);
     return reply(res, 201);
+  }
+
+  // Update only a draft and require the exact server revision timestamp.
+  if (request.method === 'PUT' && templateId && subAction === 'revisions' && subId && !action) {
+    const match = request.headers.get('If-Match');
+    if (!match) return createProblemResponse(428,'PRECONDITION_REQUIRED','precondition-required','Precondition Required','If-Match is required to save a draft',requestId);
+    const parsed = /^"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)"$/.exec(match);
+    if (!parsed || !Number.isFinite(Date.parse(parsed[1]))) return validationErrorResponse('Invalid draft version',[],requestId);
+    let input:unknown; try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof (input as {content?:unknown}).content !== 'string' || !(input as {content:string}).content.trim() || (input as {content:string}).content.length > 100000) return validationErrorResponse('Content is required and must be at most 100000 characters',[],requestId);
+    const updated = await updateTemplateDraftContent(env.DB,workspace,auth,templateId,subId,parsed[1],(input as {content:string}).content);
+    return updated ? reply({updated_at:updated}) : createProblemResponse(412,'PRECONDITION_FAILED','precondition-failed','Precondition Failed','Draft changed or is no longer editable. Reload before saving.',requestId);
   }
 
   // 7. POST /templates/:id/revisions/:revId/review

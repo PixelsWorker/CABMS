@@ -27,6 +27,8 @@ import { approvedMembership } from './workers/privilegedApproval.ts';
 import { handleDemoJourney, handleDemoJob } from './workers/routes/demoJourney.ts';
 import { handleDemoAppointments } from './workers/routes/demoAppointments.ts';
 import { handleJobTypesRoute, handleTemplatesRoute } from './workers/routes/templatesAndContent.ts';
+import { handleFormDefinitions } from './workers/routes/formDefinitions.ts';
+import { handleDocumentTypes } from './workers/routes/documentTypes.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
   return {
@@ -167,6 +169,12 @@ export function createWorker(authentication: AuthenticationService = productionA
       if (journeyMatch && !(journeyMatch[2] === 'jobs' && journeyMatch[3])) {
         return addCors(await handleDemoJourney(request, env, journeyMatch[1], journeyMatch[2], journeyMatch[3], requestId, authentication), env);
       }
+
+      const formsMatch = /^\/api\/v1\/workspaces\/([^/]+)\/form-definitions(?:\/([^/]+)(?:\/(revisions)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);
+      if (formsMatch) return addCors(await handleFormDefinitions(request, env, formsMatch[1], formsMatch[2], formsMatch[4], formsMatch[3] && !formsMatch[4] ? 'new-revision' : formsMatch[5], requestId, authentication), env);
+
+      const documentTypesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/document-types(?:\/([^/]+)(?:\/(review|publish))?)?$/.exec(pathname);
+      if (documentTypesMatch) return addCors(await handleDocumentTypes(request,env,documentTypesMatch[1],documentTypesMatch[2],documentTypesMatch[3],requestId,authentication),env);
 
       // Job Types & Compliance Policies
       const jobTypesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/job-types(?:\/([^/]+)(?:\/(policies)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);

@@ -7,10 +7,16 @@
  * Strictly enforces unconditional hook declarations (G00-008).
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FormLibrary } from '../components/FormLibrary.tsx';
+import { CatalogPolicyEditor } from '../components/CatalogPolicyEditor.tsx';
+import { JobFormSelector } from '../components/JobFormSelector.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
+import { apiDocumentTypes, apiFormCatalog } from '../services/g01Client.ts';
+import { DocumentTypeCatalog } from '../components/DocumentTypeCatalog.tsx';
+import { templateDraftContent } from '../utils/templateServerMapping.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBoxArchive,
@@ -35,6 +41,7 @@ import { JobTypeConfig, TemplateSetting, BrandId } from '../types/cabms.ts';
 const COMPLIANCE_FORM_TYPES = ['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'] as const;
 
 export const TemplatesSettingsView: React.FC = () => {
+  const session = useG01Session();
   // Hooks called unconditionally at top (G00-008)
   const {
     persona,
@@ -79,6 +86,9 @@ export const TemplatesSettingsView: React.FC = () => {
   const [newJtDirectToInvoice, setNewJtDirectToInvoice] = useState(false);
   const [newJtForms, setNewJtForms] = useState<('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[]>(['JSA']);
   const [newJtDescription, setNewJtDescription] = useState('');
+  const [jobCatalogForms, setJobCatalogForms] = useState<Array<{id:string;title:string;code:string;brand_id:string;created_at:string;published_revision_id:string}>>([]);
+  const [newJtFormRevisions, setNewJtFormRevisions] = useState<string[]>([]);
+  const [jobCatalogError, setJobCatalogError] = useState('');
 
   // Edit Job Type Form
   const [editJtName, setEditJtName] = useState('');
@@ -98,6 +108,40 @@ export const TemplatesSettingsView: React.FC = () => {
   const [newTplContent, setNewTplContent] = useState('');
   const [newTplSampleFile, setNewTplSampleFile] = useState('');
   const [newTplDescription, setNewTplDescription] = useState('');
+  const [outputCategory, setOutputCategory] = useState<'Compliance'|'Terms'|'Email'|'Contract'>('Compliance');
+  const [linkedFormRevision, setLinkedFormRevision] = useState('');
+  const [publishedForms, setPublishedForms] = useState<Array<{id:string;title:string;code:string;published_revision_id:string}>>([]);
+  const [catalogError, setCatalogError] = useState('');
+  const [documentTypes, setDocumentTypes] = useState<Array<{id:string;title:string;code:string}>>([]);
+  const [documentTypeId, setDocumentTypeId] = useState('');
+  useEffect(() => {
+    let active = true;
+    setJobCatalogForms([]); setNewJtFormRevisions([]); setJobCatalogError('');
+    if (!isAddJobTypeOpen || !session?.workspaceId || !session.profile) return () => { active = false; };
+    const workspace = session.workspaceId;
+    setNewJtBrandId(workspace);
+    void (async () => { try {
+      const result = await apiFormCatalog<Array<{id:string;title:string;code:string;brand_id:string;created_at:string;published_revision_id:string}>>(workspace,await session.token(),'?published=1');
+      if (!result.ok || !result.data) throw new Error(result.problem?.detail || 'Unable to load approved forms.');
+      if (active) setJobCatalogForms(result.data.filter(form=>form.brand_id===workspace));
+    } catch (error) { if (active) setJobCatalogError(error instanceof Error ? error.message : 'Unable to load approved forms.'); } })();
+    return () => { active = false; };
+  }, [isAddJobTypeOpen,session?.workspaceId,session?.profile?.user.id]);
+  useEffect(() => {
+    let active = true;
+    setPublishedForms([]); setLinkedFormRevision(''); setDocumentTypes([]); setDocumentTypeId(''); setCatalogError('');
+    if (!isAddTemplateOpen || !session?.workspaceId || !session.profile) return () => { active = false; };
+    const workspace = session.workspaceId;
+    void (async () => { try {
+      const result = await apiFormCatalog<Array<{id:string;title:string;code:string;published_revision_id:string}>>(workspace,await session.token(),'?published=1');
+      if (!result.ok || !result.data) throw new Error(result.problem?.detail || 'Unable to load approved forms.');
+      if (active) setPublishedForms(result.data);
+      const types = await apiDocumentTypes<Array<{id:string;title:string;code:string}>>(workspace,await session.token(),'?published=1');
+      if (!types.ok || !types.data) throw new Error(types.problem?.detail || 'Unable to load document types.');
+      if (active) setDocumentTypes(types.data);
+    } catch (error) { if (active) setCatalogError(error instanceof Error ? error.message : 'Unable to load approved forms.'); } })();
+    return () => { active = false; };
+  }, [isAddTemplateOpen,session?.workspaceId,session?.profile?.user.id]);
 
   // Role Gate: Owner/Admin or Super Admin only (evaluated AFTER hooks)
   if (persona === 'technician') {
@@ -113,9 +157,10 @@ export const TemplatesSettingsView: React.FC = () => {
   const currentTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
 
   const handleStartDraft = () => {
+    if (!currentTemplate) return;
     createTemplateDraftRevision(
       currentTemplate.id,
-      editingContent || currentTemplate.content + ' [Draft Revision Update]'
+      templateDraftContent(editingContent,currentTemplate.content)
     );
   };
 
@@ -166,7 +211,8 @@ export const TemplatesSettingsView: React.FC = () => {
       name: newJtName,
       code: newJtCode,
       brandId: newJtBrandId,
-      formsRequired: newJtDirectToInvoice ? [] : newJtForms,
+      formsRequired: session?.profile ? [] : (newJtDirectToInvoice ? [] : newJtForms),
+      ...(session?.profile ? {formRules: newJtDirectToInvoice ? [] : newJtFormRevisions.map(form_revision_id=>({form_revision_id,required:true}))} : {}),
       isDirectToInvoice: newJtDirectToInvoice,
       description: newJtDescription,
     });
@@ -177,6 +223,7 @@ export const TemplatesSettingsView: React.FC = () => {
       setNewJtDescription('');
       setNewJtDirectToInvoice(false);
       setNewJtForms(['JSA']);
+      setNewJtFormRevisions([]);
     }
   };
 
@@ -189,6 +236,7 @@ export const TemplatesSettingsView: React.FC = () => {
       content: newTplContent,
       description: newTplDescription,
       sampleFileName: newTplSampleFile,
+      ...(session?.workspaceId && session.profile ? {output:{category:outputCategory,brand_id:session.workspaceId,linked_form_revision_id:linkedFormRevision || null,document_type_id:documentTypeId || null,layout:{},dynamic_fields:{}}} : {}),
     });
     if (res.success && res.id) {
       setIsAddTemplateOpen(false);
@@ -246,7 +294,7 @@ export const TemplatesSettingsView: React.FC = () => {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* Filter buttons */}
+          {/* Filter buttons */}
             <div className="inline-flex rounded-lg border border-(--cabms-border-base) p-0.5 text-[11px]">
               <button
                 type="button"
@@ -350,7 +398,7 @@ export const TemplatesSettingsView: React.FC = () => {
                       {brandDisplayName}
                     </td>
                     <td className="p-3 font-mono text-sky-400">
-                      {jt.formsRequired.length > 0 ? (
+                      {(jt.formsRequired.length > 0 || (jt.catalogForms?.length || 0) > 0) ? (
                         <div className="flex flex-wrap gap-1">
                           {jt.formsRequired.map(f => (
                             <span
@@ -360,9 +408,10 @@ export const TemplatesSettingsView: React.FC = () => {
                               {f}
                             </span>
                           ))}
+                          {jt.catalogForms?.map(f => <span key={f.revision_id} className="bg-sky-950/80 border border-sky-800 text-sky-300 text-[10px] px-1.5 py-0.5 rounded">{f.title}{f.required ? ' (required)' : ' (optional)'}</span>)}
                         </div>
                       ) : (
-                        <span className="text-slate-500 italic">None (Direct-to-invoice service)</span>
+                        <span className="text-slate-500 italic">{jt.isDirectToInvoice ? 'None (Direct-to-invoice service)' : 'None configured'}</span>
                       )}
                     </td>
                     <td className="p-3 text-(--cabms-text-secondary) font-mono">
@@ -520,6 +569,8 @@ export const TemplatesSettingsView: React.FC = () => {
             Select built-in synthetic templates to inspect content snapshots and version states.
           </p>
 
+          <DocumentTypeCatalog />
+
           {/* Filter options */}
           <div className="flex items-center gap-1.5 overflow-x-auto text-[10px] pb-1">
             {(['ALL', 'PUBLISHED', 'REVIEW', 'DRAFT', 'ARCHIVED'] as const).map(tab => (
@@ -599,7 +650,7 @@ export const TemplatesSettingsView: React.FC = () => {
         </div>
 
         {/* Right: Selected Template Editor & Versioning Actions (7 cols) */}
-        <div className="lg:col-span-7 cabms-card p-6 space-y-5">
+        {currentTemplate ? <div className="lg:col-span-7 cabms-card p-6 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
             <div>
               <div className="flex items-center space-x-2">
@@ -744,7 +795,7 @@ export const TemplatesSettingsView: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
+        </div> : <div className="lg:col-span-7 cabms-card p-6 text-xs text-(--cabms-text-secondary)">No template is available to display.</div>}
       </div>
 
       {/* Modal 1: Synthetic Document Preview Modal */}
@@ -908,7 +959,7 @@ export const TemplatesSettingsView: React.FC = () => {
       {/* Modal 3: Add Job Type */}
       {isAddJobTypeOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+          <div className="cabms-card max-w-md w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4 text-xs">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold text-(--cabms-text-primary)">Add New Job Type</h3>
               <button
@@ -951,6 +1002,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand Affiliation</label>
                   <select
                     value={newJtBrandId}
+                    disabled={!!session?.profile}
                     onChange={e => setNewJtBrandId(e.target.value as BrandId)}
                     className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
                   >
@@ -978,7 +1030,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={newJtDirectToInvoice}
-                    onChange={e => setNewJtDirectToInvoice(e.target.checked)}
+                    onChange={e => { setNewJtDirectToInvoice(e.target.checked); if (e.target.checked) setNewJtFormRevisions([]); }}
                     className="rounded bg-slate-900 border-slate-700 text-sky-600 focus:ring-0"
                   />
                   <div>
@@ -996,7 +1048,15 @@ export const TemplatesSettingsView: React.FC = () => {
                     Required Compliance Forms (Multi-form Gating)
                   </label>
                   <div className="space-y-1.5 cabms-card-subtle p-3 rounded">
-                    {COMPLIANCE_FORM_TYPES.map(formKey => {
+                    {session?.profile ? <>
+                      {jobCatalogError && <p role="status">{jobCatalogError}</p>}
+                      {!jobCatalogError && jobCatalogForms.length === 0 && <div className="space-y-2"><p>No approved forms are available for this workspace. The starter forms are drafts and need fields and administrator approval before they can be selected.</p><button type="button" className="px-2.5 py-1 rounded border cabms-border text-(--cabms-text-primary) hover:border-amber-500 font-semibold" onClick={()=>{setIsAddJobTypeOpen(false);document.getElementById('form-definitions')?.scrollIntoView({behavior:'smooth',block:'start'});}}>Open Form Definitions</button></div>}
+                      {jobCatalogForms.length > 0 && <JobFormSelector forms={jobCatalogForms} selected={newJtFormRevisions} onChange={setNewJtFormRevisions} />}
+                      <div role="note" className="cabms-card-subtle border-l-4 border-l-amber-500 p-3 text-xs text-(--cabms-text-primary)">
+                        <p className="font-bold">Draft policy notice</p>
+                        <p className="mt-1">Selections are saved in a draft policy; publication is blocked until job enforcement is complete.</p>
+                      </div>
+                    </> : COMPLIANCE_FORM_TYPES.map(formKey => {
                       const isChecked = newJtForms.includes(formKey);
                       return (
                         <label key={formKey} className="flex items-center space-x-2 cursor-pointer text-(--cabms-text-secondary)">
@@ -1126,6 +1186,7 @@ export const TemplatesSettingsView: React.FC = () => {
       {configuringJobTypeId && (() => {
         const targetJt = jobTypes.find(jt => jt.id === configuringJobTypeId);
         if (!targetJt) return null;
+        if (session?.profile) return <CatalogPolicyEditor jobType={targetJt} close={() => setConfiguringJobTypeId(null)} />;
 
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1273,7 +1334,14 @@ export const TemplatesSettingsView: React.FC = () => {
               </div>
 
               <div>
-                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Sample File Name</label>
+                {session?.profile && <div className="space-y-2">
+                  <label className="block font-semibold">Output Category<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={outputCategory} onChange={e=>setOutputCategory(e.target.value as typeof outputCategory)}>{['Compliance','Terms','Email','Contract'].map(c=><option key={c}>{c}</option>)}</select></label>
+                  <label className="block font-semibold">Approved Document Type (optional)<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={documentTypeId} onChange={e=>setDocumentTypeId(e.target.value)}><option value="">No document type selected</option>{documentTypes.map(t=><option key={t.id} value={t.id}>{t.title} ({t.code})</option>)}</select></label>
+                  <label className="block font-semibold">Linked Form Definition (optional)<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={linkedFormRevision} onChange={e=>setLinkedFormRevision(e.target.value)}><option value="">No linked form</option>{publishedForms.map(f=><option key={f.id} value={f.published_revision_id}>{f.title} ({f.code})</option>)}</select></label>
+                  {catalogError && <p role="status">{catalogError}</p>}
+                  <p>Brand: {session.workspaceId}. Layout and dynamic mappings are not yet configured.</p>
+                </div>}
+                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Sample Filename (text only; no document is stored)</label>
                 <input
                   type="text"
                   value={newTplSampleFile}

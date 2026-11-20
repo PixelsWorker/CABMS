@@ -102,6 +102,7 @@ export interface JobTypeConfig {
   description?: string;
   brandId: BrandId;
   formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+  catalogForms?: Array<{revision_id:string;title:string;code:string;required:number}>;
   isDirectToInvoice: boolean;
   version: string;
   status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
@@ -487,9 +488,11 @@ export interface TemplateSetting {
   name: string;
   type: 'TERMS' | 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2' | 'EMAIL_CONFIRMATION' | 'REVIEW_REQUEST' | 'QUOTE_FOLLOWUP';
   currentVersion: string;
+  publishedVersion?: string;
   activeStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
   status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
   currentRevisionId?: string;
+  editingRevisionId?: string;
   content: string;
   description?: string;
   sampleFileName?: string;

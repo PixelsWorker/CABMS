@@ -314,14 +314,14 @@ export async function apiGetTemplate(workspaceId: string, id: string, token: str
   return parseResponse<any>(await customFetch(req));
 }
 
-export async function apiCreateTemplate(workspaceId: string, token: string, data: any): Promise<ApiResponse<{ id: string; revisionId: string }>> {
+export async function apiCreateTemplate(workspaceId: string, token: string, data: any): Promise<ApiResponse<{ id: string; revisionId: string; updated_at:string }>> {
   const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates`), {
     method: 'POST',
     signal: AbortSignal.timeout(10000),
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(data),
   });
-  return parseResponse<{ id: string; revisionId: string }>(await customFetch(req));
+  return parseResponse<{ id: string; revisionId: string; updated_at:string }>(await customFetch(req));
 }
 
 export async function apiPatchTemplate(workspaceId: string, id: string, token: string, updates: any): Promise<ApiResponse<any>> {
@@ -343,14 +343,19 @@ export async function apiDeleteTemplate(workspaceId: string, id: string, token: 
   return parseResponse<any>(await customFetch(req));
 }
 
-export async function apiCreateTemplateRevisionDraft(workspaceId: string, id: string, token: string, content: string): Promise<ApiResponse<{ id: string; version: string }>> {
+export async function apiCreateTemplateRevisionDraft(workspaceId: string, id: string, token: string, content: string): Promise<ApiResponse<{ id: string; version: string; updated_at:string }>> {
   const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}/revisions`), {
     method: 'POST',
     signal: AbortSignal.timeout(10000),
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ content }),
   });
-  return parseResponse<{ id: string; version: string }>(await customFetch(req));
+  return parseResponse<{ id: string; version: string; updated_at:string }>(await customFetch(req));
+}
+
+export async function apiUpdateTemplateRevisionDraft(workspaceId:string,id:string,revisionId:string,token:string,updatedAt:string,content:string):Promise<ApiResponse<{updated_at:string}>> {
+  const req=new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/templates/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revisionId)}`),{method:'PUT',signal:AbortSignal.timeout(10000),headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json','If-Match':`"${updatedAt}"`},body:JSON.stringify({content})});
+  return parseResponse<{updated_at:string}>(await customFetch(req));
 }
 
 export async function apiSubmitTemplateRevisionReview(workspaceId: string, id: string, revId: string, token: string): Promise<ApiResponse<any>> {
@@ -380,4 +385,9 @@ export async function apiFormCatalog<T>(workspaceId: string, token: string, path
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return parseResponse<T>(await customFetch(request));
+}
+
+export async function apiDocumentTypes<T>(workspaceId:string, token:string, path='', method='GET', body?:unknown):Promise<ApiResponse<T>> {
+  const req = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/document-types${path}`),{method,signal:AbortSignal.timeout(10000),headers:{Authorization:`Bearer ${token}`,Accept:'application/json, application/problem+json',...(body === undefined ? {} : {'Content-Type':'application/json'})},...(body === undefined ? {} : {body:JSON.stringify(body)})});
+  return parseResponse<T>(await customFetch(req));
 }

@@ -48,6 +48,10 @@ test('form library renders ten newest active forms, pages and archived filter', 
   assert.ok(container.querySelector('[aria-label="Section 1 title"]'));
   assert.match(container.textContent || '',/Section 1/);
   await click('+ Add Field');
+  const advanced=container.querySelector('details[aria-label="Advanced field settings"]') as HTMLDetailsElement;
+  assert.ok(advanced);assert.equal(advanced.open,false);
+  assert.ok(advanced.querySelector('[aria-label="Condition field key"]'));
+  assert.match(advanced.querySelector('summary')?.textContent || '',/Advanced settings/);
   const fieldType = container.querySelector('[aria-label="Field type"]') as HTMLSelectElement;
   await act(async()=>{fieldType.value='REPEATABLE_TABLE';fieldType.dispatchEvent(new dom.window.Event('change',{bubbles:true}));});
   assert.ok(container.querySelector('[aria-label="Maximum rows"]'));

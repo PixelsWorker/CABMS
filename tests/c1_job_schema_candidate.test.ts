@@ -1,14 +1,15 @@
+import { proposalPath } from './support/proposalPath.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createLocalD1Database, type LocalD1Database } from '../backend/db/d1.ts';
-import { runLocalMigrations } from '../backend/db/migrate.ts';
+import {initializePreOperationalDatabase} from './support/preOperationalMigrations.ts';
 
 test('candidate job schema fails closed on legacy requirements and unsigned required forms', async t => {
  const db = createLocalD1Database() as LocalD1Database;
  t.after(() => db.getSqliteHandle().close());
- await runLocalMigrations(db,{disposableTest:true});
- await db.exec(readFileSync('proposals/0014_job_forms_candidate.sql','utf8'));
+ await initializePreOperationalDatabase(db);
+ await db.exec(readFileSync(proposalPath('0014_job_forms_candidate.sql'),'utf8'));
  await db.exec(`INSERT INTO users(id,email,created_at,updated_at) VALUES('SYSTEM','fixture@example.invalid','2026-01-01','2026-01-01')`);
  await assert.rejects(()=>db.exec(`INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,status,created_at,created_by) VALUES('legacy','solarcell','solarcell','jt-solar-install','pol-solar-install-v1','Legacy','OPEN','2026-01-01','SYSTEM')`),/legacy/);
  await db.exec(`INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,status,created_at,created_by) VALUES('service','solarcell','solarcell','jt-solar-service','pol-solar-service-v1','Service','OPEN','2026-01-01','SYSTEM')`);

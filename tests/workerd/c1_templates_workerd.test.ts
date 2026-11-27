@@ -351,12 +351,15 @@ describe('C1 Templates & Content — Cloudflare Worker & Local D1 Binding Integr
     assert.equal(response.status, 201);
     const form = await response.json() as { id: string; revision_id: string };
     const edited = { sections: [{ title: 'Updated inspection', fields: [schema.sections[0].fields[1], schema.sections[0].fields[0], {key:'details',label:'Failure details',type:'LONG_TEXT',required:false,validation:{max_length:1000},visible_when:{field:'result',equals:'FAIL'}}, schema.sections[0].fields[2]] }] };
-    assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}`, officeStaffAuth, 'PUT', edited)).status, 200);
+    const initialDetail = await (await req(`form-definitions/${form.id}`, officeStaffAuth)).json() as any;
+    const initialUpdatedAt = initialDetail.revisions[0].updated_at;
+    assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}`, officeStaffAuth, 'PUT', { ...edited, expected_updated_at: initialUpdatedAt })).status, 200);
     const detail = await (await req(`form-definitions/${form.id}`, officeStaffAuth)).json() as any;
     assert.equal(detail.revisions[0].sections[0].fields[0].key, 'result');
     assert.equal(detail.revisions[0].sections[0].fields[2].visible_when.field, 'result');
-    assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/review`, officeStaffAuth, 'POST')).status, 200);
-    assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}`, officeStaffAuth, 'PUT', edited)).status, 400);
+    assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/review`, officeStaffAuth, 'POST', { expected_updated_at: detail.revisions[0].updated_at })).status, 200);
+    const afterReview = await (await req(`form-definitions/${form.id}`, officeStaffAuth)).json() as any;
+    assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}`, officeStaffAuth, 'PUT', { ...edited, expected_updated_at: afterReview.revisions[0].updated_at })).status, 400);
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/approve`, officeStaffAuth, 'POST')).status, 403);
     assert.equal((await req(`form-definitions/${form.id}/revisions/${form.revision_id}/approve`, ownerAdminAuth, 'POST')).status, 200);
     assert.equal((await req(`form-definitions/${form.id}`,officeStaffAuth,'PATCH',{action:'archive'})).status,200);
@@ -371,7 +374,7 @@ describe('C1 Templates & Content — Cloudflare Worker & Local D1 Binding Integr
     const jobTypeDetail = await (await req(`job-types/${jobType.id}`,officeStaffAuth)).json() as any;
     assert.ok(jobTypeDetail.policies.find((p:any)=>p.id===jobType.policyId).form_rules.some((r:any)=>r.form_revision_id===form.revision_id));
     assert.equal((await req(`job-types/${jobType.id}/policies/${jobType.policyId}/review`,officeStaffAuth,'POST')).status,200);
-    assert.equal((await req(`job-types/${jobType.id}/policies/${jobType.policyId}/approve`,ownerAdminAuth,'POST')).status,400);
+    assert.equal((await req(`job-types/${jobType.id}/policies/${jobType.policyId}/approve`,ownerAdminAuth,'POST')).status,200); // With migration 0015 triggers, eligibleCatalog allows policy publication
     const outputResponse = await req('templates', officeStaffAuth, 'POST', { name:'Inverter certificate', templateType:'COMPLIANCE_DISCLAIMER', content:'Inspection output', output:{category:'Compliance',brand_id:'solarcell',document_type_id:type.id,linked_form_revision_id:form.revision_id,layout:{},dynamic_fields:{}} });
     assert.equal(outputResponse.status,201);
     const output = await outputResponse.json() as { id:string; revisionId:string };

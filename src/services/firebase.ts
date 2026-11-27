@@ -38,3 +38,5 @@ export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfi
 // Firebase Authentication instance (strictly Auth only per architecture)
 export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
+export const selectAccountGoogleProvider = new GoogleAuthProvider();
+selectAccountGoogleProvider.setCustomParameters({ prompt: 'select_account' });

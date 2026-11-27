@@ -1,0 +1,51 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import React,{act} from 'react';
+import {createRoot} from 'react-dom/client';
+import {JSDOM} from 'jsdom';
+import {SessionContext,type Session} from '../src/context/G01Session.tsx';
+import {FormLibrary} from '../src/components/FormLibrary.tsx';
+import {setApiFetchHandler,resetApiFetchHandler} from '../src/services/g01Client.ts';
+
+test('condition dropdowns, preview reset, dependent cleanup and save reload',async()=>{
+ const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost'});
+ const old={window:globalThis.window,document:globalThis.document,navigator:globalThis.navigator};
+ for(const key of Object.keys(old)) Object.defineProperty(globalThis,key,{configurable:true,value:(dom.window as any)[key]});
+ (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+ (dom.window.HTMLElement.prototype as any).attachEvent=()=>{};
+ (dom.window.HTMLElement.prototype as any).detachEvent=()=>{};
+ const fields:any[]=[{key:'result',label:'Result',type:'PASS_FAIL',required:true},{key:'detail',label:'Details',type:'LONG_TEXT',required:true},{key:'flag',label:'Flag',type:'CHECKBOX',required:false},{key:'extra',label:'Extra',type:'TEXT',required:false},{key:'photo',label:'Photo',type:'PHOTO',required:false}];
+ let sections:any[]=[{title:'Inspection',fields}]; let saved:any;
+ const form=()=>({id:'one',title:'Inspection',code:'X',description:'test',category:'Safety',brand_id:'solarcell',status:'DRAFT',created_at:'2026-01-01',updated_at:'2026-01-01',published_revision_id:null,revisions:[{id:'draft',status:'DRAFT',version:'v1',sections}]});
+ setApiFetchHandler(async req=>{if(req.method==='PUT'){saved=await req.json(); sections=structuredClone(saved.sections);return Response.json({success:true});} return Response.json(new URL(req.url).pathname.endsWith('/one')?form():[form()]);});
+ const session:Session={profile:{user:{id:'u',email:'u@example.invalid',display_name:null},memberships:[{workspace_id:'solarcell',role:'owner_admin',name:'W'}]},loading:false,error:'',login:async()=>{},logout:async()=>{},token:async()=> 'token',workspaceId:'solarcell',selectWorkspace:()=>{},invalidate:()=>{}};
+ const container=dom.window.document.getElementById('root')!,root=createRoot(container);
+ const click=async(label:string)=>{const b=Array.from(container.querySelectorAll('button')).find(x=>x.textContent?.trim()===label);assert.ok(b,label);await act(async()=>b.click());};
+ const choose=async(el:HTMLSelectElement,value:string)=>{await act(async()=>{el.value=value;el.dispatchEvent(new dom.window.Event('change',{bubbles:true}));});};
+ try {
+  await act(async()=>root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(FormLibrary))));
+  await click('View / Edit');
+  let sources=container.querySelectorAll<HTMLSelectElement>('[aria-label="Condition field key"]');
+  await choose(sources[1],'result');
+  let values=container.querySelectorAll<HTMLSelectElement>('[aria-label="Condition value"]');
+  await choose(values[0],'FAIL');
+  sources=container.querySelectorAll<HTMLSelectElement>('[aria-label="Condition field key"]');
+  await choose(sources[3],'flag');
+  values=container.querySelectorAll<HTMLSelectElement>('[aria-label="Condition value"]');
+  await choose(values[1],'false');
+  await click('Save Draft');
+  assert.deepEqual(saved.sections[0].fields[1].visible_when,{field:'result',equals:'FAIL'});
+  assert.deepEqual(saved.sections[0].fields[3].visible_when,{field:'flag',equals:false});
+  assert.equal(container.querySelectorAll<HTMLSelectElement>('[aria-label="Condition value"]')[1].value,'false');
+  await click('Preview');
+  assert.match(container.textContent!,/Simulated PHOTO/);
+  assert.equal(container.querySelector('[aria-label="Details"]'),null);
+  await choose(container.querySelector<HTMLSelectElement>('[aria-label="Result"]')!,'FAIL');
+  assert.ok(container.querySelector('[aria-label="Details"]'));
+  await click('Reset Preview');
+  assert.equal(container.querySelector('[aria-label="Details"]'),null);
+  const type=container.querySelector<HTMLSelectElement>('[aria-label="Field type"]')!;
+  await choose(type,'CHECKBOX');
+  assert.equal(container.querySelectorAll<HTMLSelectElement>('[aria-label="Condition field key"]')[1].value,'');
+ }finally{await act(async()=>root.unmount());resetApiFetchHandler();dom.window.close();for(const [key,value] of Object.entries(old))Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});delete (globalThis as any).IS_REACT_ACT_ENVIRONMENT;}
+});

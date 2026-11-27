@@ -141,6 +141,12 @@ export async function handleJobTypesRoute(
     }
     const res = await createJobTypePolicyDraft(env.DB, workspace, auth, jobTypeId, input || {});
     if (!res) return resourceNotFoundResponse('Job type not found', requestId);
+    if ('error' in res) {
+      if (res.code === 'VERSION_CONFLICT') {
+        return createProblemResponse(409, 'VERSION_CONFLICT', 'version-conflict', 'Policy conflict', res.detail || 'The policy draft is based on a policy that is no longer current.', requestId);
+      }
+      return validationErrorResponse(res.error, [], requestId);
+    }
     return reply(res, 201);
   }
 
@@ -156,7 +162,22 @@ export async function handleJobTypesRoute(
       return accessDeniedResponse('Only owner_admin or super_admin can approve and publish compliance policies', requestId);
     }
     const ok = await approveJobTypePolicy(env.DB, workspace, auth, jobTypeId, subId);
-    return ok ? reply({ success: true }) : createProblemResponse(400, 'APPROVAL_FAILED', 'approval-failed', 'Approval Failed', 'Policy must be in REVIEW status before approval', requestId);
+    if (!ok.success) {
+      if (ok.code === 'LEGACY_MAPPING_REQUIRED') {
+        return Response.json({
+          code: 'LEGACY_MAPPING_REQUIRED',
+          title: 'Legacy Mapping Required',
+          detail: ok.error,
+          blockers: ok.blockers,
+          request_id: requestId,
+        }, {
+          status: 409,
+          headers: { 'X-Request-Id': requestId, 'Content-Type': 'application/problem+json' },
+        });
+      }
+      return createProblemResponse(400, 'APPROVAL_FAILED', 'approval-failed', 'Approval Failed', ok.error || 'Policy approval requires a reviewed policy, eligible published forms and operational job enforcement for catalog rules.', requestId);
+    }
+    return reply({ success: true });
   }
 
   return new Response('Method Not Allowed', { status: 405 });

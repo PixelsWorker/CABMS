@@ -1,13 +1,15 @@
+import {isConfirmedRejection,jobsClient,JobError,type Visit,type Job as PersistentJob,type VisitWrite} from '../services/complianceJobsClient.ts';
 /**
  * Area E: Scheduling and Maps
  * Day/Agenda calendar view, multi-calendar sync, rescheduling/cancellation with
  * reminder suppression, demo clock advance (G00-020), and safe public Google Maps navigation (G00-023).
  */
 
-import React, { useState } from 'react';
+import React, { useEffect,useMemo,useRef,useState } from 'react';
 import { useG01Session } from '../context/G01Session.tsx';
 import { G04AppointmentsView } from './G04AppointmentsView.tsx';
 import { formatBusinessTime, formatBusinessCalendarDate } from '../utils/businessTime.ts';
+import { generateUuid } from '../utils/uuid.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -27,7 +29,15 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { Job } from '../types/cabms.ts';
 
-export const ScheduleView: React.FC = () => {
+type OpenJob=(j:{id:string;workspace_id:string})=>void;
+export const ScheduleView: React.FC<{onJob?:OpenJob}> = ({onJob}) => {
+ const session=useG01Session();
+ if(!session)return <SimulatedScheduleView/>;
+ if(!session.workspaceId||!session.profile)return <p role="alert">Select an authorized workspace to view visits.</p>;
+ return <PersistentCalendar key={session.workspaceId+session.profile.user.id} workspace={session.workspaceId} onJob={onJob}/>;
+};
+
+export const SyntheticScheduleFixture: React.FC = () => {
   const session = useG01Session();
   const workspace = session?.workspaceId;
   const role = session?.profile?.memberships.find(m => m.workspace_id === workspace)?.role;
@@ -153,29 +163,9 @@ const SimulatedScheduleView: React.FC = () => {
         </div>
 
         {/* Date Selector Pills */}
-        <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
-          <div className="flex items-center space-x-1.5 cabms-card-subtle p-1">
-            {['2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04'].map(dateStr => (
-              <button
-                key={dateStr}
-                onClick={() => setSelectedDay(dateStr)}
-                className={`px-3 py-1.5 font-semibold rounded-md transition cursor-pointer ${
-                  selectedDay === dateStr
-                    ? 'cabms-surface-subtle border cabms-border text-(--cabms-text-primary) shadow-sm'
-                    : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
-                }`}
-              >
-                {formatBusinessCalendarDate(dateStr, { weekday: 'short', day: 'numeric', month: 'short' })}
-              </button>
-            ))}
-          </div>
-          <span className="text-(--cabms-text-secondary) text-xs">
-            Viewing appointments for: <strong className="text-(--cabms-text-primary) font-mono">{selectedDay}</strong>
-          </span>
-        </div>
-
+        <CalendarDays days={['2026-11-01','2026-11-02','2026-11-03','2026-11-04']} selectedDay={selectedDay} setSelectedDay={setSelectedDay}/>
         {/* Calendar Mappings Status & Simulated Error Recovery */}
-        <div className="mt-4 pt-4 border-t border-slate-800 space-y-3 text-xs">
+        <div className="mt-4 pt-4 border-t cabms-border space-y-3 text-xs">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div className="cabms-card-subtle p-2.5">
               <span className="text-[10px] text-slate-500 uppercase font-bold block">Primary Master Calendar</span>
@@ -200,9 +190,9 @@ const SimulatedScheduleView: React.FC = () => {
 
       {/* Daily Dispatch Agenda View */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-bold text-(--cabms-text-primary) uppercase tracking-wider flex items-center space-x-2">
-            <FontAwesomeIcon icon={faCalendarDays} className="w-4 h-4 text-amber-400" />
+            <FontAwesomeIcon icon={faCalendarDays} className="w-4 h-4 cabms-brand-icon" />
             <span>
               Agenda for {formatBusinessCalendarDate(selectedDay, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
             </span>
@@ -223,13 +213,13 @@ const SimulatedScheduleView: React.FC = () => {
                 key={job.id}
                 className={`cabms-card p-5 space-y-4 hover:border-(--cabms-border-focus) transition ${
                   job.appointmentStatus === 'CANCELLED'
-                    ? 'border-red-800/80 bg-red-950/10'
+                    ? 'border-(--cabms-badge-danger-border)'
                     : ''
                 }`}
               >
                 {/* Cancelled Appointment Alert Banner (Active Jobs Only) */}
                 {job.status !== 'COMPLETED' && job.status !== 'CANCELLED' && job.appointmentStatus === 'CANCELLED' && (
-                  <div className="bg-red-950/40 border border-red-800/80 rounded-lg p-3 text-xs text-red-200 flex items-center justify-between">
+                  <div className="cabms-badge-danger rounded-lg p-3 text-xs flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center space-x-2">
                       <FontAwesomeIcon icon={faCircleXmark} className="w-4 h-4 text-red-400 shrink-0" />
                       <span>
@@ -518,3 +508,100 @@ const SimulatedScheduleView: React.FC = () => {
     </div>
   );
 };
+
+function CalendarDays({days,selectedDay,setSelectedDay}:{days:string[];selectedDay:string;setSelectedDay:(s:string)=>void}){return (        <div className="mt-4 pt-4 border-t border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-1 cabms-card-subtle p-1">
+            {days.map(dateStr => (
+              <button
+                key={dateStr}
+                onClick={() => setSelectedDay(dateStr)}
+                className={`px-3 py-1.5 font-semibold rounded-md transition cursor-pointer ${
+                  selectedDay === dateStr
+                    ? 'cabms-surface-subtle border cabms-border text-(--cabms-text-primary) shadow-sm'
+                    : 'text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
+                }`}
+              >
+                {formatBusinessCalendarDate(dateStr, { weekday: 'short', day: 'numeric', month: 'short' })}
+              </button>
+            ))}
+          </div>
+          <span className="text-(--cabms-text-secondary) text-xs">
+            Viewing appointments for: <strong className="text-(--cabms-text-primary) font-mono">{selectedDay}</strong>
+          </span>
+        </div>
+
+);}
+
+function businessDay(time:Date){return new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'}).format(time);}
+function localTime(date:string){return new Intl.DateTimeFormat('en-GB',{timeZone:'Australia/Brisbane',hour:'2-digit',minute:'2-digit'}).format(new Date(date));}
+function PersistentCalendar({workspace,onJob}:{workspace:string;onJob?:OpenJob}){
+ const session=useG01Session()!;
+ const api=useMemo(()=>jobsClient(session.token),[session.token]);
+ const role=session.profile?.memberships.find(m=>m.workspace_id===workspace)?.role;
+ const dispatch=!!role&&role!=='technician';
+ const [day,setDay]=useState(()=>businessDay(new Date())),[anchor,setAnchor]=useState(day);
+ const days=Array.from({length:4},(_,i)=>new Date(Date.parse(anchor+'T00:00:00Z')+i*86400000).toISOString().slice(0,10));
+ const [visits,setVisits]=useState<Visit[]>([]),[jobs,setJobs]=useState<PersistentJob[]>([]),[staff,setStaff]=useState<{id:string;display_name:string}[]>([]);
+ const [loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[tick,refresh]=useState(0);
+ const [edit,setEdit]=useState<VisitWrite|null>(null),[time,setTime]=useState(''),[date,setDate]=useState('');
+ const [busy,setBusy]=useState(false),[recovery,setRecovery]=useState<JobError|null>(null),latch=useRef(false);
+ useEffect(()=>{let live=true;setLoading(true);setError('');
+  Promise.all([api.visits(workspace),api.list(workspace),dispatch?api.technicians(workspace):Promise.resolve([])]).then(([v,j,t])=>{
+   if(live){setVisits(v);setJobs(j);setStaff(t);}
+  }).catch(e=>{if(live)setError(e.message);}).finally(()=>{if(live)setLoading(false);});return()=>{live=false;};
+ },[api,workspace,dispatch,tick]);
+ const schedulable=jobs.filter(j=>j.status==='OPEN'&&staff.some(t=>t.id===j.assignee_id));
+ const selectedJob=jobs.find(j=>j.id===edit?.job_id);
+ const eligible=staff.find(t=>t.id===selectedJob?.assignee_id);
+ const start=(v?:Visit,cancel=false)=>{
+  setNotice('');setDate(v?businessDay(new Date(v.starts_at)):day);setTime(v?localTime(v.starts_at):'09:00');
+  const first=schedulable[0];
+  setEdit({visit_id:v?.visit_id??generateUuid(),version:(v?.version??0)+1,job_id:v?.job_id??first?.id??'',
+   technician_id:(v?(cancel?v.technician_id:jobs.find(j=>j.id===v.job_id)?.assignee_id):first?.assignee_id)??'',
+   starts_at:v?.starts_at??'',duration_minutes:v?.duration_minutes??60,status:cancel?'CANCELLED':'SCHEDULED',reason:''});
+ };
+ const saved=()=>{
+  if(edit?.status==='SCHEDULED'){
+   setDay(date);
+   setAnchor(date);
+  }
+  setEdit(null);setRecovery(null);setNotice('Visit saved.');refresh(n=>n+1);
+ };
+ const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!edit||latch.current)return;latch.current=true;setBusy(true);
+  try{await api.saveVisit(workspace,{...edit,starts_at:edit.status==='CANCELLED'?edit.starts_at:new Date(date+'T'+time+':00+10:00').toISOString()},generateUuid());saved();}
+  catch(e){setNotice(e instanceof Error?e.message:'Unable to save visit.');if(e instanceof JobError&&e.reconcile)setRecovery(e);if(e instanceof JobError&&e.status===412){setEdit(null);refresh(n=>n+1);}}
+  finally{latch.current=false;setBusy(false);}
+ };
+ const agenda=visits.filter(v=>businessDay(new Date(v.starts_at))===day);
+ return <div className="space-y-6"><div className="cabms-card p-5 shadow-sm">
+ <div className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-xl font-bold"><FontAwesomeIcon icon={faCalendar}/> Field Service Dispatch &amp; Calendar Scheduling</h1>
+ <label>Calendar date <input className="cabms-input" type="date" value={day} onChange={e=>{if(e.target.value){setDay(e.target.value);setAnchor(e.target.value);}}}/></label></div>
+ <CalendarDays days={days} selectedDay={day} setSelectedDay={setDay}/></div>
+ <section className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-bold uppercase tracking-wider"><FontAwesomeIcon icon={faCalendarDays}/> Agenda for {formatBusinessCalendarDate(day,{weekday:'long',day:'numeric',month:'long'})}</h2>
+ {dispatch&&!loading&&!error&&<button className="cabms-card px-3 py-2" disabled={!!edit||!schedulable.length} onClick={()=>start()}>Schedule visit</button>}</div>
+ {dispatch&&!loading&&!error&&!schedulable.length&&<p>Assign an active technician to an open work order to schedule a visit.</p>}
+ {loading?<p role="status">Loading visits...</p>:error?<p role="alert">{error} <button onClick={()=>refresh(n=>n+1)}>Retry calendar</button></p>:agenda.length===0?<p className="cabms-card p-5">No visits scheduled for this day.</p>:agenda.map(v=><article className="cabms-card p-5" key={v.visit_id}>
+ <div className="flex flex-wrap items-center justify-between gap-3"><div><strong>{localTime(v.starts_at)} AEST &middot; {v.title}</strong><p>{v.technician} &middot; {v.duration_minutes} min &middot; {v.status==='CANCELLED'?'Visit cancelled':'Scheduled'}{v.job_status!=='OPEN'&&' · Job '+v.job_status.toLowerCase()}</p></div>
+ {onJob&&<button onClick={()=>onJob({id:v.job_id,workspace_id:workspace})}>Open Job</button>}{dispatch&&!edit&&v.status==='SCHEDULED'&&v.job_status==='OPEN'&&<div className="flex gap-3"><button onClick={()=>start(v)}>Reschedule</button><button onClick={()=>start(v,true)}>Cancel visit</button></div>}</div></article>)}</section>
+ {notice&&<p role="status">{notice}</p>}
+ {recovery&&<button disabled={busy} onClick={async()=>{
+  setBusy(true);
+  try{await recovery.reconcile!();saved();}
+  catch(e){
+   if(e instanceof JobError && (e.status===401 || e.status===403)){
+    setNotice('Authentication expired or access denied. Sign in again and check the visit receipt before retrying.');
+   }else if(isConfirmedRejection(e)){
+    setRecovery(null);setEdit(null);refresh(n=>n+1);
+    setNotice(e instanceof Error?e.message:'The visit change was rejected.');
+   }else setNotice('Visit outcome still unknown. Check the receipt again.');
+  }finally{setBusy(false);}
+ }}>Check visit receipt</button>}
+ {edit&&<form className="cabms-card p-5" onSubmit={submit}><fieldset className="grid gap-3" disabled={busy||!!recovery}><legend>{edit.status==='CANCELLED'?'Cancel visit':edit.version===1?'Schedule visit':'Reschedule visit'}</legend>
+ <label>Work order <select className="cabms-input" aria-label="Work order" disabled={edit.version!==1} value={edit.job_id} onChange={e=>{const job=schedulable.find(j=>j.id===e.target.value);if(job)setEdit({...edit,job_id:job.id,technician_id:job.assignee_id??''});}}>{(edit.version===1?schedulable:jobs.filter(j=>j.id===edit.job_id)).map(j=><option key={j.id} value={j.id}>{j.title}</option>)}</select></label>
+ <label>Visit technician <input className="cabms-input" readOnly value={edit.status==='CANCELLED'?(visits.find(v=>v.visit_id===edit.visit_id)?.technician??''):eligible?.display_name??'No eligible technician assigned'}/></label>
+ <label>Visit date <input className="cabms-input" type="date" required disabled={edit.status==='CANCELLED'} value={date} onChange={e=>setDate(e.target.value)}/></label>
+ <label>Visit time (Queensland) <input className="cabms-input" type="time" required disabled={edit.status==='CANCELLED'} value={time} onChange={e=>setTime(e.target.value)}/></label>
+ <label>Duration (minutes) <input className="cabms-input" type="number" min={1} max={1440} required disabled={edit.status==='CANCELLED'} value={edit.duration_minutes||''} onChange={e=>setEdit({...edit,duration_minutes:Number(e.target.value)})}/></label>
+ {edit.status==='CANCELLED'&&<label>Cancellation reason <input className="cabms-input" required maxLength={1000} value={edit.reason} onChange={e=>setEdit({...edit,reason:e.target.value})}/></label>}
+ <div className="flex gap-2"><button type="submit" className="cabms-btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer" disabled={edit.status!=='CANCELLED'&&!eligible}>Save visit</button><button type="button" className="cabms-surface-subtle border cabms-border px-3 py-1.5 rounded-lg text-xs cursor-pointer" onClick={()=>setEdit(null)}>Discard changes</button></div></fieldset></form>}</div>;
+}

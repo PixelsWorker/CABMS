@@ -255,7 +255,7 @@ async function recoveryHarness(t: import('node:test').TestContext, postStatus: n
 
 test('uncertain save refreshes GET only and never unlocks on empty or matching results',async t=>{
  const h=await recoveryHarness(t,'lost');await h.input();await h.submit();
- assert.equal(h.posts,1);assert.equal(h.gets,2);assert.equal(h.button('Save enquiry').disabled,true);
+ assert.equal(h.posts,1);assert.equal(h.gets,3);assert.equal(h.button('Save enquiry').disabled,true);
  assert.match(h.doc.body.textContent!,/may have succeeded/);assert.match(h.doc.body.textContent!,/does not resubmit/);assert.match(h.doc.body.textContent!,/connection lost/);
  assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.doc.querySelectorAll('input')[1].value,'Demo');
  h.setFail(true);await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/save outcome is unknown.*could not be reloaded/i);assert.equal(h.button('Save enquiry').disabled,true);
@@ -267,7 +267,7 @@ test('uncertain save refreshes GET only and never unlocks on empty or matching r
  delayedCommit();await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/Synthetic — Demo/);assert.equal(h.button('Save enquiry').disabled,true);assert.equal(h.posts,1);
 });
 for(const status of [408,503,422] as const) test(`save HTTP ${status} ${status===422?'remains correctable':'remains uncertain'}`,async t=>{
- const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,2, 'refreshes the authorized list without repeating the write');if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
+ const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,3, 'refreshes the authorized list without repeating the write');if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
 });
 
 test('late refresh from previous workspace and user does not replace current data',async t=>{

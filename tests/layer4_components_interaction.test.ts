@@ -596,10 +596,27 @@ test('LAYER 4: FC-10 — ScheduleView suppresses reschedule and cancel controls 
       const activeReschedule = Array.from(cardInitial.querySelectorAll('button')).find(b => b.textContent?.includes('Reschedule'));
       assert.ok(activeReschedule, 'Active scheduled job displays Reschedule button');
 
+      const visitJob = () => ctx.jobs.find(job => job.id === 'JOB-2026-101')!;
+      await act(async () => ctx.attachSampleToJobForm('JOB-2026-101', 'JSA', 'visit-photo-fixture'));
+      const forms = [...visitJob().formsRequired];
+      const photos = [...(visitJob().attachedSampleIds ?? [])];
+      assert.ok(photos.includes('visit-photo-fixture'));
+      const assertRetained = () => {
+        assert.ok(!['CANCELLED','COMPLETED'].includes(visitJob().status));
+        assert.deepEqual(visitJob().formsRequired, forms);
+        assert.deepEqual(visitJob().attachedSampleIds, photos);
+      };
+      const visitDate = visitJob().scheduledDate!;
+      const newTime = visitJob().scheduledTime === '10:00' ? '11:00' : '10:00';
+      await act(async () => ctx.rescheduleJobAppointment('JOB-2026-101', visitDate, newTime));
+      assert.equal(visitJob().scheduledTime,newTime);
+      assertRetained();
+
       // 2. Cancel visit only (job remains active): displays Re-book Visit or Reschedule Now
       await act(async () => {
         ctx.cancelJobAppointment('JOB-2026-101', 'Customer requested later time');
       });
+      assertRetained();
       const cardAfterVisitCancel = findJobCard()!;
       const rebookBtn = Array.from(cardAfterVisitCancel.querySelectorAll('button')).find(b => b.textContent?.includes('Re-book Visit') || b.textContent?.includes('Reschedule Now'));
       assert.ok(rebookBtn, 'Active job with cancelled appointment displays Re-book Visit / Reschedule Now control');
@@ -854,16 +871,16 @@ test('LAYER 4: CR-01 — Add Customer modal always uses activeBrandId at open ti
 
 test('LAYER 4: Gate T — Visual Preset switcher updates context state and synchronizes data-appearance and data-branding attributes on DOM', async () => {
   await mountView(React.createElement(DemoControlsBar), async (ctx, container, window) => {
-    // Initial state check: Preset 2 — Dark + Company Branding
-    assert.equal(ctx.visualPreset, 'dark_company', 'Initial visual preset is dark_company');
+    // Initial state check: Preset 4 — Light + Company Branding
+    assert.equal(ctx.visualPreset, 'light_company', 'Initial visual preset is light_company');
     assert.equal(ctx.brandingMode, 'company', 'Initial branding mode is company');
-    assert.equal(ctx.appearance, 'default_dark', 'Initial appearance mode is default_dark');
-    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark', 'DOM data-appearance synced to default_dark');
+    assert.equal(ctx.appearance, 'high_visibility_light', 'Initial appearance mode is high_visibility_light');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light', 'DOM data-appearance synced to high_visibility_light');
     assert.equal(window.document.documentElement.getAttribute('data-branding'), 'company', 'DOM data-branding synced to company');
 
     const select = container.querySelector<HTMLSelectElement>('select[aria-label="Visual Preset Selector"]');
     assert.ok(select, 'Visual Preset Selector select dropdown found in DemoControlsBar');
-    assert.equal(select.value, 'dark_company');
+    assert.equal(select.value, 'light_company');
 
     // Switch to Preset 1 — All Dark (Neutral)
     await act(async () => {
@@ -909,10 +926,10 @@ test('LAYER 4: Gate T — Visual Preset switcher updates context state and synch
     await act(async () => {
       ctx.resetDemo();
     });
-    assert.equal(ctx.visualPreset, 'dark_company', 'Reset demo restores dark_company preset');
+    assert.equal(ctx.visualPreset, 'light_company', 'Reset demo restores light_company preset');
     assert.equal(ctx.brandingMode, 'company', 'Reset demo restores company branding mode');
-    assert.equal(ctx.appearance, 'default_dark', 'Reset demo restores default_dark appearance');
-    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'default_dark');
+    assert.equal(ctx.appearance, 'high_visibility_light', 'Reset demo restores high_visibility_light appearance');
+    assert.equal(window.document.documentElement.getAttribute('data-appearance'), 'high_visibility_light');
     assert.equal(window.document.documentElement.getAttribute('data-branding'), 'company');
   });
 });
@@ -1223,7 +1240,7 @@ test('LAYER 4: Security — revokeQuote enforces financial_writes persona and si
 test('LAYER 4: WorkspaceSettings — switching active workspace applies its saved visual preset', async () => {
   await mountView(React.createElement(WorkspaceSettingsView), async (ctx, container, window) => {
     assert.equal(ctx.activeBrandId, 'solarcell');
-    assert.equal(ctx.visualPreset, 'dark_company');
+    assert.equal(ctx.visualPreset, 'light_company');
 
     // 1. Configure smart_home with a different preferredPreset: light_company (using super_admin)
     await act(async () => {
@@ -1247,7 +1264,7 @@ test('LAYER 4: WorkspaceSettings — switching active workspace applies its save
       ctx.setActiveBrandId('solarcell');
     });
     assert.equal(ctx.activeBrandId, 'solarcell');
-    assert.equal(ctx.visualPreset, 'dark_company', 'solarcell saved preset restored on workspace activation');
+    assert.equal(ctx.visualPreset, 'light_company', 'solarcell saved preset restored on workspace activation');
   });
 });
 

@@ -251,13 +251,25 @@ export async function createJobTypePolicyDraft(
   workspace: string,
   auth: AuthContext,
   jobTypeId: string,
-  data: { isDirectToInvoice: boolean; formsRequired: string[]; formRules?: Array<{form_revision_id:string; required:boolean}> }
-): Promise<{ id: string; version: string } | null> {
+  data: {
+    isDirectToInvoice?: boolean;
+    formsRequired?: string[];
+    formRules?: Array<{form_revision_id:string; required:boolean}>;
+    base_policy_id?: string;
+    basePolicyId?: string;
+    mode?: 'ADDITIVE' | 'REPLACE';
+  }
+): Promise<{ id: string; version: string } | { error: string; code?: string; detail?: string } | null> {
   const jt = await db.prepare(
     `SELECT * FROM job_types WHERE workspace_id = ? AND id = ? AND ${allowedStaff}`
   ).bind(workspace, jobTypeId, ...who(workspace, auth)).first<JobTypeRow>();
 
   if (!jt) return null;
+
+  const basePolicyId = data.base_policy_id || data.basePolicyId;
+  if (basePolicyId && jt.current_policy_version_id && basePolicyId !== jt.current_policy_version_id) {
+    return { error: 'STALE_POLICY', code: 'VERSION_CONFLICT', detail: 'The policy draft is based on a policy that is no longer current.' };
+  }
 
   const policies = await db.prepare(
     `SELECT version FROM job_type_compliance_policies WHERE job_type_id = ?`
@@ -276,19 +288,56 @@ export async function createJobTypePolicyDraft(
     ).bind(polId, jobTypeId, version, isDirectToInvoice, now, now, auth.userId,jobTypeId,workspace,...who(workspace,auth)),
   ];
 
-  if (!isDirectToInvoice && Array.isArray(data.formsRequired)) {
-    for (let i = 0; i < data.formsRequired.length; i++) {
+  // Resolve legacy forms: if formsRequired is omitted, carry forward from predecessor policy
+  let finalFormsRequired = data.formsRequired;
+  if (finalFormsRequired === undefined && jt.current_policy_version_id) {
+    const existingLegacy = await db.prepare(
+      `SELECT form_type FROM job_type_required_forms WHERE policy_version_id=? ORDER BY display_order, id`
+    ).bind(jt.current_policy_version_id).all<{ form_type: string }>();
+    finalFormsRequired = existingLegacy.results.map(r => r.form_type);
+  }
+
+  if (!isDirectToInvoice && Array.isArray(finalFormsRequired)) {
+    for (let i = 0; i < finalFormsRequired.length; i++) {
+      const formType = finalFormsRequired[i];
+      const newRuleId = `rf-${crypto.randomUUID()}`;
       statements.push(
         db.prepare(
           `INSERT INTO job_type_required_forms (id, policy_version_id, form_type, required, display_order)
            VALUES (?, ?, ?, 1, ?)`
-        ).bind(`rf-${crypto.randomUUID()}`, polId, data.formsRequired[i], i + 1)
+        ).bind(newRuleId, polId, formType, i + 1)
       );
     }
   }
 
-  for (const [i, rule] of (data.formRules || []).entries()) {
-    statements.push(db.prepare(`INSERT INTO policy_catalog_form_rules (id,workspace_id,policy_version_id,form_revision_id,required,display_order) VALUES (?,?,?,?,?,?)`).bind(`pfr-${crypto.randomUUID()}`,workspace,polId,rule.form_revision_id,rule.required ? 1 : 0,i));
+  // Resolve catalog form rules: preserve existing rules if omitted or in additive mode (F01)
+  const catalogAvailable = !!await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='policy_catalog_form_rules'`).first();
+  let finalCatalogRules: Array<{ form_revision_id: string; required: boolean }> = [];
+  if (catalogAvailable) {
+    if (data.formRules === undefined && jt.current_policy_version_id) {
+      const existingRules = await db.prepare(
+        `SELECT form_revision_id, required FROM policy_catalog_form_rules WHERE workspace_id=? AND policy_version_id=? ORDER BY display_order, id`
+      ).bind(workspace, jt.current_policy_version_id).all<{ form_revision_id: string; required: number }>();
+      finalCatalogRules = existingRules.results.map(r => ({ form_revision_id: r.form_revision_id, required: r.required === 1 }));
+    } else if (data.mode === 'ADDITIVE' && jt.current_policy_version_id) {
+      const existingRules = await db.prepare(
+        `SELECT form_revision_id, required FROM policy_catalog_form_rules WHERE workspace_id=? AND policy_version_id=? ORDER BY display_order, id`
+      ).bind(workspace, jt.current_policy_version_id).all<{ form_revision_id: string; required: number }>();
+      const map = new Map<string, boolean>();
+      for (const r of existingRules.results) {
+        map.set(r.form_revision_id, r.required === 1);
+      }
+      for (const r of (data.formRules || [])) {
+        map.set(r.form_revision_id, r.required);
+      }
+      finalCatalogRules = Array.from(map.entries()).map(([form_revision_id, required]) => ({ form_revision_id, required }));
+    } else if (data.formRules !== undefined) {
+      finalCatalogRules = data.formRules;
+    }
+
+    for (const [i, rule] of finalCatalogRules.entries()) {
+      statements.push(db.prepare(`INSERT INTO policy_catalog_form_rules (id,workspace_id,policy_version_id,form_revision_id,required,display_order) VALUES (?,?,?,?,?,?)`).bind(`pfr-${crypto.randomUUID()}`,workspace,polId,rule.form_revision_id,rule.required ? 1 : 0,i));
+    }
   }
 
   const results = await db.batch(statements);
@@ -321,21 +370,96 @@ export async function approveJobTypePolicy(
   auth: AuthContext,
   jobTypeId: string,
   policyId: string
-): Promise<boolean> {
+): Promise<{ success: boolean; code?: string; error?: string; blockers?: any[] }> {
   const now = new Date().toISOString();
   // Fail closed if catalog constraints are unavailable; do not publish an
   // incompletely understood policy against a partially initialized schema.
-  if (!await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='policy_catalog_form_rules'`).first()) return false;
+  if (!await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='policy_catalog_form_rules'`).first()) {
+    return { success: false, code: 'CATALOG_NOT_READY', error: 'Catalog table policy_catalog_form_rules is unavailable.' };
+  }
+
+  // Policies with catalog rules can become selectable only where the job
+  // creation and pinning guards are installed and every reference is eligible.
+  const eligibleCatalog = `NOT EXISTS (
+    SELECT 1 FROM policy_catalog_form_rules rule
+    WHERE rule.policy_version_id=job_type_compliance_policies.id
+      AND (
+        NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='compliance_create_job')
+        OR NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='compliance_snapshot')
+        OR NOT EXISTS (
+          SELECT 1 FROM job_types jt
+          JOIN form_revisions r ON r.workspace_id=jt.workspace_id AND r.id=rule.form_revision_id AND r.status='PUBLISHED'
+          JOIN form_definitions f ON f.workspace_id=r.workspace_id AND f.id=r.form_definition_id
+            AND f.status='ACTIVE' AND f.brand_id=jt.brand_id
+          WHERE jt.id=job_type_compliance_policies.job_type_id AND rule.workspace_id=jt.workspace_id
+        )
+      )
+  )`;
   // Only owner_admin and super_admin are authorized to approve policies
   // Strictly require status = 'REVIEW'
   const pol = await db.prepare(
     `SELECT version FROM job_type_compliance_policies
      WHERE id = ? AND job_type_id = ? AND status = 'REVIEW'
-       AND NOT EXISTS (SELECT 1 FROM policy_catalog_form_rules WHERE policy_version_id = job_type_compliance_policies.id)
+       AND ${eligibleCatalog}
        AND EXISTS (SELECT 1 FROM job_types jt WHERE jt.id = ? AND jt.workspace_id = ? AND ${allowedApprover})`
   ).bind(policyId, jobTypeId, jobTypeId, workspace, ...who(workspace, auth)).first<{ version: string }>();
 
-  if (!pol) return false;
+  if (!pol) {
+    return { success: false, code: 'APPROVAL_FAILED', error: 'Policy approval requires a reviewed policy, eligible published forms and operational job enforcement for catalog rules.' };
+  }
+
+  // Pre-carry-forward check: for any unmapped legacy required forms, check if predecessor policy had an approved mapping
+  const jt = await db.prepare(
+    `SELECT current_policy_version_id, brand_id FROM job_types WHERE workspace_id=? AND id=?`
+  ).bind(workspace, jobTypeId).first<{ current_policy_version_id: string | null; brand_id: string }>();
+
+  if (jt?.current_policy_version_id) {
+    const predMappedCount = await db.prepare(
+      `SELECT count(*) AS count FROM job_type_required_forms l
+       JOIN compliance_legacy_mappings m ON m.legacy_rule_id=l.id AND m.workspace_id=?
+       WHERE l.policy_version_id=?`
+    ).bind(workspace, jt.current_policy_version_id).first<{ count: number }>();
+
+    const unmapped = await db.prepare(
+      `SELECT l.id, l.form_type FROM job_type_required_forms l
+       LEFT JOIN compliance_legacy_mappings m ON m.legacy_rule_id=l.id AND m.workspace_id=?
+       WHERE l.policy_version_id=? AND l.required=1 AND m.legacy_rule_id IS NULL`
+    ).bind(workspace, policyId).all<{ id: string; form_type: string }>();
+
+    for (const rule of unmapped.results) {
+      const predMapping = await db.prepare(
+        `SELECT m.revision_id FROM job_type_required_forms l
+         JOIN compliance_legacy_mappings m ON m.legacy_rule_id=l.id AND m.workspace_id=?
+         JOIN form_revisions r ON r.id=m.revision_id AND r.workspace_id=m.workspace_id AND r.status='PUBLISHED'
+         JOIN form_definitions f ON f.id=r.form_definition_id AND f.workspace_id=r.workspace_id AND f.status='ACTIVE' AND f.brand_id=?
+         WHERE l.policy_version_id=? AND l.form_type=?`
+      ).bind(workspace, jt.brand_id, jt.current_policy_version_id, rule.form_type).first<{ revision_id: string }>();
+
+      if (predMapping) {
+        await db.prepare(
+          `INSERT INTO compliance_legacy_mappings (legacy_rule_id, workspace_id, revision_id, approved_by, approved_at)
+           VALUES (?, ?, ?, ?, ?)`
+        ).bind(rule.id, workspace, predMapping.revision_id, auth.userId, now).run();
+      }
+    }
+
+    if ((predMappedCount?.count || 0) > 0) {
+      const stillUnmapped = await db.prepare(
+        `SELECT l.id, l.form_type FROM job_type_required_forms l
+         LEFT JOIN compliance_legacy_mappings m ON m.legacy_rule_id=l.id AND m.workspace_id=?
+         WHERE l.policy_version_id=? AND l.required=1 AND m.legacy_rule_id IS NULL`
+      ).bind(workspace, policyId).all<{ id: string; form_type: string }>();
+
+      if (stillUnmapped.results.length > 0) {
+        return {
+          success: false,
+          code: 'LEGACY_MAPPING_REQUIRED',
+          error: 'Every mandatory legacy form requirement must have an approved mapping before publication.',
+          blockers: stillUnmapped.results.map(r => ({ code: 'LEGACY_MAPPING_REQUIRED', form_type: r.form_type, rule_id: r.id })),
+        };
+      }
+    }
+  }
 
   const publishedVer = pol.version.replace('-draft', '');
 
@@ -349,7 +473,7 @@ export async function approveJobTypePolicy(
            approved_at = ?,
            updated_at = ?
        WHERE id = ? AND job_type_id = ? AND status = 'REVIEW'
-         AND NOT EXISTS (SELECT 1 FROM policy_catalog_form_rules WHERE policy_version_id=job_type_compliance_policies.id)
+         AND ${eligibleCatalog}
          AND EXISTS (SELECT 1 FROM job_types jt WHERE jt.id=job_type_compliance_policies.job_type_id AND jt.workspace_id=? AND jt.status<>'ARCHIVED' AND ${allowedApprover})`
     ).bind(publishedVer, now, auth.userId, now, now, policyId,jobTypeId,workspace,...who(workspace,auth)),
     db.prepare(
@@ -363,7 +487,8 @@ export async function approveJobTypePolicy(
   ];
 
   const results = await db.batch(statements);
-  return results[0]?.meta.changes === 1 && results[1]?.meta.changes === 1;
+  const ok = results[0]?.meta.changes === 1 && results[1]?.meta.changes === 1;
+  return ok ? { success: true } : { success: false, code: 'APPROVAL_FAILED', error: 'Failed to update policy and job type in database.' };
 }
 
 // ---------------------------------------------------------------------------

@@ -95,28 +95,107 @@ export async function handleFormDefinitions(request: Request, env: Env, workspac
   const results = await env.DB.batch(statements);
   return results.every(r=>r.success && r.meta.changes===1) ? reply({revision_id:revId},201) : fail();
  }
+ const nextRevisionVersion = () => `${new Date().toISOString()}_${crypto.randomUUID().slice(0,8)}`;
+ const parseRevisionPrecondition = (req: Request, body: unknown) => {
+  const rawIfMatch = req.headers.get('If-Match');
+  const hasIfMatch = rawIfMatch !== null && rawIfMatch.trim() !== '';
+  const ifMatch = rawIfMatch?.replace(/^"|"$/g, '').trim() ?? '';
+  const rawBodyExpected = body && typeof body === 'object' ? (body as Record<string, unknown>).expected_updated_at : undefined;
+  const hasBodyExpected = typeof rawBodyExpected === 'string' && rawBodyExpected.trim() !== '';
+  const bodyExpected = typeof rawBodyExpected === 'string' ? rawBodyExpected.trim() : '';
+  return { hasIfMatch, ifMatch, hasBodyExpected, bodyExpected };
+ };
  if (request.method === 'PUT' && id && revision && !action) {
-  let schema: unknown; try { schema = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }
+  let schema: any; try { schema = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }
+
+  const { hasIfMatch, ifMatch, hasBodyExpected, bodyExpected } = parseRevisionPrecondition(request, schema);
+  // Fix 1a: Both preconditions absent/null/empty -> 428 Precondition Required (before any DB access)
+  if (!hasIfMatch && !hasBodyExpected) {
+    return Response.json({ error: 'Version precondition required' }, { status: 428, headers: { 'X-Request-Id': requestId } });
+  }
   if (validateFormDefinition(schema).length) return validationErrorResponse('Invalid form schema',[],requestId);
-  const now = new Date().toISOString();
-  const draft = `EXISTS (SELECT 1 FROM form_revisions r WHERE r.id=? AND r.workspace_id=? AND r.form_definition_id=? AND r.status='DRAFT' AND EXISTS (SELECT 1 FROM form_definitions d WHERE d.id=r.form_definition_id AND d.workspace_id=r.workspace_id AND d.status<>'ARCHIVED'))`;
-  const revisionScope = [revision,workspace,id,...who];
+
+  const currentRev = await env.DB.prepare(
+    `SELECT updated_at, status FROM form_revisions WHERE id=? AND workspace_id=? AND form_definition_id=?`
+  ).bind(revision, workspace, id).first<{ updated_at: string; status: string }>();
+  if (!currentRev) return resourceNotFoundResponse('Form revision not found', requestId);
+  if (currentRev.status !== 'DRAFT') return createProblemResponse(400, 'INVALID_STATE', 'invalid-state', 'Invalid State', 'Only DRAFT form revisions can be edited.', requestId);
+
+  const formDef = await env.DB.prepare(
+    `SELECT status FROM form_definitions WHERE id=? AND workspace_id=?`
+  ).bind(id, workspace).first<{ status: string }>();
+  if (!formDef || formDef.status === 'ARCHIVED') {
+    return createProblemResponse(400, 'INVALID_STATE', 'invalid-state', 'Invalid State', 'Cannot edit draft for archived form.', requestId);
+  }
+
+  if ((hasIfMatch && ifMatch !== currentRev.updated_at) || (hasBodyExpected && bodyExpected !== currentRev.updated_at)) {
+    return Response.json({ error: 'Conflict', code: 'VERSION_CONFLICT', detail: 'The draft form revision was modified by another session. Please reload to review current changes.' }, { status: 409, headers: { 'X-Request-Id': requestId } });
+  }
+  const expectedVersion = hasIfMatch ? ifMatch : bodyExpected;
+
+  // Fix 1b: Monotonic version token — combines ISO timestamp with UUID suffix so same-millisecond saves always produce distinct values
+  const newVersion = nextRevisionVersion();
+  const draftAtNewVersion = `EXISTS (SELECT 1 FROM form_revisions r WHERE r.id=? AND r.workspace_id=? AND r.form_definition_id=? AND r.updated_at=? AND r.status='DRAFT' AND EXISTS (SELECT 1 FROM form_definitions d WHERE d.id=r.form_definition_id AND d.workspace_id=r.workspace_id AND d.status<>'ARCHIVED'))`;
+  const revisionScope = [revision,workspace,id,newVersion,...who];
+
+  // Single-batch atomicity: execute revision UPDATE and all dependent DELETE/INSERT statements
+  // inside one env.DB.batch() SQLite transaction. Dependent statements require r.updated_at = newVersion
+  // so they are no-ops if the UPDATE matches 0 rows (stale/conflict), and any failure rolls back the full transaction.
   const statements: D1PreparedStatement[] = [
-   env.DB.prepare(`UPDATE form_revisions SET updated_at=? WHERE id=? AND workspace_id=? AND form_definition_id=? AND status='DRAFT' AND EXISTS (SELECT 1 FROM form_definitions d WHERE d.id=form_revisions.form_definition_id AND d.workspace_id=form_revisions.workspace_id AND d.status<>'ARCHIVED') AND ${staff}`).bind(now,...revisionScope),
-   env.DB.prepare(`DELETE FROM form_fields WHERE workspace_id=? AND section_id IN (SELECT id FROM form_sections WHERE workspace_id=? AND revision_id=?) AND ${draft} AND ${staff}`).bind(workspace,workspace,revision,...revisionScope),
-   env.DB.prepare(`DELETE FROM form_sections WHERE workspace_id=? AND revision_id=? AND ${draft} AND ${staff}`).bind(workspace,revision,...revisionScope),
+   env.DB.prepare(`UPDATE form_revisions SET updated_at=? WHERE id=? AND workspace_id=? AND form_definition_id=? AND status='DRAFT' AND updated_at=? AND EXISTS (SELECT 1 FROM form_definitions d WHERE d.id=form_revisions.form_definition_id AND d.workspace_id=form_revisions.workspace_id AND d.status<>'ARCHIVED') AND ${staff}`).bind(newVersion, revision, workspace, id, expectedVersion, ...who),
+   env.DB.prepare(`DELETE FROM form_fields WHERE workspace_id=? AND section_id IN (SELECT id FROM form_sections WHERE workspace_id=? AND revision_id=?) AND ${draftAtNewVersion} AND ${staff}`).bind(workspace,workspace,revision,...revisionScope),
+   env.DB.prepare(`DELETE FROM form_sections WHERE workspace_id=? AND revision_id=? AND ${draftAtNewVersion} AND ${staff}`).bind(workspace,revision,...revisionScope),
   ];
   for (const [i,section] of ((schema as { sections: Section[] }).sections).entries()) {
    const sid=`section-${crypto.randomUUID()}`;
-   statements.push(env.DB.prepare(`INSERT INTO form_sections (id,workspace_id,revision_id,title,description,display_order,repeatable) SELECT ?,?,?,?,?,?,? WHERE ${draft} AND ${staff}`).bind(sid,workspace,revision,section.title.trim(),section.description || '',i,section.repeatable ? 1 : 0,...revisionScope));
-   for (const [j,f] of section.fields.entries()) statements.push(env.DB.prepare(`INSERT INTO form_fields (id,workspace_id,section_id,field_key,label,field_type,required,display_order,instructions,choices_json,validation_json,visible_when_json,autofill_source) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${draft} AND ${staff}`).bind(`field-${crypto.randomUUID()}`,workspace,sid,f.key,f.label.trim(),f.type,f.required ? 1 : 0,j,f.instructions || '',JSON.stringify(f.choices || []),JSON.stringify(f.validation || {}),f.visible_when ? JSON.stringify(f.visible_when) : null,f.autofill_source || null,...revisionScope));
+   statements.push(env.DB.prepare(`INSERT INTO form_sections (id,workspace_id,revision_id,title,description,display_order,repeatable) SELECT ?,?,?,?,?,?,? WHERE ${draftAtNewVersion} AND ${staff}`).bind(sid,workspace,revision,section.title.trim(),section.description || '',i,section.repeatable ? 1 : 0,...revisionScope));
+   for (const [j,f] of section.fields.entries()) statements.push(env.DB.prepare(`INSERT INTO form_fields (id,workspace_id,section_id,field_key,label,field_type,required,display_order,instructions,choices_json,validation_json,visible_when_json,autofill_source) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,? WHERE ${draftAtNewVersion} AND ${staff}`).bind(`field-${crypto.randomUUID()}`,workspace,sid,f.key,f.label.trim(),f.type,f.required ? 1 : 0,j,f.instructions || '',JSON.stringify(f.choices || []),JSON.stringify(f.validation || {}),f.visible_when ? JSON.stringify(f.visible_when) : null,f.autofill_source || null,...revisionScope));
   }
-  const results = await env.DB.batch(statements);
-  return results[0]?.meta.changes === 1 && results.every(r => r.success) ? reply({success:true}) : fail();
+  try {
+    const results = await env.DB.batch(statements);
+    if (results[0]?.meta.changes === 0) {
+      return Response.json({ error: 'Conflict', code: 'VERSION_CONFLICT', detail: 'The draft form revision was modified by another session.' }, { status: 409, headers: { 'X-Request-Id': requestId } });
+    }
+    return results[0]?.meta.changes === 1 && results.every(r => r.success) ? reply({success:true, updated_at: newVersion}) : fail();
+  } catch (batchError) {
+    // D1 env.DB.batch() wraps all statements in a single SQLite transaction; any failure rolls back the full transaction including form_revisions.
+    return Response.json({ error: 'Internal server error during section/field update; full transaction rolled back', detail: String(batchError) }, { status: 500, headers: { 'X-Request-Id': requestId } });
+  }
  }
  if (request.method === 'POST' && id && revision && action === 'review') {
-  const result = await env.DB.prepare(`UPDATE form_revisions SET status='REVIEW',updated_at=? WHERE id=? AND workspace_id=? AND form_definition_id=? AND status='DRAFT' AND EXISTS (SELECT 1 FROM form_definitions d WHERE d.id=form_revisions.form_definition_id AND d.workspace_id=form_revisions.workspace_id AND d.status<>'ARCHIVED') AND EXISTS (SELECT 1 FROM form_sections s JOIN form_fields f ON f.workspace_id=s.workspace_id AND f.section_id=s.id WHERE s.workspace_id=form_revisions.workspace_id AND s.revision_id=form_revisions.id) AND ${staff}`).bind(new Date().toISOString(),revision,workspace,id,...who).run();
-  return result.meta.changes === 1 ? reply({success:true}) : createProblemResponse(400,'INVALID_STATE','invalid-state','Cannot submit form','Add and save at least one field to an active draft before submitting it for review.',requestId);
+  let reviewBody: unknown = null;
+  try { reviewBody = await request.json(); } catch {}
+  const { hasIfMatch, ifMatch, hasBodyExpected, bodyExpected } = parseRevisionPrecondition(request, reviewBody);
+
+  // Fix 1a: Both preconditions absent/null/empty -> 428 Precondition Required (before any DB access)
+  if (!hasIfMatch && !hasBodyExpected) {
+    return Response.json({ error: 'Version precondition required' }, { status: 428, headers: { 'X-Request-Id': requestId } });
+  }
+
+  const currentRev = await env.DB.prepare(
+    `SELECT updated_at, status FROM form_revisions WHERE id=? AND workspace_id=? AND form_definition_id=?`
+  ).bind(revision, workspace, id).first<{ updated_at: string; status: string }>();
+  if (!currentRev) return resourceNotFoundResponse('Form revision not found', requestId);
+  if (currentRev.status !== 'DRAFT') return createProblemResponse(400, 'INVALID_STATE', 'invalid-state', 'Invalid State', 'Only DRAFT form revisions can be submitted for review.', requestId);
+
+  if ((hasIfMatch && ifMatch !== currentRev.updated_at) || (hasBodyExpected && bodyExpected !== currentRev.updated_at)) {
+    return Response.json({ error: 'Conflict', code: 'VERSION_CONFLICT', detail: 'The draft form revision was modified after your inspection. Please reload and review the current draft.' }, { status: 409, headers: { 'X-Request-Id': requestId } });
+  }
+  const expectedVersion = hasIfMatch ? ifMatch : bodyExpected;
+
+  const hasFields = await env.DB.prepare(
+    `SELECT 1 FROM form_sections s JOIN form_fields f ON f.workspace_id=s.workspace_id AND f.section_id=s.id WHERE s.workspace_id=? AND s.revision_id=?`
+  ).bind(workspace, revision).first();
+  if (!hasFields) {
+    return createProblemResponse(400, 'INVALID_STATE', 'invalid-state', 'Cannot submit form', 'Add and save at least one field to an active draft before submitting it for review.', requestId);
+  }
+
+  const newVersion = nextRevisionVersion();
+  const result = await env.DB.prepare(`UPDATE form_revisions SET status='REVIEW',updated_at=? WHERE id=? AND workspace_id=? AND form_definition_id=? AND status='DRAFT' AND updated_at=? AND EXISTS (SELECT 1 FROM form_definitions d WHERE d.id=form_revisions.form_definition_id AND d.workspace_id=form_revisions.workspace_id AND d.status<>'ARCHIVED') AND ${staff}`).bind(newVersion,revision,workspace,id, expectedVersion,...who).run();
+  if (result.meta.changes !== 1) {
+    return Response.json({ error: 'Conflict', code: 'VERSION_CONFLICT', detail: 'The draft form revision was modified by another session.' }, { status: 409, headers: { 'X-Request-Id': requestId } });
+  }
+  return reply({success:true, updated_at: newVersion});
  }
  if (request.method === 'POST' && id && revision && action === 'approve') {
   if (member.role !== 'owner_admin' && member.role !== 'super_admin') return accessDeniedResponse('Only administrators may publish forms',requestId);

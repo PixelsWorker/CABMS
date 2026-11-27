@@ -1,6 +1,7 @@
 import type { TemplateRevision, TemplateSetting } from '../types/cabms.ts';
 
-export function templateDraftContent(editingContent:string,currentContent:string):string {
+export function templateDraftContent(editingContent:string,currentContent:string,hasEdited = false):string {
+ if (hasEdited) return editingContent;
  return editingContent === '' ? currentContent : editingContent;
 }
 

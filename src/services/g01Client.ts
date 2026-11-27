@@ -377,11 +377,11 @@ export async function apiApproveTemplateRevision(workspaceId: string, id: string
 }
 
 /** Form catalog requests use the same transport and problem handling as G01. */
-export async function apiFormCatalog<T>(workspaceId: string, token: string, path = '', method = 'GET', body?: unknown): Promise<ApiResponse<T>> {
+export async function apiFormCatalog<T>(workspaceId: string, token: string, path = '', method = 'GET', body?: unknown, extraHeaders?: Record<string, string>): Promise<ApiResponse<T>> {
   const request = new Request(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}/form-definitions${path}`), {
     method,
     signal: AbortSignal.timeout(10000),
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, application/problem+json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json, application/problem+json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(extraHeaders || {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return parseResponse<T>(await customFetch(request));

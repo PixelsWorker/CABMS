@@ -23,6 +23,27 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { JobStatus } from '../types/cabms.ts';
 
+export function OperationalJobsPanel({heading,description,onViewAll,action='View All',children}:{heading:string;description:string;onViewAll:()=>void;action?:string;children:React.ReactNode}){
+ return (
+          <div className="cabms-card p-6" data-testid="operational-jobs-panel">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
+                {heading}
+              </h2>
+              <p className="text-sm text-(--cabms-text-secondary) mt-1">{description}</p>
+            </div>
+            <button
+              onClick={onViewAll}
+              className="text-sm text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-semibold cursor-pointer"
+            >
+              <span>{action}</span>
+              <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
+            </button>
+          </div>
+
+{children}</div>);}
+
 export const DashboardView: React.FC = () => {
   const session = useG01Session();
   const saved = useWorkspaceDemoData(true);
@@ -134,23 +155,7 @@ export const DashboardView: React.FC = () => {
 
       {/* Operational Jobs & Cross-Company Queue */}
       <div className="space-y-6">
-          <div className="cabms-card p-6" data-testid="operational-jobs-panel">
-          <div className="flex items-center justify-between mb-5">
-            <div>
-              <h2 className="text-base font-bold text-(--cabms-text-primary) uppercase tracking-wider">
-                {activeBrand.name} Sample Operational Jobs (Simulation)
-              </h2>
-              <p className="text-sm text-(--cabms-text-secondary) mt-1">Simulated work orders and compliance requirements</p>
-            </div>
-            <button
-              onClick={() => setActiveTab('jobs')}
-              className="text-sm text-sky-400 hover:text-sky-300 flex items-center gap-1.5 font-semibold cursor-pointer"
-            >
-              <span>View All</span>
-              <FontAwesomeIcon icon={faArrowRight} className="w-4 h-4" />
-            </button>
-          </div>
-
+          <OperationalJobsPanel heading={activeBrand.name+' Sample Operational Jobs (Simulation)'} description="Simulated work orders and compliance requirements" onViewAll={()=>setActiveTab('jobs')}>
           <div className="space-y-4">
             {brandJobs.map(job => (
               <div
@@ -200,7 +205,7 @@ export const DashboardView: React.FC = () => {
               </div>
             ))}
           </div>
-        </div>
+        </OperationalJobsPanel>
 
           {/* Consolidated Cross-Company Outstanding Jobs (Admin/Office/Super Admin only) */}
           {!isTechnician && (

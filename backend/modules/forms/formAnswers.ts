@@ -1,12 +1,18 @@
 /** Pure answer checks. A caller must verify signature/evidence records and bind them to an immutable answer snapshot. */
+import {applicableFormAnswers} from '../../../contracts/applicableFormAnswers.ts';
 type Field = { key:string; type:string; required?:boolean; choices?:string[]; visible_when?:{field:string;equals:unknown}; validation?:{min?:number;max?:number;min_length?:number;max_length?:number;max_rows?:number;columns?:Field[]} };
 type Verification = {verifiedSignatures?:string[]; verifiedEvidence?:string[]};
+
+/** Remove answers for conditional fields whose visibility criteria are not met. */
+export function sanitizeFormAnswers(fields: readonly Field[], input: unknown): Record<string, unknown> {
+ return applicableFormAnswers(fields,input).answers;
+}
+
 export function validateFormAnswers(fields: readonly Field[], input: unknown, verified: Verification = {}): string[] {
  if (!input || typeof input !== 'object' || Array.isArray(input)) return ['answers must be an object'];
- const answers = input as Record<string,unknown>, errors:string[] = [], keys = new Set(fields.map(f=>f.key));
- if (Object.keys(answers).some(k=>!keys.has(k))) errors.push('unknown answer key');
- for (const f of fields) {
-  if (f.visible_when && answers[f.visible_when.field] !== f.visible_when.equals) continue;
+ const raw = input as Record<string,unknown>, {answers,applicable}=applicableFormAnswers(fields,input), errors:string[] = [], keys = new Set(fields.map(f=>f.key));
+ if (Object.keys(raw).some(k=>!keys.has(k))) errors.push('unknown answer key');
+ for (const f of applicable) {
   const value=answers[f.key];
   if (f.type==='SIGNATURE') { if (f.required && !verified.verifiedSignatures?.includes(f.key)) errors.push(`${f.key}: signature required`); continue; }
   if (f.type==='PHOTO' || f.type==='FILE') { if (f.required && !verified.verifiedEvidence?.includes(f.key)) errors.push(`${f.key}: evidence required`); continue; }

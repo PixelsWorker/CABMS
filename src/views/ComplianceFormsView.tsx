@@ -44,6 +44,16 @@ import {
 import { validateSignedSnapshot, effectiveElectricalResult, effectiveSmokeAlarmResults, DEFAULT_SMOKE_ALARM_COMPLIANCE_NOTE, stripAffirmativeComplianceNotes } from '../utils/cabmsLogic.ts';
 import { getPendingPreviewForms, getInvalidPreviewForms, isValidPreviewSignOff } from '../utils/g05PreviewReadiness.ts';
 
+export function ReturnToJob({label,onBack}:{label:string;onBack:()=>void}){return (
+            <button
+              data-testid="return-to-job-btn"
+              onClick={onBack}
+              className="flex items-center space-x-1.5 px-3.5 py-2 cabms-surface-subtle hover:opacity-90 border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer"
+            >
+              <FontAwesomeIcon icon={faArrowLeft} className="w-3.5 h-3.5" />
+              <span>{label}</span>
+            </button>);}
+
 type ActiveFormType = 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2';
 
 export const ComplianceFormsView: React.FC = () => {
@@ -289,18 +299,7 @@ export const ComplianceFormsView: React.FC = () => {
 
           {/* Header Actions */}
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              data-testid="return-to-job-btn"
-              onClick={() => {
-                setSelectedJobId(currentJob.id);
-                setActiveBrandId(currentJob.brandId);
-                setActiveTab('jobs');
-              }}
-              className="flex items-center space-x-1.5 px-3.5 py-2 bg-sky-950/60 hover:bg-sky-900/80 border border-sky-700/60 text-sky-200 text-xs font-semibold rounded-lg transition cursor-pointer"
-            >
-              <FontAwesomeIcon icon={faArrowLeft} className="w-3.5 h-3.5" />
-              <span>Return to Job {currentJob.id}</span>
-            </button>
+            <ReturnToJob label={'Return to Job '+currentJob.id} onBack={()=>{setSelectedJobId(currentJob.id);setActiveBrandId(currentJob.brandId);setActiveTab('jobs');}}/>
 
             <button
               onClick={() => setShowPrintModal(true)}
@@ -1266,7 +1265,7 @@ export const ComplianceFormsView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <FontAwesomeIcon icon={faCamera} className="w-4 h-4 text-sky-400" />
               <h3 className="text-xs font-bold text-(--cabms-text-secondary) uppercase tracking-wider">
-                Field Evidence Photos & Attachments Library
+                Field Evidence Photos & Attachments Library (20 photos per job)
               </h3>
             </div>
             <button

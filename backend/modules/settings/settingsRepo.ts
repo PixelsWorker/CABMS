@@ -129,6 +129,7 @@ export async function updateWorkspaceSettings(
     contact_email: patch.contact_email !== undefined ? patch.contact_email : current.contact_email,
     contact_phone: patch.contact_phone !== undefined ? patch.contact_phone : current.contact_phone,
     operational_address: patch.operational_address !== undefined ? patch.operational_address : current.operational_address,
+    contract_threshold_cents: patch.contract_threshold_cents ?? current.contract_threshold_cents,
     operating_hours: patch.operating_hours !== undefined ? patch.operating_hours : current.operating_hours,
   };
 
@@ -169,6 +170,7 @@ export async function updateWorkspaceSettings(
          contact_phone = ?,
          operational_address = ?,
          operating_hours = ?,
+         ${patch.contract_threshold_cents === undefined ? '' : 'contract_threshold_cents = ?,'}
          version = version + 1,
          transition_nonce = ?,
          updated_at = ?
@@ -182,6 +184,7 @@ export async function updateWorkspaceSettings(
     merged.contact_phone,
     merged.operational_address,
     merged.operating_hours,
+    ...(patch.contract_threshold_cents === undefined ? [] : [patch.contract_threshold_cents]),
     reqNonce,
     now,
     workspaceId,

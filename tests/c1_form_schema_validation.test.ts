@@ -27,3 +27,13 @@ test('repeatable tables require bounded, typed, non-nested columns', () => {
  assert.ok(validateFormDefinition(definition({max_rows:10,columns:[{key:'sign',label:'Signature',type:'SIGNATURE'}]})).length);
  assert.ok(validateFormDefinition({sections:[{title:'Inspection',fields:[{key:'items',label:'Items',type:'REPEATABLE_TABLE'}]}]}).length);
 });
+test('conditions require compatible preceding scalar sources and values',()=>{
+ const definition=(source:any,equals:any)=>({sections:[{title:'A',fields:[{key:'source',label:'Source',...source},{key:'detail',label:'Detail',type:'TEXT',visible_when:{field:'source',equals}}]}]});
+ assert.deepEqual(validateFormDefinition(definition({type:'CHECKBOX'},false)),[]);
+ assert.ok(validateFormDefinition(definition({type:'CHECKBOX'},'false')).length);
+ assert.ok(validateFormDefinition(definition({type:'NUMBER'},'2')).length);
+ assert.deepEqual(validateFormDefinition(definition({type:'NUMBER'},2)),[]);
+ assert.ok(validateFormDefinition(definition({type:'MULTISELECT',choices:['A']},'A')).length);
+ assert.ok(validateFormDefinition(definition({type:'PASS_FAIL'},'NA')).length);
+ assert.ok(validateFormDefinition(definition({type:'DROPDOWN',choices:['A']},'B')).length);
+});

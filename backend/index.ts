@@ -28,6 +28,12 @@ import { handleDemoJourney, handleDemoJob } from './workers/routes/demoJourney.t
 import { handleDemoAppointments } from './workers/routes/demoAppointments.ts';
 import { handleJobTypesRoute, handleTemplatesRoute } from './workers/routes/templatesAndContent.ts';
 import { handleFormDefinitions } from './workers/routes/formDefinitions.ts';
+import {handleVisits} from './workers/routes/visits.ts';
+import { assignStaffRole } from './workers/routes/staffRoles.ts';
+import { handleSignComplete } from './workers/routes/signComplete.ts';
+import { handleFormOperation } from './workers/routes/formOperation.ts';
+import { handleEvidence } from './workers/routes/evidence.ts';
+import { handleComplianceJobs } from './workers/routes/complianceJobs.ts';
 import { handleDocumentTypes } from './workers/routes/documentTypes.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
@@ -124,6 +130,11 @@ export function createWorker(authentication: AuthenticationService = productionA
         );
       }
 
+      const staffRole = /^\/api\/v1\/workspaces\/([^/]+)\/staff\/([^/]+)\/role$/.exec(pathname);
+      if (staffRole && method === 'PATCH') {
+        return addCors(await assignStaffRole(request, env, authentication, staffRole[1], staffRole[2], requestId), env);
+      }
+
       // 3. /api/v1/workspaces/:workspaceId/settings
       const settingsMatch = /^\/api\/v1\/workspaces\/([^/]+)\/settings$/.exec(pathname);
       if (settingsMatch) {
@@ -153,6 +164,18 @@ export function createWorker(authentication: AuthenticationService = productionA
         }
         return addCors(resp, env);
       }
+
+      const formOperation = /^\/api\/v1\/workspaces\/([\w-]+)\/compliance-jobs\/([\w-]+)\/forms\/([^/]+)\/(answer-receipt|withdrawal-request|withdrawal-decision|finding|finding-resolution)$/.exec(pathname);
+      if (formOperation) return addCors(await handleFormOperation(request,env,authentication,requestId,formOperation),env);
+      const signComplete = /^\/api\/v1\/workspaces\/([\w-]+)\/compliance-jobs\/([\w-]+)\/(?:(?:forms\/([^/]+)\/sign)|complete)$/.exec(pathname);
+      if (signComplete) return addCors(await handleSignComplete(request,env,authentication,requestId,signComplete),env);
+      const evidenceMatch = /^\/api\/v1\/workspaces\/([\w-]+)\/compliance-jobs\/([\w-]+)\/forms\/([^/]+)\/evidence(?:\/([a-f0-9-]{36}|[a-f0-9]{64})(?:\/(finalize|content|carry-forward))?)?$/.exec(pathname);
+      if (evidenceMatch) return addCors(await handleEvidence(request,env,authentication,requestId,evidenceMatch),env);
+      const complianceMatch = /^\/api\/v1\/workspaces\/([A-Za-z0-9_-]+)\/compliance-jobs(?:\/([A-Za-z0-9_-]+))?$/.exec(pathname);
+      if (complianceMatch) return addCors(await handleComplianceJobs(request, env, complianceMatch[1], complianceMatch[2], requestId, authentication), env);
+
+      const visitsMatch=/^\/api\/v1\/workspaces\/([\w-]+)\/visits$/.exec(pathname);
+      if(visitsMatch)return addCors(await handleVisits(request,env,visitsMatch[1],requestId,authentication),env);
 
       const appointmentMatch = /^\/api\/v1\/workspaces\/([^/]+)\/demo-appointments(?:\/([^/]+))?$/.exec(pathname);
       if (appointmentMatch) return addCors(await handleDemoAppointments(request, env, appointmentMatch[1], appointmentMatch[2], requestId, authentication), env);
@@ -194,6 +217,9 @@ export function createWorker(authentication: AuthenticationService = productionA
       }
 
       // Serve static frontend assets from Vite build output if configured
+      if (/^\/(?:stage|private)\//.test(pathname)) {
+        return addCors(resourceNotFoundResponse('Resource unavailable', requestId), env);
+      }
       if (env.ASSETS) {
         return env.ASSETS.fetch(request);
       }

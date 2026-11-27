@@ -362,7 +362,13 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Navigation & Personas
   const [demoPersona, setPersona] = useState<Persona>('owner_admin');
-  const [demoBrandId, setActiveBrandIdState] = useState<BrandId>('solarcell');
+  const [demoBrandId, setActiveBrandIdState] = useState<BrandId>(() => {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const saved = window.sessionStorage.getItem('cabms_demo_brand_id');
+      if (saved === 'solarcell' || saved === 'smart_home' || saved === 'cctv') return saved;
+    }
+    return 'solarcell';
+  });
   const activeBrandId: BrandId = session
     ? (((session.workspaceId && authorizedWorkspaceSet?.has(session.workspaceId))
         ? session.workspaceId
@@ -375,7 +381,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     : demoPersona;
 
   const handleSetActiveBrandId = (b: BrandId) => {
-    setActiveBrandIdState(b);
+    if (session) {
+      session.selectWorkspace(b);
+    } else {
+      setActiveBrandIdState(b);
+      if (typeof window !== 'undefined' && window.sessionStorage) {
+        window.sessionStorage.setItem('cabms_demo_brand_id', b);
+      }
+    }
     const targetBrand = authoritativeBrandsRef.current[b] || brands[b];
     if (targetBrand?.preferredPreset) {
       setVisualPreset(targetBrand.preferredPreset, false);
@@ -390,10 +403,27 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [activeScenario, setActiveScenario] = useState<DemoScenario>('default');
   const [isSimulatedSignedIn, setIsSimulatedSignedIn] = useState(true);
 
-    // Appearance & Visual Presets (Preset 2 — Dark + Company Branding is initial)
-  const [appearance, setAppearanceState] = useState<AppearanceMode>('default_dark');
-  const [brandingMode, setBrandingModeState] = useState<BrandingMode>('company');
-  const [visualPreset, setVisualPresetState] = useState<VisualPreset>('dark_company');
+  // Appearance & Visual Presets (Light + Company Branding is initial)
+  const initialDemoPreset = ((): VisualPreset => {
+    if (!session && typeof window !== 'undefined' && window.sessionStorage) {
+      const saved = window.sessionStorage.getItem('cabms_demo_visual_preset');
+      if (saved === 'dark_neutral' || saved === 'dark_company' || saved === 'light_neutral' || saved === 'light_company' || saved === 'high_visibility_dark') {
+        return saved;
+      }
+    }
+    return 'light_company';
+  })();
+  const [appearance, setAppearanceState] = useState<AppearanceMode>(
+    initialDemoPreset === 'high_visibility_dark'
+      ? 'high_visibility_dark'
+      : initialDemoPreset === 'light_company' || initialDemoPreset === 'light_neutral'
+        ? 'high_visibility_light'
+        : 'default_dark'
+  );
+  const [brandingMode, setBrandingModeState] = useState<BrandingMode>(
+    initialDemoPreset === 'light_neutral' || initialDemoPreset === 'dark_neutral' ? 'neutral' : 'company'
+  );
+  const [visualPreset, setVisualPresetState] = useState<VisualPreset>(initialDemoPreset);
 
   const setBrandingMode = (mode: BrandingMode) => {
     setBrandingModeState(mode);
@@ -408,6 +438,9 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const setVisualPreset = (preset: VisualPreset, syncActiveBrand: boolean = false) => {
     setVisualPresetState(preset);
+    if (!session && typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.setItem('cabms_demo_visual_preset', preset);
+    }
     switch (preset) {
       case 'dark_neutral':
         setAppearanceState('default_dark');
@@ -462,6 +495,56 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setVisualPresetState(brandingMode === 'company' ? 'dark_company' : 'dark_neutral');
     }
   };
+
+  const presetSyncGenRef = React.useRef(0);
+  const latestWorkspaceRef = React.useRef<string | null>(activeBrandId);
+  latestWorkspaceRef.current = activeBrandId;
+
+  const prevIdentityRef = React.useRef<string | null>(session?.profile?.user.id ?? null);
+  useEffect(() => {
+    const nextUserId = session?.profile?.user.id ?? null;
+    if (prevIdentityRef.current !== nextUserId) {
+      prevIdentityRef.current = nextUserId;
+      presetSyncGenRef.current += 1;
+      setActiveTab('dashboard');
+      setVisualPreset('light_company', false);
+      setTemplates(INITIAL_TEMPLATES);
+    }
+  }, [session?.profile?.user.id]);
+
+  useEffect(() => {
+    if (!session?.profile || !activeBrandId) return;
+    const gen = ++presetSyncGenRef.current;
+    const targetWorkspace = activeBrandId;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        let token: string | undefined;
+        try {
+          token = await session.token?.();
+        } catch {
+          return;
+        }
+        if (!token) return;
+        if (controller.signal.aborted || gen !== presetSyncGenRef.current || latestWorkspaceRef.current !== targetWorkspace) return;
+        const res = await fetch(`/api/v1/workspaces/${encodeURIComponent(targetWorkspace)}/settings`, {
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted || gen !== presetSyncGenRef.current || latestWorkspaceRef.current !== targetWorkspace) return;
+        const data: { preferred_preset?: VisualPreset } | null = res.ok ? await res.json() : null;
+        if (controller.signal.aborted || gen !== presetSyncGenRef.current || latestWorkspaceRef.current !== targetWorkspace) return;
+        const p = data?.preferred_preset;
+        if (p === 'dark_neutral' || p === 'dark_company' || p === 'light_neutral' || p === 'light_company' || p === 'high_visibility_dark') {
+          setVisualPreset(p, false);
+        }
+      } catch {
+        // Ignore abort/network errors on preset sync
+      }
+    })();
+    return () => controller.abort();
+  }, [session?.profile, activeBrandId]);
 
   useEffect(() => {
     if (typeof document !== 'undefined') {
@@ -898,7 +981,11 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setDraftBusinesses([]);
     setPersona('owner_admin');
     setActiveBrandIdState('solarcell');
-    setVisualPreset('dark_company', false);
+    setVisualPreset('light_company', false);
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      window.sessionStorage.removeItem('cabms_demo_brand_id');
+      window.sessionStorage.removeItem('cabms_demo_visual_preset');
+    }
     setBrands(INITIAL_BRANDS);
     setJobTypes(INITIAL_JOB_TYPES);
     setDemoClock(INITIAL_DEMO_CLOCK);
@@ -3841,8 +3928,14 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (session?.workspaceId && session?.profile) {
       void session.token().then(token => {
+        const formRules = (target.catalogForms || []).map(f => ({
+          form_revision_id: f.revision_id,
+          required: f.required === 1,
+        }));
         apiCreateJobTypePolicyDraft(session.workspaceId!, id, token, {
+          base_policy_id: target.currentPolicyId,
           formsRequired: target.formsRequired,
+          formRules,
           isDirectToInvoice: target.isDirectToInvoice,
         }).then(apiRes => {
           if (!apiRes.ok || !apiRes.data) {
@@ -4697,7 +4790,7 @@ export const CabmsProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         persona,
         setPersona: session ? () => {} : handleSetPersona,
         activeBrandId,
-        setActiveBrandId: session ? session.selectWorkspace : handleSetActiveBrandId,
+        setActiveBrandId: handleSetActiveBrandId,
         activeBrand,
         brands: authorizedBrands,
         getRoleForWorkspace,

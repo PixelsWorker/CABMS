@@ -36,6 +36,11 @@ export const SuperAdminSetupView: React.FC = () => {
   return (
     <div className="space-y-6">
       {session && <LegalDetailsForm />}
+      {session && (
+        <div className="cabms-card-subtle border cabms-border p-3 rounded text-xs text-(--cabms-text-secondary)">
+          <strong>Simulated preview:</strong> The system setup controls below are local preview-only and do not modify live D1 workspace configuration.
+        </div>
+      )}
       <DemoSuperAdminSetupView />
     </div>
   );

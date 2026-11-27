@@ -232,6 +232,12 @@ export const WorkspaceSettingsView: React.FC = () => {
           <fieldset className="space-y-4" disabled={resource.active && (!canEdit || !resource.row || resource.loading)}>
           {resource.active && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="text-xs">Trading Name<input id="ws-trading-name" required maxLength={100} className="w-full cabms-card-subtle rounded p-2" value={serverValues?.trading_name || ''} onChange={e => resource.setField('trading_name', e.target.value)} /></label>
+            {serverValues?.contract_threshold_cents !== undefined && <label className="text-xs">
+              Contract threshold including GST (AUD cents)
+              <input type="number" min="0" step="1" required className="w-full cabms-card-subtle rounded p-2"
+                value={serverValues.contract_threshold_cents ?? ''} onChange={e => resource.setField('contract_threshold_cents',
+                  e.target.value === '' ? null : e.target.valueAsNumber)} />
+            </label>}
             <label className="text-xs">Brand Accent<input id="ws-accent" type="color" value={serverValues?.accent_color || '#0284c7'} onChange={e => resource.setField('accent_color', e.target.value)} /></label>
           </div>}
           <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">

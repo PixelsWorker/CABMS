@@ -1,4 +1,4 @@
--- DRAFT ONLY: not a registered migration. Requires review and exact-file approval.
+-- Exact review proposal. Execution requires separate owner authorization.
 -- Forward-only additional triggers preserve existing 0012/0013 bytes and existing data.
 CREATE TRIGGER job_type_policy_published_metadata_nullsafe
 BEFORE UPDATE ON job_type_compliance_policies

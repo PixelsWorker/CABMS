@@ -1,7 +1,7 @@
-import { test } from 'node:test';
+﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createLocalD1Database, type LocalD1Database } from '../backend/db/d1.ts';
-import { runLocalMigrations } from '../backend/db/migrate.ts';
+import { initializePreOperationalDatabase } from './support/preOperationalMigrations.ts';
 import { createWorker } from '../backend/index.ts';
 import { createAuthenticationService } from '../backend/workers/auth.ts';
 import { createFirebaseFixture } from './support/firebaseTokens.ts';
@@ -9,7 +9,7 @@ import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01Syntheti
 
 test('custom form draft reloads and requires authorized review and publication', async t => {
  const db = createLocalD1Database() as LocalD1Database; t.after(() => db.getSqliteHandle().close());
- await runLocalMigrations(db, { disposableTest: true }); await installG01TestAuthFixtures(db);
+ await initializePreOperationalDatabase(db); await installG01TestAuthFixtures(db);
  const fixture = await createFirebaseFixture(); const worker = createWorker(createAuthenticationService(fixture.transport));
  const env = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
  const staff = await fixture.token(G01_TEST_AUTH.officeStaff.uid,G01_TEST_AUTH.officeStaff.email);
@@ -38,9 +38,10 @@ test('custom form draft reloads and requires authorized review and publication',
  assert.equal((await req(`form-definitions/${disposableIds.id}`,staff)).status,404);
  const empty = await req('form-definitions',staff,'POST',{ title:'Empty form',code:'empty_form',description:'Empty draft',category:'Custom',brand_id:'solarcell',schema:{sections:[]} });
  assert.equal(empty.status,201); const emptyIds = await empty.json() as {id:string; revision_id:string};
- assert.equal((await req(`form-definitions/${emptyIds.id}/revisions/${emptyIds.revision_id}/review`,staff,'POST')).status,400);
+ const emptyUpdatedAt = ((await (await req(`form-definitions/${emptyIds.id}`,staff)).json()) as any).revisions[0].updated_at;
+ assert.equal((await req(`form-definitions/${emptyIds.id}/revisions/${emptyIds.revision_id}/review`,staff,'POST',{expected_updated_at:emptyUpdatedAt})).status,400);
  assert.equal((await req(`form-definitions/${emptyIds.id}`,staff,'PATCH',{action:'archive'})).status,200);
- assert.equal((await req(`form-definitions/${emptyIds.id}/revisions/${emptyIds.revision_id}`,staff,'PUT',schema)).status,400);
+ assert.equal((await req(`form-definitions/${emptyIds.id}/revisions/${emptyIds.revision_id}`,staff,'PUT',{...schema,expected_updated_at:emptyUpdatedAt})).status,400);
  assert.equal((await req(`form-definitions/${emptyIds.id}`,staff,'PATCH',{action:'restore'},'cctv')).status,403);
  assert.equal((await req(`form-definitions/${emptyIds.id}`,staff,'PATCH',{action:'restore'})).status,200);
  const restored = await (await req(`form-definitions/${emptyIds.id}`,staff)).json() as any;
@@ -52,7 +53,9 @@ test('custom form draft reloads and requires authorized review and publication',
  assert.equal((await req('templates',staff,'POST',{name:'Unapproved output',templateType:'COMPLIANCE_DISCLAIMER',content:'Output',output:{category:'Compliance',brand_id:'solarcell',linked_form_revision_id:ids.revision_id,layout:{},dynamic_fields:{}}})).status,422);
  const table = {key:'readings',label:'Readings',type:'REPEATABLE_TABLE',validation:{max_rows:10,columns:[{key:'location',label:'Location',type:'TEXT',required:true},{key:'outcome',label:'Outcome',type:'PASS_FAIL',required:true}]}};
  const edited = { sections: [{ title: 'Reordered inspection', fields: [schema.sections[0].fields[1], schema.sections[0].fields[0], {key:'detail',label:'Detail',type:'LONG_TEXT',validation:{max_length:1000},visible_when:{field:'result',equals:'FAIL'}}, schema.sections[0].fields[2],table] }] };
- assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}`,staff,'PUT',edited)).status,200);
+ const initialDetail = await (await req(`form-definitions/${ids.id}`,staff)).json() as any;
+ const initialUpdatedAt = initialDetail.revisions[0].updated_at;
+ assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}`,staff,'PUT',{...edited,expected_updated_at:initialUpdatedAt})).status,200);
  const detail = await req(`form-definitions/${ids.id}`,staff); assert.equal(detail.status,200); const data = await detail.json() as any;
  assert.equal(data.category,'Inspection');
  assert.equal(data.revisions[0].sections[0].fields[0].key,'result'); assert.equal(data.revisions[0].sections[0].fields[1].key,'mode'); assert.equal(data.published_revision_id,null);
@@ -60,8 +63,11 @@ test('custom form draft reloads and requires authorized review and publication',
  assert.equal(data.revisions[0].sections[0].fields[2].validation.max_length,1000);
  assert.deepEqual(data.revisions[0].sections[0].fields[4].validation,table.validation);
  assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/approve`,owner,'POST')).status,400);
- assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/review`,staff,'POST')).status,200);
- assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}`,staff,'PUT',edited)).status,400);
+ const afterEditDetail = await (await req(`form-definitions/${ids.id}`,staff)).json() as any;
+ const afterEditUpdatedAt = afterEditDetail.revisions[0].updated_at;
+ assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/review`,staff,'POST',{expected_updated_at:afterEditUpdatedAt})).status,200);
+ const afterReviewUpdatedAt = ((await (await req(`form-definitions/${ids.id}`,staff)).json()) as any).revisions[0].updated_at;
+ assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}`,staff,'PUT',{...edited,expected_updated_at:afterReviewUpdatedAt})).status,400);
  assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/approve`,staff,'POST')).status,403);
  assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/approve`,owner,'POST')).status,200);
  assert.equal((await req(`form-definitions/${ids.id}`,owner,'PATCH',{action:'archive'})).status,200);

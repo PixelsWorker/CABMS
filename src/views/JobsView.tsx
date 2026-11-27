@@ -11,6 +11,7 @@ import { demoJourneyRequest, DemoJourneyError } from '../services/demoJourneyCli
 import React, { useState, useEffect, useRef } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { useG01Session } from '../context/G01Session.tsx';
+import { TemplateModal } from './TemplatesSettingsView.tsx';
 import { demoDataMessage, useWorkspaceDemoData } from '../hooks/useWorkspaceDemoData.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -36,6 +37,46 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { Job, JobStatus, ActivityLogEntry } from '../types/cabms.ts';
 import { CompletionValidationResult } from '../utils/cabmsLogic.ts';
+
+export function JobSearch({searchQuery,setSearchQuery}:{searchQuery:string;setSearchQuery:(q:string)=>void}){return (
+            <div className="relative">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-(--cabms-text-secondary) absolute left-3 top-2.5" />
+              <input
+                type="text"
+                aria-label="Search jobs" placeholder="Search jobs..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="cabms-job-search w-full pl-9 pr-3 py-1.5 cabms-card-subtle text-xs text-(--cabms-text-primary) placeholder-slate-500 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+);}
+
+export function WorkOrdersHeader({onCreate,operational=false}:{onCreate?:()=>void;operational?:boolean}){return (
+      <div className="cabms-card p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center space-x-2">
+            <FontAwesomeIcon icon={faBriefcase} className="w-5 h-5 cabms-brand-icon" />
+            <h1 className="text-xl font-bold text-(--cabms-text-primary) tracking-tight">
+              Operational Work Orders & Compliance Journey
+            </h1>
+          </div>
+          <p className="text-xs text-(--cabms-text-secondary) mt-1">
+            {operational?'Dispatch, technician execution, form validation and authorized job completion.':'Dispatch, technician execution, structured form validation, and direct-to-invoice completion.'}
+          </p>
+        </div>
+
+        {onCreate && (
+          <button
+            onClick={onCreate}
+            className="flex items-center space-x-1.5 px-4 py-2 cabms-btn-primary text-xs font-bold rounded-lg transition shadow-sm cursor-pointer self-start sm:self-auto"
+          >
+            <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
+            <span>Create New Job</span>
+          </button>
+        )}
+      </div>
+
+  );}
 
 const SimulatedJobsView: React.FC = () => {
   // Hooks called unconditionally at top (G00-008)
@@ -250,46 +291,14 @@ const SimulatedJobsView: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Header */}
-      <div className="cabms-card p-5 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-2">
-            <FontAwesomeIcon icon={faBriefcase} className="w-5 h-5 text-amber-400" />
-            <h1 className="text-xl font-bold text-(--cabms-text-primary) tracking-tight">
-              Operational Work Orders & Compliance Journey
-            </h1>
-          </div>
-          <p className="text-xs text-(--cabms-text-secondary) mt-1">
-            Dispatch, technician execution, structured form validation, and direct-to-invoice completion.
-          </p>
-        </div>
-
-        {persona !== 'technician' && (
-          <button
-            onClick={() => setIsNewJobModalOpen(true)}
-            className="flex items-center space-x-1.5 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-bold rounded-lg transition shadow-sm cursor-pointer self-start sm:self-auto"
-          >
-            <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
-            <span>Create New Job</span>
-          </button>
-        )}
-      </div>
-
+      <WorkOrdersHeader onCreate={persona !== 'technician' ? ()=>setIsNewJobModalOpen(true) : undefined}/>
       {/* Main Two-Pane Layout: Job List & Job Detail */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Pane: Job Directory / List (5 cols) */}
         <div className="lg:col-span-5 space-y-3">
           {/* Search and Status Filter */}
           <div className="cabms-card p-3 space-y-2">
-            <div className="relative">
-              <FontAwesomeIcon icon={faMagnifyingGlass} className="w-4 h-4 text-(--cabms-text-secondary) absolute left-3 top-2.5" />
-              <input
-                type="text"
-                placeholder="Search jobs..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 cabms-card-subtle text-xs text-(--cabms-text-primary) placeholder-slate-500 focus:outline-none focus:border-amber-500"
-              />
-            </div>
+            <JobSearch searchQuery={searchQuery} setSearchQuery={setSearchQuery}/>
             <div className="flex items-center justify-between text-xs text-(--cabms-text-secondary)">
               <span>Status:</span>
               <select
@@ -630,7 +639,7 @@ const SimulatedJobsView: React.FC = () => {
             )}
           </div>
         ) : (
-          <div className="lg:col-span-7 cabms-card p-8 text-center text-sm text-(--cabms-text-secondary) flex items-center justify-center min-h-[300px]">
+          <div className="lg:col-span-7 cabms-card p-8 text-center text-sm text-(--cabms-text-secondary) flex items-center justify-center min-h-75">
             No work order matches the selected filter.
           </div>
         )}
@@ -715,13 +724,14 @@ const SimulatedJobsView: React.FC = () => {
 
       {/* New Job Modal with Job Type & Tech Selection (G00-013) */}
       {isNewJobModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-(--cabms-text-primary)">Create New Work Order</h3>
+        <TemplateModal onClose={() => setIsNewJobModalOpen(false)} titleId="demo-create-work-order-title" maxWidthClass="max-w-lg">
+            <div className="flex items-center justify-between border-b cabms-border pb-3">
+              <h3 id="demo-create-work-order-title" className="text-base font-bold text-(--cabms-text-primary)">Create New Work Order</h3>
               <button
+                type="button"
+                aria-label="Close dialog"
                 onClick={() => setIsNewJobModalOpen(false)}
-                className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold"
+                className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold cursor-pointer"
               >
                 ✕
               </button>
@@ -899,8 +909,7 @@ const SimulatedJobsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </TemplateModal>
       )}
     </div>
   );

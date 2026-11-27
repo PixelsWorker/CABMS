@@ -9,6 +9,7 @@ export function validateFormDefinition(input: unknown): string[] {
   const errors: string[] = [];
   if (!record(input) || !Array.isArray(input.sections) || input.sections.length > 50) return ['sections must be an array of at most 50 sections'];
   const keys = new Set<string>();
+  const preceding = new Map<string, Record<string, unknown>>();
   let count = 0;
   for (const [sectionIndex, section] of input.sections.entries()) {
     if (!record(section) || !bounded(section.title, 160) || !Array.isArray(section.fields) || section.fields.length > 200) {
@@ -32,8 +33,12 @@ export function validateFormDefinition(input: unknown): string[] {
       } else if (field.choices !== undefined && (!Array.isArray(field.choices) || field.choices.length)) errors.push('choices are not supported for this field type');
       if (field.visible_when !== undefined) {
         const condition = field.visible_when;
-        if (!record(condition) || Object.keys(condition).some(k=>!['field','equals'].includes(k)) || typeof condition.field !== 'string' || condition.field === field.key || !keys.has(condition.field) || !['string','boolean','number'].includes(typeof condition.equals)) errors.push('invalid visibility condition');
+        const source = record(condition) && typeof condition.field === 'string' ? preceding.get(condition.field) : undefined;
+        const value = record(condition) ? condition.equals : undefined;
+        const compatible = source && (source.type === 'CHECKBOX' ? typeof value === 'boolean' : source.type === 'NUMBER' ? typeof value === 'number' && Number.isFinite(value) : source.type === 'PASS_FAIL' ? ['PASS','FAIL'].includes(value as string) : source.type === 'PASS_FAIL_NA' ? ['PASS','FAIL','NA'].includes(value as string) : source.type === 'YES_NO_NA' ? ['YES','NO','NA'].includes(value as string) : ['DROPDOWN','MULTIPLE_CHOICE'].includes(String(source.type)) ? typeof value === 'string' && Array.isArray(source.choices) && source.choices.includes(value) : ['TEXT','LONG_TEXT','DATE','DATETIME'].includes(String(source.type)) && typeof value === 'string');
+        if (!record(condition) || Object.keys(condition).some(k=>!['field','equals'].includes(k)) || !compatible) errors.push('invalid visibility condition');
       }
+      if (typeof field.key === 'string') preceding.set(field.key, field);
       if (field.type === 'READONLY_AUTOFILL' && !field.autofill_source) errors.push('read-only auto-fill requires a source');
       if (field.type === 'REPEATABLE_TABLE' && field.validation === undefined) errors.push('repeatable table requires a column schema');
       if (field.validation !== undefined) {

@@ -40,6 +40,64 @@ import { JobTypeConfig, TemplateSetting, BrandId } from '../types/cabms.ts';
 
 const COMPLIANCE_FORM_TYPES = ['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'] as const;
 
+export const TemplateModal: React.FC<{
+  onClose: () => void;
+  titleId: string;
+  maxWidthClass?: string;
+  children: React.ReactNode;
+}> = ({ onClose, titleId, maxWidthClass = 'max-w-lg', children }) => {
+  const previousFocusRef = React.useRef<HTMLElement | null>(null);
+  const dialogRef = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    previousFocusRef.current = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+    const dialog = dialogRef.current;
+    if (dialog) {
+      const target = dialog.querySelector<HTMLElement>('[autofocus], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || dialog;
+      target.focus();
+    }
+    return () => {
+      previousFocusRef.current?.focus?.();
+    };
+  }, []);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key === 'Tab' && dialogRef.current) {
+      const focusables = Array.from(dialogRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  };
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+      onKeyDown={handleKeyDown}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className={`cabms-card w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+};
+
 export const TemplatesSettingsView: React.FC = () => {
   const session = useG01Session();
   // Hooks called unconditionally at top (G00-008)
@@ -69,6 +127,7 @@ export const TemplatesSettingsView: React.FC = () => {
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('TPL-001');
   const [editingContent, setEditingContent] = useState<string>('');
+  const [hasEditedTemplate, setHasEditedTemplate] = useState(false);
   const [previewModalDoc, setPreviewModalDoc] = useState<TemplateSetting | null>(null);
 
   // Job Type Modals & State
@@ -100,6 +159,8 @@ export const TemplatesSettingsView: React.FC = () => {
   const [isAddTemplateOpen, setIsAddTemplateOpen] = useState(false);
   const [confirmDeleteTemplateId, setConfirmDeleteTemplateId] = useState<string | null>(null);
   const [templateFilter, setTemplateFilter] = useState<'ALL' | 'PUBLISHED' | 'REVIEW' | 'DRAFT' | 'ARCHIVED'>('ALL');
+  const [templateSearch, setTemplateSearch] = useState('');
+  const [templateTypeFilter, setTemplateTypeFilter] = useState<'ALL' | TemplateSetting['type']>('ALL');
 
   // New Template Form
   const [newTplName, setNewTplName] = useState('');
@@ -154,13 +215,11 @@ export const TemplatesSettingsView: React.FC = () => {
     );
   }
 
-  const currentTemplate = templates.find(t => t.id === selectedTemplateId) || templates[0];
-
   const handleStartDraft = () => {
     if (!currentTemplate) return;
     createTemplateDraftRevision(
       currentTemplate.id,
-      templateDraftContent(editingContent,currentTemplate.content)
+      templateDraftContent(editingContent, currentTemplate.content, hasEditedTemplate)
     );
   };
 
@@ -179,11 +238,32 @@ export const TemplatesSettingsView: React.FC = () => {
   });
 
   const filteredTemplates = templates.filter(t => {
+    if (templateTypeFilter !== 'ALL' && t.type !== templateTypeFilter) return false;
+    if (templateSearch.trim()) {
+      const q = templateSearch.trim().toLowerCase();
+      if (!t.name.toLowerCase().includes(q) && !t.code?.toLowerCase().includes(q)) return false;
+    }
     if (templateFilter === 'ALL') return true;
     if (templateFilter === 'ARCHIVED') return t.status === 'ARCHIVED';
     if (t.status === 'ARCHIVED') return false;
     return t.activeStatus === templateFilter;
   });
+
+  React.useEffect(() => {
+    if (selectedTemplateId && !filteredTemplates.some(t => t.id === selectedTemplateId)) {
+      setSelectedTemplateId(filteredTemplates[0]?.id ?? '');
+    }
+  }, [filteredTemplates, selectedTemplateId]);
+
+  const currentTemplate = filteredTemplates.find(t => t.id === selectedTemplateId) || filteredTemplates[0];
+  const isTemplateDirty = !!currentTemplate && hasEditedTemplate && editingContent !== currentTemplate.content;
+  const confirmDiscardTemplateEdits = () => {
+    if (!isTemplateDirty) return true;
+    if (typeof window !== 'undefined' && !window.confirm('You have unsaved template edits. Discard changes?')) return false;
+    setHasEditedTemplate(false);
+    setEditingContent('');
+    return true;
+  };
 
   const handleOpenEditJobType = (jt: JobTypeConfig) => {
     setEditingJobTypeId(jt.id);
@@ -343,7 +423,7 @@ export const TemplatesSettingsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="overflow-x-auto border border-slate-800 rounded-xl">
+        <div className="overflow-x-auto border cabms-border rounded-xl">
           <table className="w-full text-left text-xs text-(--cabms-text-secondary)">
             <thead className="cabms-surface-subtle text-(--cabms-text-secondary) text-[11px] uppercase border-b cabms-border">
               <tr>
@@ -365,12 +445,12 @@ export const TemplatesSettingsView: React.FC = () => {
                 return (
                   <tr
                     key={jt.id}
-                    className={`${jt.isDirectToInvoice ? 'bg-slate-900/40' : ''} ${
-                      isArchived ? 'opacity-60 bg-slate-950/40' : ''
+                    className={`${jt.isDirectToInvoice ? 'cabms-surface-subtle' : ''} ${
+                      isArchived ? 'opacity-60 cabms-surface-subtle' : ''
                     }`}
                   >
                     <td className="p-3 font-semibold text-(--cabms-text-primary)">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span>{jt.name}</span>
                         {jt.isDirectToInvoice && (
                           <span className="text-[10px] cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) px-1.5 py-0.5 rounded font-mono">
@@ -378,23 +458,23 @@ export const TemplatesSettingsView: React.FC = () => {
                           </span>
                         )}
                         {isArchived && (
-                          <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                          <span className="text-[10px] cabms-surface-subtle text-(--cabms-text-secondary) border cabms-border px-1.5 py-0.5 rounded font-mono">
                             Archived
                           </span>
                         )}
                         {isDraft && (
-                          <span className="text-[10px] bg-amber-950/80 text-amber-400 border border-amber-800 px-1.5 py-0.5 rounded font-mono">
+                          <span className="text-[10px] cabms-badge-warning px-1.5 py-0.5 rounded font-mono">
                             Draft
                           </span>
                         )}
                       </div>
                       {jt.description && (
-                        <p className="text-[11px] text-(--cabms-text-secondary) mt-0.5 truncate max-w-xs font-normal">
+                        <p className="text-[11px] text-(--cabms-text-secondary) mt-0.5 wrap-break-word max-w-xs font-normal">
                           {jt.description}
                         </p>
                       )}
                     </td>
-                    <td className="p-3 font-medium text-amber-400">
+                    <td className="p-3 font-medium cabms-brand-accent-text">
                       {brandDisplayName}
                     </td>
                     <td className="p-3 font-mono text-sky-400">
@@ -558,7 +638,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsAddTemplateOpen(true)}
-              className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded text-xs font-bold transition flex items-center space-x-1 cursor-pointer"
+              className="px-2.5 py-1 cabms-btn-primary rounded text-xs font-bold transition flex items-center space-x-1 cursor-pointer"
             >
               <FontAwesomeIcon icon={faPlus} className="w-3 h-3" />
               <span>Add Template</span>
@@ -571,17 +651,40 @@ export const TemplatesSettingsView: React.FC = () => {
 
           <DocumentTypeCatalog />
 
+          {/* Search & Type Filter */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              type="search"
+              aria-label="Search templates"
+              placeholder="Search templates..."
+              value={templateSearch}
+              onChange={e => { if (confirmDiscardTemplateEdits()) setTemplateSearch(e.target.value); }}
+              className="w-full px-2.5 py-1.5 cabms-input rounded text-xs"
+            />
+            <select
+              aria-label="Filter templates by type"
+              value={templateTypeFilter}
+              onChange={e => { if (confirmDiscardTemplateEdits()) setTemplateTypeFilter(e.target.value as 'ALL' | TemplateSetting['type']); }}
+              className="w-full px-2.5 py-1.5 cabms-input rounded text-xs"
+            >
+              <option value="ALL">All Types</option>
+              {Array.from(new Set(templates.map(t => t.type))).map(type => (
+                <option key={type} value={type}>{type.replaceAll('_', ' ')}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Filter options */}
           <div className="flex items-center gap-1.5 overflow-x-auto text-[10px] pb-1">
             {(['ALL', 'PUBLISHED', 'REVIEW', 'DRAFT', 'ARCHIVED'] as const).map(tab => (
               <button
                 key={tab}
                 type="button"
-                onClick={() => setTemplateFilter(tab)}
-                className={`px-2 py-0.5 rounded font-semibold transition ${
+                onClick={() => { if (confirmDiscardTemplateEdits()) setTemplateFilter(tab); }}
+                className={`px-2 py-0.5 rounded font-semibold border transition cursor-pointer ${
                   templateFilter === tab
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'cabms-surface-subtle text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
+                    ? 'cabms-tab-active'
+                    : 'cabms-surface-subtle cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
                 }`}
               >
                 {tab}
@@ -590,6 +693,11 @@ export const TemplatesSettingsView: React.FC = () => {
           </div>
 
           <div className="space-y-2 max-h-125 overflow-y-auto">
+            {filteredTemplates.length === 0 && (
+              <p className="cabms-card-subtle p-4 text-xs text-(--cabms-text-secondary)">
+                No templates match the current search or filter.
+              </p>
+            )}
             {filteredTemplates.map(tpl => {
               const isSelected = tpl.id === selectedTemplateId;
               const isArchived = tpl.status === 'ARCHIVED';
@@ -598,23 +706,25 @@ export const TemplatesSettingsView: React.FC = () => {
                 <div
                   key={tpl.id}
                   onClick={() => {
+                    if (tpl.id !== selectedTemplateId && !confirmDiscardTemplateEdits()) return;
                     setSelectedTemplateId(tpl.id);
+                    setHasEditedTemplate(false);
                     setEditingContent(tpl.content);
                   }}
                   className={`p-3.5 rounded-xl border transition cursor-pointer ${
                     isSelected
-                      ? 'bg-slate-800 border-amber-500 shadow'
-                      : 'bg-slate-950 border-slate-800 hover:bg-slate-800/50'
+                      ? 'cabms-row-selected shadow'
+                      : 'cabms-surface-subtle cabms-border hover:border-(--cabms-border-focus)'
                   } ${isArchived ? 'opacity-60' : ''}`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="flex items-center space-x-1.5">
-                        <FontAwesomeIcon icon={faFileLines} className="w-4 h-4 text-amber-400" />
-                        <span className="font-bold text-white text-xs">{tpl.name}</span>
+                        <FontAwesomeIcon icon={faFileLines} className="w-4 h-4 cabms-brand-icon" />
+                        <span className="font-bold text-(--cabms-text-primary) text-xs">{tpl.name}</span>
                       </div>
-                      <div className="font-mono text-[11px] text-slate-300 mt-1">
-                        Version: <strong className="text-sky-400">{tpl.currentVersion}</strong>
+                      <div className="font-mono text-[11px] text-(--cabms-text-secondary) mt-1">
+                        Version: <strong className="cabms-accent-info">{tpl.currentVersion}</strong>
                       </div>
                     </div>
 
@@ -670,7 +780,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 type="button"
-                onClick={() => setPreviewModalDoc(currentTemplate)}
+                onClick={() => setPreviewModalDoc({ ...currentTemplate, content: hasEditedTemplate ? editingContent : currentTemplate.content })}
                 className="px-3 py-1.5 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1 hover:border-amber-500"
               >
                 <FontAwesomeIcon icon={faEye} className="w-3.5 h-3.5" />
@@ -695,7 +805,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 </button>
               )}
 
-              {(currentTemplate.status === 'DRAFT' || currentTemplate.activeStatus === 'DRAFT') && (
+              {!(session?.profile && currentTemplate.status !== 'DRAFT') && (currentTemplate.status === 'DRAFT' || currentTemplate.activeStatus === 'DRAFT') && (
                 <button
                   type="button"
                   onClick={() => setConfirmDeleteTemplateId(currentTemplate.id)}
@@ -714,8 +824,8 @@ export const TemplatesSettingsView: React.FC = () => {
             </label>
             <textarea
               rows={5}
-              value={editingContent !== '' ? editingContent : currentTemplate.content}
-              onChange={e => setEditingContent(e.target.value)}
+              value={hasEditedTemplate ? editingContent : currentTemplate.content}
+              onChange={e => { setHasEditedTemplate(true); setEditingContent(e.target.value); }}
               className="w-full p-3 cabms-card-subtle text-(--cabms-text-primary) text-xs focus:outline-none focus:border-amber-500 font-sans leading-relaxed rounded-lg"
             />
             <p className="text-[11px] text-slate-500 italic">
@@ -800,17 +910,17 @@ export const TemplatesSettingsView: React.FC = () => {
 
       {/* Modal 1: Synthetic Document Preview Modal */}
       {previewModalDoc && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-lg w-full p-6 shadow-2xl space-y-4">
+        <TemplateModal onClose={() => setPreviewModalDoc(null)} titleId="sample-preview-title" maxWidthClass="max-w-lg">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
-                <h3 className="text-base font-bold text-(--cabms-text-primary)">{previewModalDoc.name}</h3>
+                <h3 id="sample-preview-title" className="text-base font-bold text-(--cabms-text-primary)">Sample preview: {previewModalDoc.name}</h3>
                 <span className="text-xs text-sky-400 font-mono">
                   Version: {previewModalDoc.currentVersion} ({previewModalDoc.activeStatus})
                 </span>
               </div>
               <button
                 type="button"
+                aria-label="Close sample preview"
                 onClick={() => setPreviewModalDoc(null)}
                 className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold"
               >
@@ -826,7 +936,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 {previewModalDoc.content}
               </p>
               <div className="text-[10px] text-amber-300/80 bg-amber-950/30 p-2 rounded border border-amber-800/40">
-                Compliance Notice: Sample template clauses must be reviewed and published under corporate governance.
+                Sample content only. No job certificate or report has been issued.
               </div>
             </div>
 
@@ -839,17 +949,15 @@ export const TemplatesSettingsView: React.FC = () => {
                 Close Preview
               </button>
             </div>
-          </div>
-        </div>
+        </TemplateModal>
       )}
 
       {/* Modal 2: View Job Type Details & Policy Version History */}
       {viewingJobType && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-2xl w-full p-6 shadow-2xl space-y-5 text-xs">
+        <TemplateModal onClose={() => setViewingJobTypeId(null)} titleId="view-job-type-title" maxWidthClass="max-w-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
-                <h3 className="text-base font-bold text-(--cabms-text-primary)">
+                <h3 id="view-job-type-title" className="text-base font-bold text-(--cabms-text-primary)">
                   {viewingJobType.name}
                 </h3>
                 <span className="text-xs text-sky-400 font-mono">
@@ -858,6 +966,7 @@ export const TemplatesSettingsView: React.FC = () => {
               </div>
               <button
                 type="button"
+                aria-label="Close job type details"
                 onClick={() => setViewingJobTypeId(null)}
                 className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) font-bold text-lg"
               >
@@ -952,18 +1061,17 @@ export const TemplatesSettingsView: React.FC = () => {
                 Close
               </button>
             </div>
-          </div>
-        </div>
+        </TemplateModal>
       )}
 
       {/* Modal 3: Add Job Type */}
       {isAddJobTypeOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-md w-full max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4 text-xs">
+        <TemplateModal onClose={() => setIsAddJobTypeOpen(false)} titleId="add-job-type-title" maxWidthClass="max-w-md">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-(--cabms-text-primary)">Add New Job Type</h3>
+              <h3 id="add-job-type-title" className="text-base font-bold text-(--cabms-text-primary)">Add New Job Type</h3>
               <button
                 type="button"
+                aria-label="Close add job type dialog"
                 onClick={() => setIsAddJobTypeOpen(false)}
                 className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) font-bold"
               >
@@ -1094,18 +1202,17 @@ export const TemplatesSettingsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </TemplateModal>
       )}
 
       {/* Modal 4: Edit Job Type */}
       {editingJobTypeId && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+        <TemplateModal onClose={() => setEditingJobTypeId(null)} titleId="edit-job-type-title" maxWidthClass="max-w-md">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-(--cabms-text-primary)">Edit Job Type</h3>
+              <h3 id="edit-job-type-title" className="text-base font-bold text-(--cabms-text-primary)">Edit Job Type</h3>
               <button
                 type="button"
+                aria-label="Close edit job type dialog"
                 onClick={() => setEditingJobTypeId(null)}
                 className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) font-bold"
               >
@@ -1141,6 +1248,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 <div>
                   <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand Affiliation</label>
                   <select
+                    disabled={!!session?.profile}
                     value={editJtBrandId}
                     onChange={e => setEditJtBrandId(e.target.value as BrandId)}
                     className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
@@ -1178,8 +1286,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </TemplateModal>
       )}
 
       {/* Modal 5: Job Type Configuration Modal */}
@@ -1189,12 +1296,12 @@ export const TemplatesSettingsView: React.FC = () => {
         if (session?.profile) return <CatalogPolicyEditor jobType={targetJt} close={() => setConfiguringJobTypeId(null)} />;
 
         return (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+          <TemplateModal onClose={() => setConfiguringJobTypeId(null)} titleId="configure-job-type-title" maxWidthClass="max-w-md">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <h3 className="text-base font-bold text-(--cabms-text-primary)">Configure {targetJt.name}</h3>
+                <h3 id="configure-job-type-title" className="text-base font-bold text-(--cabms-text-primary)">Configure {targetJt.name}</h3>
                 <button
                   type="button"
+                  aria-label="Close configure job type dialog"
                   onClick={() => setConfiguringJobTypeId(null)}
                   className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) font-bold"
                 >
@@ -1266,19 +1373,18 @@ export const TemplatesSettingsView: React.FC = () => {
                   Done
                 </button>
               </div>
-            </div>
-          </div>
+          </TemplateModal>
         );
       })()}
 
       {/* Modal 6: Add Template Modal */}
       {isAddTemplateOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="cabms-card max-w-md w-full p-6 shadow-2xl space-y-4 text-xs">
+        <TemplateModal onClose={() => setIsAddTemplateOpen(false)} titleId="add-template-title" maxWidthClass="max-w-md">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-(--cabms-text-primary)">Add Document Template</h3>
+              <h3 id="add-template-title" className="text-base font-bold text-(--cabms-text-primary)">Add Document Template</h3>
               <button
                 type="button"
+                aria-label="Close add template dialog"
                 onClick={() => setIsAddTemplateOpen(false)}
                 className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) font-bold"
               >
@@ -1381,8 +1487,7 @@ export const TemplatesSettingsView: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </TemplateModal>
       )}
 
       {/* Modal 7: Confirm Delete Job Type Draft */}
@@ -1391,11 +1496,10 @@ export const TemplatesSettingsView: React.FC = () => {
         if (!target) return null;
 
         return (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="cabms-card max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <TemplateModal onClose={() => setConfirmDeleteJobTypeId(null)} titleId="delete-job-type-title" maxWidthClass="max-w-sm">
               <div className="flex items-center space-x-2 text-rose-400">
                 <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5" />
-                <h3 className="text-base font-bold text-(--cabms-text-primary)">Delete Draft Job Type?</h3>
+                <h3 id="delete-job-type-title" className="text-base font-bold text-(--cabms-text-primary)">Delete Draft Job Type?</h3>
               </div>
               <p className="text-(--cabms-text-secondary)">
                 Are you sure you want to permanently delete draft job type <strong>{target.name}</strong>?
@@ -1420,8 +1524,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   Confirm Delete
                 </button>
               </div>
-            </div>
-          </div>
+          </TemplateModal>
         );
       })()}
 
@@ -1431,11 +1534,10 @@ export const TemplatesSettingsView: React.FC = () => {
         if (!target) return null;
 
         return (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="cabms-card max-w-sm w-full p-6 shadow-2xl space-y-4 text-xs">
+          <TemplateModal onClose={() => setConfirmDeleteTemplateId(null)} titleId="delete-template-title" maxWidthClass="max-w-sm">
               <div className="flex items-center space-x-2 text-rose-400">
                 <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5" />
-                <h3 className="text-base font-bold text-(--cabms-text-primary)">Delete Draft Template?</h3>
+                <h3 id="delete-template-title" className="text-base font-bold text-(--cabms-text-primary)">Delete Draft Template?</h3>
               </div>
               <p className="text-(--cabms-text-secondary)">
                 Are you sure you want to delete draft template <strong>{target.name}</strong>?
@@ -1460,8 +1562,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   Confirm Delete
                 </button>
               </div>
-            </div>
-          </div>
+          </TemplateModal>
         );
       })()}
     </div>

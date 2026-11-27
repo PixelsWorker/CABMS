@@ -3046,15 +3046,25 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const db = createLocalD1Database();
     await runLocalMigrations(db, { disposableTest: true });
 
-    // Ensure we run early in a fresh second (between 100ms and 600ms) so issued_at and SQLite's 'now' share the same calendar second
-    const currentMs = Date.now() % 1000;
-    if (currentMs < 100 || currentMs > 600) {
-      await new Promise(r => setTimeout(r, 1000 - currentMs + 100));
-    }
-    const enrollNow = Date.now();
-    const issuedDate = new Date(enrollNow - 50);
-    const isoIssued = issuedDate.toISOString();
-    const isoExpires = new Date(enrollNow + 60000).toISOString();
+    // Deterministic test-only D1 clock wrapper: pin issued_at and SQLite 'now' to the same past calendar second
+    // so execution delay or wall-clock rollover cannot cause a second-boundary race.
+    const baseSecMs = Math.floor(Date.now() / 1000) * 1000 - 2000;
+    const fixedIssuedMs = baseSecMs + 200;
+    const fixedAuditIso = new Date(baseSecMs + 250).toISOString();
+    const isoIssued = new Date(fixedIssuedMs).toISOString();
+    const isoExpires = new Date(fixedIssuedMs + 60000).toISOString();
+    const deterministicDb: D1Database = {
+      ...db,
+      prepare(query: string) {
+        return db.prepare(
+          query.replace(/strftime\('%Y-%m-%dT%H:%M:%fZ',\s*'now'\)/g, `'${fixedAuditIso}'`)
+        );
+      },
+      batch: db.batch.bind(db),
+      exec: db.exec.bind(db),
+      dump: db.dump.bind(db),
+    };
+
     const manifest = createValidSyntheticManifest({
       issued_at: isoIssued,
       expires_at: isoExpires,
@@ -3062,7 +3072,7 @@ describe('CABMS PAAR-P0 Mode A Integration & Security Specification', () => {
     const signed = signApprovalManifest(manifest, ephemeralKeyPair.privateKey);
     const verified = verifyApprovalManifest(signed, ephemeralKeyPair.publicKey, DEFAULT_VERIFY_OPTIONS);
 
-    const outcome = await enrollFirstSuperAdmin(db, verified);
+    const outcome = await enrollFirstSuperAdmin(deterministicDb, verified);
     assert.equal(outcome.status, 'SUCCESS', 'Enrollment must succeed');
 
     // Check created_at in paar_p0_bootstrap_audit_manifests has fractional seconds

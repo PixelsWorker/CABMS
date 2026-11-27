@@ -69,7 +69,7 @@ export const getBrandBadgeConfig = (brandId: string) => {
     return { text: 'SC', bg: '#ffae14', fg: '#020617' };
   }
   if (brandId === 'smart_home' || brandId === 'smarthome') {
-    return { text: 'SHS', bg: '#0284c7', fg: '#ffffff' };
+    return { text: 'SHS', bg: '#059669', fg: '#ffffff' };
   }
   if (brandId === 'cctv' || brandId === 'gold_coast_cctv') {
     return { text: 'C', bg: '#0ba3ad', fg: '#ffffff' };
@@ -77,14 +77,14 @@ export const getBrandBadgeConfig = (brandId: string) => {
   return { text: brandId.slice(0, 2).toUpperCase(), bg: '#334155', fg: '#ffffff' };
 };
 
-export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+export const Navigation: React.FC<{ children?: React.ReactNode; showSavedDemoEnquiries?: boolean }> = ({ children, showSavedDemoEnquiries = true }) => {
   const { activeTab, setActiveTab, activeBrand, activeBrandId, setActiveBrandId, brands, persona, websiteEnquiries,
     demoNotification, clearDemoNotification, simulateSignOut } = useCabms();
   const session = useG01Session();
   const workspace = session?.workspaceId ?? null;
   const userId = session?.profile?.user.id ?? null;
   const role = session?.profile?.memberships.find(m => m.workspace_id === workspace)?.role;
-  const countKey = session && workspace && userId && role && role !== 'technician' ? JSON.stringify([workspace,userId,role]) : null;
+  const countKey = session && showSavedDemoEnquiries && workspace && userId && role && role !== 'technician' ? JSON.stringify([workspace,userId,role]) : null;
   const [savedCount, setSavedCount] = React.useState<{key:string; count:number|null} | null>(null);
   React.useEffect(() => {
     if (!countKey || !session || !workspace || !userId) return;
@@ -326,7 +326,7 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
         </button>
       </div>
       <nav id="cabms-desktop-navigation" aria-label="Main navigation" className="cabms-nav-scroll" onScroll={() => setHint(null)}>{links(false)}</nav>
-      <p className={`cabms-sidebar-disclosure ${collapsed ? 'cabms-sr-only' : ''}`}>Operations Console<br />Preview Adapter</p>
+      <p className={`cabms-sidebar-disclosure ${collapsed ? 'cabms-sr-only' : ''}`}>Operations Console<br />{session?.profile?'Authenticated workspace':'Preview Adapter'}</p>
     </aside>
     <div className="cabms-workspace">
       <header className="cabms-topbar">
@@ -424,14 +424,23 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
                 {activeDestination ? getDestinationLabel(activeDestination, persona) : 'Restricted destination'}
               </span>
               <span className="cabms-topbar-company-subtitle text-xs text-(--cabms-text-secondary) font-medium mt-1 truncate">
-                {activeBrand.name} &bull; {activeBrand.abnPlaceholder}
+                {activeBrand.name}{!session && <> &bull; {activeBrand.abnPlaceholder}</>}
               </span>
             </div>
           </div>
         </div>
-        <span className="cabms-persona">{personaLabels[persona]}</span>
+        <span className="cabms-persona">{session && persona === 'technician' ? 'Technician' : personaLabels[persona]}</span>
+        {session?.profile && session.switchAccount && (
+          <button type="button" className="cabms-surface-subtle border cabms-border px-2.5 py-1 rounded text-xs font-semibold text-(--cabms-text-primary) hover:border-(--cabms-border-focus) cursor-pointer"
+            onClick={() => { void session.switchAccount?.().catch((err: unknown) => {
+              const msg = err instanceof Error ? err.message : 'Unable to switch Google account.';
+              if (typeof window !== 'undefined') window.alert(msg);
+            }); }}>
+            Switch account
+          </button>
+        )}
         <button type="button" className="cabms-icon-button" aria-label="Sign out"
-          title="Sign out of preview session" onClick={simulateSignOut}>
+          title={session?.profile ? 'Sign out' : 'Sign out of preview session'} onClick={simulateSignOut}>
           <FontAwesomeIcon icon={faRightFromBracket} aria-hidden="true" /><span className="cabms-sr-only">Sign out</span>
         </button>
       </header>
@@ -454,9 +463,9 @@ export const Navigation: React.FC<{ children?: React.ReactNode }> = ({ children 
               <FontAwesomeIcon icon={faXmark} aria-hidden="true" />
             </button>
           </div>
-          <p className="cabms-drawer-identity">{activeBrand.name}<br /><span>{personaLabels[persona]}</span></p>
+          <p className="cabms-drawer-identity">{activeBrand.name}<br /><span>{session && persona === 'technician' ? 'Technician' : personaLabels[persona]}</span></p>
           <nav aria-label="Mobile navigation" className="cabms-nav-scroll">{links(true)}</nav>
-          <p className="cabms-sidebar-disclosure">Operations Console · Preview Adapter</p>
+          <p className="cabms-sidebar-disclosure">Operations Console · {session?.profile?'Authenticated workspace':'Preview Adapter'}</p>
         </div>
       </div>, document.body
     )}

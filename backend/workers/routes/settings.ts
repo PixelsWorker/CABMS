@@ -190,6 +190,17 @@ export async function handlePatchWorkspaceSettings(
 
   const patch: Partial<EditableWorkspaceSettings> = {};
 
+  if ('contract_threshold_cents' in body) {
+    const cents = body.contract_threshold_cents;
+    if (typeof cents !== 'number' || !Number.isSafeInteger(cents) || cents < 0) {
+      validationErrors.push({pointer:'/contract_threshold_cents',code:'INVALID_AMOUNT',message:'Enter a non-negative whole number of AUD cents including GST.'});
+    } else if (existingResource?.contract_threshold_cents === undefined) {
+      return validationErrorResponse('Threshold configuration is unavailable on this database', [], requestId);
+    } else {
+      patch.contract_threshold_cents = cents;
+    }
+  }
+
   if ('trading_name' in body) {
     if (typeof body.trading_name !== 'string' || !body.trading_name.trim()) {
       validationErrors.push({ pointer: '/trading_name', code: 'NON_EMPTY_REQUIRED', message: 'Trading name must be non-empty' });

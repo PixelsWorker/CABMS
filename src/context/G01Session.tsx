@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { onIdTokenChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
-import { auth, googleAuthProvider } from '../services/firebase.ts';
+import { auth, googleAuthProvider, selectAccountGoogleProvider } from '../services/firebase.ts';
 import { apiGetCurrentUser } from '../services/g01Client.ts';
 import type { Persona, BrandId } from '../types/cabms.ts';
 
@@ -10,6 +10,7 @@ export interface Session {
   loading: boolean;
   error: string;
   login: () => Promise<void>;
+  switchAccount?: () => Promise<void>;
   logout: () => Promise<void>;
   token: () => Promise<string>;
   workspaceId: BrandId | null;
@@ -35,6 +36,7 @@ type SessionDependencies = {
   onIdTokenChanged: (callback: (user: User | null) => void | Promise<void>) => () => void;
   signOut: () => Promise<void>;
   signIn: () => Promise<void>;
+  switchAccount?: () => Promise<void>;
   getCurrentUser: typeof apiGetCurrentUser;
 };
 const productionDependencies: SessionDependencies = {
@@ -42,6 +44,7 @@ const productionDependencies: SessionDependencies = {
   onIdTokenChanged: callback => onIdTokenChanged(auth, callback),
   signOut: () => signOut(auth),
   signIn: () => signInWithPopup(auth, googleAuthProvider).then(() => undefined),
+  switchAccount: () => signInWithPopup(auth, selectAccountGoogleProvider).then(() => undefined),
   getCurrentUser: apiGetCurrentUser,
 };
 export function G01SessionProvider({ children, dependencies = productionDependencies }: { children: React.ReactNode; dependencies?: SessionDependencies }) {
@@ -128,7 +131,11 @@ export function G01SessionProvider({ children, dependencies = productionDependen
     setError('');
     setLoading(true);
     try { await dependencies.signIn(); }
-    catch { setLoading(false); setError('Google sign-in was not completed. Please try again.'); }
+    catch (err) {
+      setLoading(false);
+      setError('Google sign-in was not completed. Please try again.');
+      throw err;
+    }
   };
   const logout = async () => {
     const user = dependencies.currentUser();
@@ -211,5 +218,14 @@ export function G01SessionProvider({ children, dependencies = productionDependen
     setLoading(false);
     setError('Your CABMS session or permission changed. Sign in again to verify access.');
   };
-  return <SessionContext.Provider value={{ profile, loading, error, login, logout, token, workspaceId, selectWorkspace, invalidate }}>{children}</SessionContext.Provider>;
+  const switchAccount = async () => {
+    try {
+      await (dependencies.switchAccount ?? dependencies.signIn)();
+    } catch (e: unknown) {
+      const code = (e as { code?: string } | null)?.code;
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+      throw e;
+    }
+  };
+  return <SessionContext.Provider value={{ profile, loading, error, login, switchAccount, logout, token, workspaceId, selectWorkspace, invalidate }}>{children}</SessionContext.Provider>;
 }

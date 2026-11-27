@@ -3,7 +3,7 @@
 /* Gate T: Full-Application Appearance Modes & Design Tokens */
 :root,
 [data-appearance="default_dark"] {
-  --cabms-canvas: #020617;
+  --cabms-canvas: #000000;
   --cabms-surface: #0f172a;
   --cabms-surface-subtle: #1e293b;
   --cabms-text-primary: #f8fafc;
@@ -182,16 +182,16 @@
 
 [data-company-panel="smart_home"],
 [data-company-panel="smarthome"] {
-  --cabms-brand-primary: #0284c7;
-  --cabms-brand-accent: #38bdf8;
-  --cabms-brand-border: #0284c7;
+  --cabms-brand-primary: #3dae49;
+  --cabms-brand-accent: #4be196;
+  --cabms-brand-border: #3dae49;
 }
 
 [data-company-panel="cctv"],
 [data-company-panel="gold_coast_cctv"] {
-  --cabms-brand-primary: #059669;
-  --cabms-brand-accent: #34d399;
-  --cabms-brand-border: #059669;
+  --cabms-brand-primary: #0ba3ad;
+  --cabms-brand-accent: #22d3ee;
+  --cabms-brand-border: #0ba3ad;
 }
 
 /* Subtle brand accent border for cross-company panels when company branding is active */
@@ -199,10 +199,10 @@
   border-left: 3px solid #ffae14;
 }
 [data-branding="company"] .cabms-company-surface:is([data-company-panel="smart_home"], [data-company-panel="smarthome"]) {
-  border-left: 3px solid #0284c7;
+  border-left: 3px solid #3dae49;
 }
 [data-branding="company"] .cabms-company-surface:is([data-company-panel="cctv"], [data-company-panel="gold_coast_cctv"]) {
-  border-left: 3px solid #059669;
+  border-left: 3px solid #0ba3ad;
 }
 
 /* DARK + COMPANY BRANDED: SOLARCELL PTY LTD (ORANGE #ffae14 THEME) */
@@ -410,6 +410,38 @@
   .cabms-accent-purple { color: var(--cabms-accent-purple); }
   .cabms-accent-success { color: var(--cabms-accent-success); }
   .cabms-accent-warning { color: var(--cabms-accent-warning); }
+
+  /* Brand-aware Semantic Primitives */
+  .cabms-btn-primary {
+    background-color: var(--cabms-brand-primary);
+    color: var(--cabms-brand-text);
+    border: 1px solid var(--cabms-brand-primary);
+    font-weight: 700;
+  }
+  .cabms-btn-primary:hover:enabled {
+    background-color: var(--cabms-brand-hover, var(--cabms-brand-primary));
+  }
+  .cabms-tab-active {
+    background-color: var(--cabms-brand-primary);
+    color: var(--cabms-brand-text);
+    border-color: var(--cabms-brand-primary);
+    font-weight: 700;
+  }
+  .cabms-row-selected {
+    background-color: var(--cabms-surface-subtle);
+    border-color: var(--cabms-brand-border);
+  }
+  .cabms-brand-accent-text {
+    color: var(--cabms-brand-primary);
+  }
+  .cabms-brand-icon {
+    color: var(--cabms-brand-primary);
+  }
+  .cabms-brand-pill {
+    background-color: var(--cabms-surface-subtle);
+    color: var(--cabms-text-primary);
+    border: 1px solid var(--cabms-brand-border);
+  }
 }
 
 /* Light mode utility overrides for accessible contrast on light backgrounds */
@@ -763,7 +795,7 @@
 .cabms-notification[data-tone="warning"] { background: var(--cabms-badge-warning-bg); border-color: var(--cabms-badge-warning-border); color: var(--cabms-badge-warning-text); }
 .cabms-notification[data-tone="success"] { background: var(--cabms-badge-completed-bg); border-color: var(--cabms-badge-completed-border); color: var(--cabms-badge-completed-text); }
 .cabms-drawer-layer { position: fixed; inset: 0; z-index: 100; }
-.cabms-drawer-backdrop { position: absolute; inset: 0; background: rgb(2 6 23 / .75); }
+.cabms-drawer-backdrop { position: absolute; inset: 0; background: rgb(0 0 0 / .6); }
 .cabms-mobile-drawer {
   position: relative; display: flex; flex-direction: column;
   width: min(20rem, calc(100% - 2rem)); height: 100%; height: 100dvh;
@@ -774,6 +806,7 @@
 .cabms-drawer-heading h2 { min-width: 0; overflow-wrap: anywhere; font-size: 1rem; font-weight: 800; color: var(--cabms-text-primary); }
 .cabms-drawer-identity { padding: 0 1rem .75rem; overflow-wrap: anywhere; font-size: .875rem; font-weight: 700; color: var(--cabms-text-primary); }
 .cabms-drawer-identity span { color: var(--cabms-text-secondary); font-size: .75rem; font-weight: 400; }
+.cabms-app-shell :is(button, a, select, input, textarea):focus-visible,
 .cabms-shell :is(button, a, select, input, textarea):focus-visible,
 .cabms-drawer-layer :is(button, a):focus-visible,
 .cabms-demo-controls :is(button, select, summary):focus-visible {
@@ -821,4 +854,13 @@
   .cabms-shell :focus-visible, .cabms-drawer-layer :focus-visible, .cabms-demo-controls :focus-visible {
     outline-color: Highlight;
   }
+}
+
+@media (max-width: 600px) {
+  .cabms-topbar-identity > div { flex-direction: column; align-items: flex-start; gap: .25rem; }
+  .cabms-topbar-identity .cabms-topbar-divider,
+  .cabms-topbar-identity .cabms-topbar-company-subtitle { display: none; }
+  .cabms-topbar-identity .cabms-business-name,
+  .cabms-topbar-identity .cabms-topbar-logo { max-width: 100%; }
+  .cabms-topbar-identity .cabms-active-area { white-space: normal; font-size: .8rem; }
 }

@@ -70,6 +70,64 @@ test('custom form draft reloads and requires authorized review and publication',
  assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}`,staff,'PUT',{...edited,expected_updated_at:afterReviewUpdatedAt})).status,400);
  assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/approve`,staff,'POST')).status,403);
  assert.equal((await req(`form-definitions/${ids.id}/revisions/${ids.revision_id}/approve`,owner,'POST')).status,200);
+ const afterApproveList = await (await req('form-definitions',staff)).json() as Array<Record<string,unknown>>;
+ const approvedListItem = afterApproveList.find(f => f.id === ids.id);
+ assert.equal(approvedListItem?.display_version,'Revision 1');
+ assert.equal(approvedListItem?.current_version,'v1.0');
+ const afterApproveDetail = await (await req(`form-definitions/${ids.id}`,staff)).json() as any;
+ assert.equal(afterApproveDetail.display_version,'Revision 1');
+ assert.equal(afterApproveDetail.revisions[0].display_version,'Revision 1');
+ assert.equal(afterApproveDetail.revisions[0].version,'v1.0');
+ // Fabricated synthetic draft-<uuid> published revision preserves DB version and presents Revision 1.
+ await db.batch([
+  db.prepare("INSERT INTO form_definitions (id,workspace_id,brand_id,code,title,description,category,status,published_revision_id,created_at,updated_at,created_by) VALUES ('form-legacy-uuid','solarcell','solarcell','LEGACY-UUID-001','Synthetic Draft-UUID Notice','Synthetic draft-uuid version','Cabling','DRAFT',NULL,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','test_g01_usr_office')"),
+  db.prepare("INSERT INTO form_revisions (id,workspace_id,form_definition_id,version,status,created_at,updated_at,created_by) VALUES ('rev-legacy-uuid','solarcell','form-legacy-uuid','draft-00000000-0000-4000-8000-000000000001','DRAFT','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','test_g01_usr_office')"),
+ ]);
+ await db.prepare("UPDATE form_revisions SET status='REVIEW' WHERE id='rev-legacy-uuid'").run();
+ await db.batch([
+  db.prepare("UPDATE form_revisions SET status='PUBLISHED',approved_at='2026-01-01T00:00:00Z',approved_by='test_g01_usr_owner' WHERE id='rev-legacy-uuid'"),
+  db.prepare("UPDATE form_definitions SET status='ACTIVE',published_revision_id='rev-legacy-uuid' WHERE id='form-legacy-uuid'"),
+ ]);
+ const legacyList = await (await req('form-definitions',staff)).json() as Array<Record<string,unknown>>;
+ const legacyItem = legacyList.find(f => f.id === 'form-legacy-uuid');
+ assert.equal(legacyItem?.current_version,'draft-00000000-0000-4000-8000-000000000001');
+ assert.equal(legacyItem?.display_version,'Revision 1');
+ const legacyDetail = await (await req('form-definitions/form-legacy-uuid',staff)).json() as any;
+ assert.equal(legacyDetail.display_version,'Revision 1');
+ assert.equal(legacyDetail.revisions[0].version,'draft-00000000-0000-4000-8000-000000000001');
+ assert.equal(legacyDetail.revisions[0].display_version,'Revision 1');
+ // Deterministic ordering when published revision timestamps tie (tie-broken by id).
+ await db.batch([
+  db.prepare("INSERT INTO form_definitions (id,workspace_id,brand_id,code,title,description,category,status,published_revision_id,created_at,updated_at,created_by) VALUES ('form-tie-ts','solarcell','solarcell','TIE-TS-001','Tie Timestamp Form','Tie timestamp test','Cabling','DRAFT',NULL,'2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','test_g01_usr_office')"),
+  db.prepare("INSERT INTO form_revisions (id,workspace_id,form_definition_id,version,status,created_at,updated_at,created_by) VALUES ('rev-tie-a','solarcell','form-tie-ts','v1.0','DRAFT','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','test_g01_usr_office')"),
+  db.prepare("INSERT INTO form_revisions (id,workspace_id,form_definition_id,version,status,created_at,updated_at,created_by) VALUES ('rev-tie-b','solarcell','form-tie-ts','v2.0','DRAFT','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','test_g01_usr_office')"),
+ ]);
+ await db.prepare("UPDATE form_revisions SET status='REVIEW' WHERE id IN ('rev-tie-a','rev-tie-b')").run();
+ await db.batch([
+  db.prepare("UPDATE form_revisions SET status='PUBLISHED',approved_at='2026-01-02T00:00:00Z',approved_by='test_g01_usr_owner' WHERE id IN ('rev-tie-a','rev-tie-b')"),
+  db.prepare("UPDATE form_definitions SET status='ACTIVE',published_revision_id='rev-tie-b' WHERE id='form-tie-ts'"),
+ ]);
+ const tieDetail = await (await req('form-definitions/form-tie-ts',staff)).json() as any;
+ assert.equal(tieDetail.revisions.find((r:any)=>r.id==='rev-tie-a')?.display_version,'Revision 1');
+ assert.equal(tieDetail.revisions.find((r:any)=>r.id==='rev-tie-b')?.display_version,'Revision 2');
+ // Out-of-creation-order publication and published_revision_id pointing to Revision 1 while Revision 2 exists.
+ await db.batch([
+  db.prepare("INSERT INTO form_definitions (id,workspace_id,brand_id,code,title,description,category,status,published_revision_id,created_at,updated_at,created_by) VALUES ('form-ooc','solarcell','solarcell','OOC-001','Out of Order Form','Out of creation order','Cabling','DRAFT',NULL,'2026-01-03T00:00:00Z','2026-01-03T00:00:00Z','test_g01_usr_office')"),
+  db.prepare("INSERT INTO form_revisions (id,workspace_id,form_definition_id,version,status,created_at,updated_at,created_by) VALUES ('rev-ooc-a','solarcell','form-ooc','v1.0','DRAFT','2026-01-03T01:00:00Z','2026-01-03T01:00:00Z','test_g01_usr_office')"),
+  db.prepare("INSERT INTO form_revisions (id,workspace_id,form_definition_id,version,status,created_at,updated_at,created_by) VALUES ('rev-ooc-b','solarcell','form-ooc','v2.0','DRAFT','2026-01-03T02:00:00Z','2026-01-03T02:00:00Z','test_g01_usr_office')"),
+ ]);
+ await db.prepare("UPDATE form_revisions SET status='REVIEW' WHERE id IN ('rev-ooc-a','rev-ooc-b')").run();
+ await db.batch([
+  db.prepare("UPDATE form_revisions SET status='PUBLISHED',approved_at='2026-01-03T03:00:00Z',approved_by='test_g01_usr_owner' WHERE id='rev-ooc-b'"),
+  db.prepare("UPDATE form_revisions SET status='PUBLISHED',approved_at='2026-01-03T04:00:00Z',approved_by='test_g01_usr_owner' WHERE id='rev-ooc-a'"),
+  db.prepare("UPDATE form_definitions SET status='ACTIVE',published_revision_id='rev-ooc-b' WHERE id='form-ooc'"),
+ ]);
+ const oocList = await (await req('form-definitions',staff)).json() as Array<Record<string,unknown>>;
+ assert.equal(oocList.find(f => f.id === 'form-ooc')?.display_version,'Revision 1');
+ const oocDetail = await (await req('form-definitions/form-ooc',staff)).json() as any;
+ assert.equal(oocDetail.display_version,'Revision 1');
+ assert.equal(oocDetail.revisions.find((r:any)=>r.id==='rev-ooc-b')?.display_version,'Revision 1');
+ assert.equal(oocDetail.revisions.find((r:any)=>r.id==='rev-ooc-a')?.display_version,'Revision 2');
  assert.equal((await req(`form-definitions/${ids.id}`,owner,'PATCH',{action:'archive'})).status,200);
  assert.equal((await req(`form-definitions/${ids.id}`,owner,'PATCH',{action:'restore'})).status,200);
  const restoredPublished = await (await req(`form-definitions/${ids.id}`,owner)).json() as any;
@@ -127,6 +185,17 @@ test('custom form draft reloads and requires authorized review and publication',
  assert.notEqual(next.revision_id,ids.revision_id);
  const revised = await (await req(`form-definitions/${ids.id}`,staff)).json() as any;
  assert.equal(revised.published_revision_id,ids.revision_id);
+ assert.equal(revised.revisions.find((r:any)=>r.id===ids.revision_id)?.display_version,'Revision 1');
+ const draftRev = revised.revisions.find((r:any)=>r.id===next.revision_id);
+ assert.equal(draftRev?.display_version,'Draft revision');
+ assert.equal((await req(`form-definitions/${ids.id}/revisions/${next.revision_id}/review`,staff,'POST',{expected_updated_at:draftRev.updated_at})).status,200);
+ const inReview = await (await req(`form-definitions/${ids.id}`,staff)).json() as any;
+ assert.equal(inReview.revisions.find((r:any)=>r.id===next.revision_id)?.display_version,'Awaiting approval');
+ assert.equal((await req(`form-definitions/${ids.id}/revisions/${next.revision_id}/approve`,owner,'POST')).status,200);
+ const secondApproved = await (await req(`form-definitions/${ids.id}`,staff)).json() as any;
+ assert.equal(secondApproved.display_version,'Revision 2');
+ assert.equal(secondApproved.revisions.find((r:any)=>r.id===next.revision_id)?.display_version,'Revision 2');
+ assert.equal(secondApproved.revisions.find((r:any)=>r.id===ids.revision_id)?.display_version,'Revision 1');
  assert.ok(revised.revisions.some((r:any) => r.id === next.revision_id && r.status === 'DRAFT' && r.sections[0].fields.length === 5 && r.sections[0].fields[2].visible_when.field === 'result' && r.sections[0].fields[4].validation.columns.length === 2));
  assert.equal((await req(`form-definitions/${ids.id}`,staff,'GET',undefined,'cctv')).status,403);
  await db.exec('DROP TABLE policy_catalog_form_rules');

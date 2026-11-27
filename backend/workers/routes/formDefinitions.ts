@@ -11,6 +11,33 @@ const approver = allowed("'super_admin','owner_admin'");
 type Field = { key:string; label:string; type:string; required?:boolean; instructions?:string; choices?:string[]; validation?:object; visible_when?:object; autofill_source?:string };
 type Section = { title:string; description?:string; repeatable?:boolean; fields:Field[] };
 
+function comparePublishedRevisions(a: Record<string, unknown>, b: Record<string, unknown>): number {
+  const approvedA = String(a.approved_at || '');
+  const approvedB = String(b.approved_at || '');
+  if (approvedA !== approvedB) return approvedA.localeCompare(approvedB);
+  const createdA = String(a.created_at || '');
+  const createdB = String(b.created_at || '');
+  if (createdA !== createdB) return createdA.localeCompare(createdB);
+  return String(a.id || '').localeCompare(String(b.id || ''));
+}
+
+function computeDisplayVersions(revisions: Array<Record<string, unknown>>): void {
+  const published = revisions.filter(rev => rev.status === 'PUBLISHED').sort(comparePublishedRevisions);
+  published.forEach((rev, index) => {
+    rev.display_version = `Revision ${index + 1}`;
+  });
+  for (const rev of revisions) {
+    if (rev.status === 'PUBLISHED') continue;
+    if (rev.status === 'REVIEW') {
+      rev.display_version = 'Awaiting approval';
+    } else if (rev.status === 'DRAFT') {
+      rev.display_version = 'Draft revision';
+    } else {
+      rev.display_version = typeof rev.version === 'string' && !rev.version.startsWith('draft-') ? rev.version : 'Revision';
+    }
+  }
+}
+
 export async function handleFormDefinitions(request: Request, env: Env, workspace: string, id: string | undefined, revision: string | undefined, action: string | undefined, requestId: string, authentication: AuthenticationService): Promise<Response> {
  const auth = await authentication.authenticateRequest(env.DB,request,env);
  if (!auth) return authenticationRequiredResponse('Valid staff authentication token is required',requestId);
@@ -23,13 +50,30 @@ export async function handleFormDefinitions(request: Request, env: Env, workspac
  const fail = () => createProblemResponse(400,'INVALID_STATE','invalid-state','Invalid State','Form revision transition failed',requestId);
  if (request.method === 'GET' && !id) {
   const publishedOnly = new URL(request.url).searchParams.get('published') === '1';
-  const rows = await env.DB.prepare(`SELECT f.*, (SELECT version FROM form_revisions WHERE id=f.published_revision_id AND workspace_id=f.workspace_id) AS current_version, (SELECT status FROM form_revisions WHERE workspace_id=f.workspace_id AND form_definition_id=f.id AND status IN ('DRAFT','REVIEW') ORDER BY created_at DESC,id DESC LIMIT 1) AS pending_status, (SELECT COUNT(DISTINCT p.job_type_id) FROM policy_catalog_form_rules cr JOIN job_type_compliance_policies p ON p.id=cr.policy_version_id JOIN form_revisions r ON r.id=cr.form_revision_id AND r.workspace_id=cr.workspace_id WHERE cr.workspace_id=f.workspace_id AND r.form_definition_id=f.id AND p.status='PUBLISHED') AS used_by_job_types FROM form_definitions f WHERE f.workspace_id=? AND ${staff} AND (?=0 OR (f.status='ACTIVE' AND f.published_revision_id IS NOT NULL)) ORDER BY f.title,f.id`).bind(workspace,...who,publishedOnly ? 1 : 0).all();
+  const rows = await env.DB.prepare(`SELECT f.*, (SELECT version FROM form_revisions WHERE id=f.published_revision_id AND workspace_id=f.workspace_id) AS current_version, (SELECT status FROM form_revisions WHERE workspace_id=f.workspace_id AND form_definition_id=f.id AND status IN ('DRAFT','REVIEW') ORDER BY created_at DESC,id DESC LIMIT 1) AS pending_status, (SELECT COUNT(DISTINCT p.job_type_id) FROM policy_catalog_form_rules cr JOIN job_type_compliance_policies p ON p.id=cr.policy_version_id JOIN form_revisions r ON r.id=cr.form_revision_id AND r.workspace_id=cr.workspace_id WHERE cr.workspace_id=f.workspace_id AND r.form_definition_id=f.id AND p.status='PUBLISHED') AS used_by_job_types FROM form_definitions f WHERE f.workspace_id=? AND ${staff} AND (?=0 OR (f.status='ACTIVE' AND f.published_revision_id IS NOT NULL)) ORDER BY f.title,f.id`).bind(workspace,...who,publishedOnly ? 1 : 0).all<Record<string,unknown>>();
+  const publishedRows = (await env.DB.prepare(`SELECT id, form_definition_id, status, version, approved_at, created_at FROM form_revisions WHERE workspace_id=? AND status='PUBLISHED'`).bind(workspace).all<Record<string,unknown>>()).results;
+  const byForm = new Map<string, Array<Record<string, unknown>>>();
+  for (const pr of publishedRows) {
+    const key = String(pr.form_definition_id);
+    const list = byForm.get(key) || [];
+    list.push(pr);
+    byForm.set(key, list);
+  }
+  for (const revs of byForm.values()) computeDisplayVersions(revs);
+  for (const row of rows.results) {
+   const revs = byForm.get(String(row.id)) || [];
+   const pub = revs.find(r => r.id === row.published_revision_id);
+   row.display_version = (pub?.display_version as string | undefined) ?? null;
+  }
   return reply(rows.results);
  }
  if (request.method === 'GET' && id && !revision && !action) {
-  const form = await env.DB.prepare(`SELECT f.* FROM form_definitions f WHERE f.workspace_id=? AND f.id=? AND ${staff}`).bind(workspace,id,...who).first();
+  const form = await env.DB.prepare(`SELECT f.* FROM form_definitions f WHERE f.workspace_id=? AND f.id=? AND ${staff}`).bind(workspace,id,...who).first<Record<string,unknown>>();
   if (!form) return resourceNotFoundResponse('Form definition not found',requestId);
   const revisions = (await env.DB.prepare('SELECT * FROM form_revisions WHERE workspace_id=? AND form_definition_id=? ORDER BY created_at DESC,id DESC').bind(workspace,id).all<Record<string,unknown>>()).results;
+  computeDisplayVersions(revisions);
+  const publishedRev = revisions.find(r => r.id === form.published_revision_id);
+  form.display_version = (publishedRev?.display_version as string | undefined) ?? null;
   for (const rev of revisions) {
    const sections = (await env.DB.prepare('SELECT * FROM form_sections WHERE workspace_id=? AND revision_id=? ORDER BY display_order,id').bind(workspace,rev.id).all<Record<string,unknown>>()).results;
    for (const section of sections) {

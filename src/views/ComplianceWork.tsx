@@ -225,7 +225,10 @@ function FormWork({actorId,r,job,api,run,offline,disabled}:{
  const [confirmed,confirm]=useState(false),[editing,edit]=useState(!r.signed_digest||JSON.stringify(draft)!==JSON.stringify(r.answers));
  const [draftStorageError,setDraftStorageError]=useState(false);
  const [links,setLinks]=useState<Record<string,string[]>>({}),[uploading,upload]=useState(false);
- const dirty=JSON.stringify(draft)!==JSON.stringify(r.answers),locked=disabled||!editing;
+ const editableAnswers=(source:Record<string,unknown>)=>Object.fromEntries(
+  Object.entries(source).filter(([k])=>!r.fields.some(f=>f.key===k&&f.type==='READONLY_AUTOFILL'))
+ );
+ const dirty=JSON.stringify(editableAnswers(draft))!==JSON.stringify(editableAnswers(r.answers)),locked=disabled||!editing;
  useEffect(()=>{
   try{if(dirty)sessionStorage.setItem(draftKey,JSON.stringify(draft));else sessionStorage.removeItem(draftKey);setDraftStorageError(false);}
   catch{setDraftStorageError(true);}
@@ -237,7 +240,7 @@ function FormWork({actorId,r,job,api,run,offline,disabled}:{
  <section className="cabms-card cw-panel"><h2>Form answers</h2><fieldset disabled={locked}><div className="cw-form-grid">{visible.filter(f=>!['PHOTO','FILE','SIGNATURE'].includes(f.type)).map(f=><div key={f.key} className={['LONG_TEXT','REPEATABLE_TABLE'].includes(f.type)?'cw-field-full':''}><Control field={f} value={draft[f.key]} onChange={v=>{setDraft(old=>applicableFormAnswers(r.fields,{...old,[f.key]:v}).answers);confirm(false);}}/></div>)}</div></fieldset>
  {r.needs_answer_review&&<p role="status">This saved version contains answers for fields that no longer apply. Review and save a new version before signing.</p>}
  {draftStorageError&&<p role="status">Local draft storage is unavailable. Keep this form open until you can save it.</p>}
- {!editing&&r.signed_digest?<button disabled={disabled} onClick={()=>edit(true)}>Start a correction</button>:<button disabled={locked||offline||(!dirty&&!!r.answer_version&&!r.needs_answer_review)} onClick={()=>void run(async()=>{await api.save(job,r,draft,generateUuid());
+ {!editing&&r.signed_digest?<button disabled={disabled} onClick={()=>edit(true)}>Start a correction</button>:<button disabled={locked||offline||(!dirty&&!!r.answer_version&&!r.needs_answer_review)} onClick={()=>void run(async()=>{await api.save(job,r,editableAnswers(draft),generateUuid());
   try{sessionStorage.removeItem(draftKey);}catch{/* The answer version still protects against stale drafts. */}
  },'Answers saved.')}>Save answers</button>}</section>
  <section className="cabms-card cw-panel"><div className="cw-heading"><h2>Photo evidence</h2><span>{job.photo_count} / 20</span></div>

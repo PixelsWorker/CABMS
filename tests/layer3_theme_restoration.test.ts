@@ -331,7 +331,7 @@ describe('Layer 3: UI/UX Theme Restoration & Sync', () => {
     assert.match(tpl, /isTemplateDirty\s*=\s*!!currentTemplate\s*&&\s*hasEditedTemplate\s*&&\s*editingContent\s*!==\s*currentTemplate\.content/);
     assert.match(tpl, /confirmDiscardTemplateEdits/);
     assert.match(tpl, /currentTemplate\s*=\s*filteredTemplates\.find/);
-    assert.match(tpl, /disabled=\{!!session\?\.profile\}\s+value=\{editJtBrandId\}/);
+    assert.match(tpl, /session\?\.profile[\s\S]*brands\[editJtBrandId\]\?\.name/);
   });
 
   it('Behavioral DEF-10: TemplateModal manages initial focus, Tab/Shift+Tab containment, Escape close, and focus restoration', async () => {
@@ -536,5 +536,67 @@ describe('Layer 3: UI/UX Theme Restoration & Sync', () => {
     });
     assert.equal(dom.window.document.activeElement, opener, 'Closing Modal 1 restores focus to Preview Document opener');
     await act(async () => { reactRoot.unmount(); });
+  });
+
+  it('UI-2: TemplatesSettingsView renders read-only Business identity instead of Brand Affiliation select when authenticated', async () => {
+    const dom = setupDom();
+    const prevNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, writable: true, value: dom.window.navigator });
+    const { TemplatesSettingsView } = await import('../src/views/TemplatesSettingsView.tsx');
+    const { setApiFetchHandler, resetApiFetchHandler, setApiBase, resetApiBase } = await import('../src/services/g01Client.ts');
+    setApiBase('http://localhost');
+    setApiFetchHandler(async () => Response.json([]));
+    const session: Session = {
+      profile: { user: { id: 'u1', email: 'owner@example.invalid', display_name: 'Owner' }, memberships: [{ workspace_id: 'solarcell', name: 'Solarcell', role: 'owner_admin' }] },
+      workspaceId: 'solarcell',
+      selectWorkspace: () => {},
+      token: async () => 'token',
+      login: async () => {},
+      logout: async () => {},
+      invalidate: () => {},
+      loading: false,
+      error: '',
+    };
+    const rootEl = dom.window.document.getElementById('root')!;
+    const reactRoot = createRoot(rootEl);
+    try {
+      await act(async () => {
+        reactRoot.render(
+          React.createElement(SessionContext.Provider, { value: session },
+            React.createElement(CabmsProvider, null, React.createElement(TemplatesSettingsView))
+          )
+        );
+      });
+      await act(async () => { await new Promise(r => setTimeout(r, 20)); });
+      const addBtn = Array.from(rootEl.querySelectorAll('button')).find(b => b.textContent?.includes('Add Job Type'));
+      assert.ok(addBtn, 'Add Job Type button must exist');
+      await act(async () => { addBtn.click(); });
+      const modal = rootEl.querySelector('[role="dialog"]');
+      assert.ok(modal, 'Add Job Type modal must be open');
+      assert.doesNotMatch(modal.textContent || '', /Brand Affiliation/);
+      assert.match(modal.textContent || '', /Business/);
+      assert.match(modal.textContent || '', /This job type belongs to the active workspace\. Switch businesses using the workspace selector\./);
+      const modalSelects = Array.from(modal.querySelectorAll('select'));
+      assert.equal(modalSelects.length, 0, 'Authenticated Add Job Type must not render a Brand Affiliation select');
+      // Close Add Job Type and exercise Edit Job Type dialog under authenticated session.
+      const cancelBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent?.includes('Cancel'));
+      assert.ok(cancelBtn);
+      await act(async () => { cancelBtn.click(); });
+      const editBtn = rootEl.querySelector('button[title="Edit job type title and description"]') as HTMLButtonElement | null;
+      assert.ok(editBtn, 'Edit Job Type button must exist');
+      await act(async () => { editBtn.click(); });
+      const editModal = rootEl.querySelector('[role="dialog"]');
+      assert.ok(editModal, 'Edit Job Type modal must be open');
+      assert.doesNotMatch(editModal.textContent || '', /Brand Affiliation/);
+      assert.match(editModal.textContent || '', /Business/);
+      assert.match(editModal.textContent || '', /Solarcell/);
+      assert.equal(editModal.querySelectorAll('select').length, 0, 'Authenticated Edit Job Type must not render a Brand Affiliation select');
+    } finally {
+      await act(async () => { reactRoot.unmount(); });
+      resetApiFetchHandler();
+      resetApiBase();
+      if (prevNavigator) Object.defineProperty(globalThis, 'navigator', prevNavigator);
+      dom.window.close();
+    }
   });
 });

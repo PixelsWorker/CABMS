@@ -1107,17 +1107,23 @@ export const TemplatesSettingsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand Affiliation</label>
-                  <select
-                    value={newJtBrandId}
-                    disabled={!!session?.profile}
-                    onChange={e => setNewJtBrandId(e.target.value as BrandId)}
-                    className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
-                  >
-                    <option value="solarcell">Solarcell</option>
-                    <option value="smart_home">Gold Coast Smart Home</option>
-                    <option value="cctv">Gold Coast CCTV</option>
-                  </select>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Business</label>
+                  {session?.profile ? (
+                    <div className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)">
+                      <div className="font-medium">{brands[newJtBrandId]?.name || session.profile.memberships.find(m => m.workspace_id === newJtBrandId)?.name || newJtBrandId}</div>
+                      <p className="text-[11px] text-(--cabms-text-secondary) mt-0.5">This job type belongs to the active workspace. Switch businesses using the workspace selector.</p>
+                    </div>
+                  ) : (
+                    <select
+                      value={newJtBrandId}
+                      onChange={e => setNewJtBrandId(e.target.value as BrandId)}
+                      className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
+                    >
+                      <option value="solarcell">Solarcell</option>
+                      <option value="smart_home">Gold Coast Smart Home</option>
+                      <option value="cctv">Gold Coast CCTV</option>
+                    </select>
+                  )}
                 </div>
               </div>
 
@@ -1246,17 +1252,23 @@ export const TemplatesSettingsView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Brand Affiliation</label>
-                  <select
-                    disabled={!!session?.profile}
-                    value={editJtBrandId}
-                    onChange={e => setEditJtBrandId(e.target.value as BrandId)}
-                    className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
-                  >
-                    <option value="solarcell">Solarcell</option>
-                    <option value="smart_home">Gold Coast Smart Home</option>
-                    <option value="cctv">Gold Coast CCTV</option>
-                  </select>
+                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Business</label>
+                  {session?.profile ? (
+                    <div className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)">
+                      <div className="font-medium">{brands[editJtBrandId]?.name || session.profile.memberships.find(m => m.workspace_id === editJtBrandId)?.name || editJtBrandId}</div>
+                      <p className="text-[11px] text-(--cabms-text-secondary) mt-0.5">This job type belongs to {brands[editJtBrandId]?.name || editJtBrandId}. Switch businesses using the workspace selector.</p>
+                    </div>
+                  ) : (
+                    <select
+                      value={editJtBrandId}
+                      onChange={e => setEditJtBrandId(e.target.value as BrandId)}
+                      className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
+                    >
+                      <option value="solarcell">Solarcell</option>
+                      <option value="smart_home">Gold Coast Smart Home</option>
+                      <option value="cctv">Gold Coast CCTV</option>
+                    </select>
+                  )}
                 </div>
               </div>
 

@@ -463,4 +463,43 @@ describe('Cloudflare Worker & Local D1 Binding Integration Proof', () => {
     // Must be rejected: unmapped privileged account cannot auto-link by email match alone
     assert.equal(unmappedRes.status, 401);
   });
+
+  it('11. Settings role matrix, cross-workspace rejection, reload persistence, and accent_color preservation', async () => {
+    const ownerAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.ownerAdmin.uid, G01_TEST_AUTH.ownerAdmin.email)}`;
+    const officeAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email)}`;
+    const techAuth = `Bearer ${await fixture.token(G01_TEST_AUTH.technician.uid, G01_TEST_AUTH.technician.email)}`;
+    const beforeRes = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, { headers: { Authorization: ownerAuth } });
+    assert.equal(beforeRes.status, 200);
+    const before = (await beforeRes.json()) as { version: number; accent_color: string };
+    // Office Staff and Technician writes must be rejected (403).
+    for (const deniedAuth of [officeAuth, techAuth]) {
+      const denied = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, {
+        method: 'PATCH',
+        headers: { Authorization: deniedAuth, 'If-Match': `"${before.version}"`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contact_phone: '0411111111' }),
+      });
+      assert.equal(denied.status, 403);
+    }
+    // Cross-workspace write by solarcell owner_admin to cctv must be rejected (403).
+    const crossWs = await fetch(`${BASE_URL}/api/v1/workspaces/cctv/settings`, {
+      method: 'PATCH',
+      headers: { Authorization: ownerAuth, 'If-Match': '"1"', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_phone: '0422222222' }),
+    });
+    assert.equal(crossWs.status, 403);
+    // Owner Admin permitted write succeeds (200), persists across GET reload, and preserves accent_color.
+    const nextPhone = '0499888777';
+    const okPatch = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, {
+      method: 'PATCH',
+      headers: { Authorization: ownerAuth, 'If-Match': `"${before.version}"`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_phone: nextPhone }),
+    });
+    assert.equal(okPatch.status, 200);
+    const reloadedRes = await fetch(`${BASE_URL}/api/v1/workspaces/solarcell/settings`, { headers: { Authorization: ownerAuth } });
+    assert.equal(reloadedRes.status, 200);
+    const reloaded = (await reloadedRes.json()) as { version: number; contact_phone: string; accent_color: string };
+    assert.equal(reloaded.version, before.version + 1);
+    assert.equal(reloaded.contact_phone, nextPhone);
+    assert.equal(reloaded.accent_color, before.accent_color);
+  });
 });

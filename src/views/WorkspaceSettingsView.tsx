@@ -238,7 +238,17 @@ export const WorkspaceSettingsView: React.FC = () => {
                 value={serverValues.contract_threshold_cents ?? ''} onChange={e => resource.setField('contract_threshold_cents',
                   e.target.value === '' ? null : e.target.valueAsNumber)} />
             </label>}
-            <label className="text-xs">Brand Accent<input id="ws-accent" type="color" value={serverValues?.accent_color || '#0284c7'} onChange={e => resource.setField('accent_color', e.target.value)} /></label>
+            <div className="rounded-lg border border-(--cabms-border-base) cabms-card-subtle p-3 flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="w-6 h-6 rounded border border-(--cabms-border-base) shrink-0"
+                style={{ backgroundColor: 'var(--cabms-brand-primary)' }}
+              />
+              <div className="text-xs">
+                <div className="font-semibold text-(--cabms-text-primary)">{currentBrand?.name || activeBrandId}</div>
+                <div className="text-(--cabms-text-secondary)">Official company brand accent (read-only)</div>
+              </div>
+            </div>
           </div>}
           <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">
             <FontAwesomeIcon icon={faBuilding} className="text-amber-500" />

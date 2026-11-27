@@ -84,7 +84,28 @@ with sync_playwright() as pw:
         admin.get_by_role('button',name='Complete job',exact=True).click()
     assert invoice_completion.value.status==200
     expect(admin.get_by_text('This job is closed.')).to_be_visible()
+    admin.get_by_role('navigation',name='Main navigation').get_by_role('button',name='Dashboard',exact=False).click()
+    admin.get_by_role('button',name='View Jobs & Operations').click()
+    # Filter Business to smart_home while active workspace remains solarcell -> root theme & workspace must NOT change.
+    assert admin.evaluate("() => document.documentElement.getAttribute('data-company-panel')") == 'solarcell'
+    assert admin.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--cabms-brand-primary').trim().toLowerCase()") == '#ffae14'
+    admin.get_by_label('Business',exact=True).select_option('smart_home')
+    assert admin.evaluate("() => document.documentElement.getAttribute('data-company-panel')") == 'solarcell'
+    assert admin.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--cabms-brand-primary').trim().toLowerCase()") == '#ffae14'
+    # Switch active workspace to smart_home, verify API call, root attributes & theme, and open smart_home job.
+    with admin.expect_response(lambda r: r.request.method=='GET' and '/api/v1/workspaces/smart_home/compliance-jobs' in r.url) as sh_jobs:
+        admin.get_by_label('Active Brand Workspace Selector').select_option('smart_home')
+    assert sh_jobs.value.status == 200
+    admin.wait_for_function("() => document.documentElement.getAttribute('data-company-panel') === 'smart_home' && ['#3dae49', '#4be196', '#065f46'].includes(getComputedStyle(document.documentElement).getPropertyValue('--cabms-brand-primary').trim().toLowerCase())")
+    admin.get_by_role('button',name='Smart Home authorized workspace fixture',exact=False).click()
+    expect(admin.get_by_text('9 Smart Home Street',exact=True)).to_be_visible()
+    # Switch header to cctv and verify root attributes, computed theme, and workspace-scoped API request.
+    with admin.expect_response(lambda r: r.request.method=='GET' and '/api/v1/workspaces/cctv/' in r.url) as cctv_req:
+        admin.get_by_label('Active Brand Workspace Selector').select_option('cctv')
+    assert cctv_req.value.status == 200
+    admin.wait_for_function("() => document.documentElement.getAttribute('data-company-panel') === 'cctv' && ['#0ba3ad', '#22d3ee', '#155e75'].includes(getComputedStyle(document.documentElement).getPropertyValue('--cabms-brand-primary').trim().toLowerCase())")
     admin.get_by_label('Active Brand Workspace Selector').select_option('solarcell')
+    assert admin.evaluate("() => document.documentElement.getAttribute('data-company-panel')") == 'solarcell'
     admin.get_by_role('navigation',name='Main navigation').get_by_role('button',name='Dashboard',exact=False).click()
     check_dashboard(admin)
     admin.get_by_label('Status',exact=True).select_option('COMPLETED')
@@ -250,6 +271,22 @@ with sync_playwright() as pw:
     shot(tech,'03-phone-form.png')
     tech.get_by_role('button',name='Sign current version').click()
     expect(tech.get_by_text('Signed snapshot recorded.')).to_be_visible()
+    # P1 real-browser correction serialization: FormWork omits READONLY_AUTOFILL (job_ref) on PATCH and re-signs v2.
+    tech.unroute('**/compliance-jobs/*',lose_save)
+    expect(tech.get_by_label('Job reference · Auto-filled')).to_be_disabled()
+    expect(tech.get_by_label('Job reference · Auto-filled')).to_have_value('Switchboard inspection')
+    tech.get_by_label('Notes').fill('Corrected note in Chrome')
+    with tech.expect_request(lambda req: req.method=='PATCH' and '/compliance-jobs/' in req.url) as patch_req:
+        tech.get_by_role('button',name='Save answers').click()
+    patch_body=patch_req.value.post_data_json
+    assert patch_body['answers']['notes']=='Corrected note in Chrome'
+    assert 'job_ref' not in patch_body['answers']
+    expect(tech.get_by_text('Answers saved.',exact=True)).to_be_visible()
+    tech.get_by_label('Add photo').set_input_files({'name':'correction.png','mimeType':'image/png','buffer':photo})
+    expect(tech.get_by_text('Photo verified.',exact=True)).to_be_visible()
+    tech.get_by_label('I confirm the saved answers and linked evidence for this form occurrence.').check()
+    tech.get_by_role('button',name='Sign current version').click()
+    expect(tech.get_by_text('Signed snapshot recorded.')).to_be_visible()
     tech.get_by_label('New finding').fill('Confirm switchboard label')
     tech.get_by_role('button',name='Record finding',exact=True).click()
     expect(tech.get_by_text('Finding recorded.')).to_be_visible()
@@ -288,7 +325,7 @@ with sync_playwright() as pw:
     expect(office.get_by_role('heading',name='Switchboard inspection',exact=True)).to_be_visible()
     expect(office.get_by_text('1 of 1 signed')).to_be_visible()
     office.get_by_role('button',name='Inherited',exact=False).click()
-    expect(office.get_by_text('3 / 20',exact=True)).to_be_visible()
+    expect(office.get_by_text('4 / 20',exact=True)).to_be_visible()
     office.get_by_role('button',name='Back to job',exact=False).click()
     attempts=[]
     def rejected_recovery(route):

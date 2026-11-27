@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {readFileSync,mkdirSync,mkdtempSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -26,8 +27,10 @@ export async function browserJourney(workerUrl:string,base:string,office:string,
  const {id:form,revision_id}=await post<{id:string;revision_id:string}>(workspace+'/form-definitions',office,201,{
   title:'Switchboard safety inspection',code:'SYNC-FORM-001',description:'Disposable synchronization fixture',category:'Custom',brand_id:'solarcell',
   schema:{sections:[{title:'Inspection',fields:[
+   {key:'job_ref',label:'Job reference',type:'READONLY_AUTOFILL',autofill_source:'job.title'},
    {key:'result',label:'Result',type:'PASS_FAIL',required:true},
    {key:'reason',label:'Explain failure',type:'TEXT',required:true,visible_when:{field:'result',equals:'FAIL'}},
+   {key:'notes',label:'Notes',type:'TEXT'},
    {key:'proof',label:'Proof',type:'PHOTO',required:true},
   ]}]},
  });
@@ -64,6 +67,10 @@ export async function browserJourney(workerUrl:string,base:string,office:string,
  await db.prepare("INSERT INTO compliance_signer_grants(workspace_id,revision_id,user_id) VALUES('solarcell',?,'test_g01_usr_technician')").bind(revision_id).run();
  await post(workspace+'/visits',office,200,{visit_id:'browser-inspection-visit',job_id,version:1,technician_id:'test_g01_usr_technician',
   starts_at:'2025-01-01T00:00:00.000Z',duration_minutes:60,status:'SCHEDULED',reason:''},{'Idempotency-Key':'browser-inspection-visit'});
+ const {id:smartHomeType,policyId:smartHomePolicy}=await post<{id:string;policyId:string}>('/api/v1/workspaces/smart_home/job-types',admin,201,{name:'Smart Home Install Fixture',code:'SH-FIX-001',brandId:'smart_home',isDirectToInvoice:true,formsRequired:[]});
+ await post('/api/v1/workspaces/smart_home/job-types/'+smartHomeType+'/policies/'+smartHomePolicy+'/review',admin,200);
+ await post('/api/v1/workspaces/smart_home/job-types/'+smartHomeType+'/policies/'+smartHomePolicy+'/approve',admin,200);
+ await post('/api/v1/workspaces/smart_home/compliance-jobs',admin,201,{title:'Smart Home authorized workspace fixture',job_type_id:smartHomeType,expected_policy_id:smartHomePolicy,customer_name:'Smart Home Fixture Customer',site_address:'9 Smart Home Street'},{'Idempotency-Key':'browser-smart-home-job'});
  const bundle=await build({entryPoints:['tests/support/complianceBrowserEntry.tsx'],bundle:true,write:false,platform:'browser',jsx:'automatic',plugins:[{name:'local-auth',setup(b){b.onResolve({filter:/services\/firebase\.ts$/},()=>({path:'local',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const auth={}; export const googleAuthProvider={}; export const selectAccountGoogleProvider={};'}));}}],define:{'process.env.NODE_ENV':'"production"'}});
  const assets=readdirSync('dist/assets').filter(name=>name.endsWith('.css'));assert.equal(assets.length,1);
  const css=readFileSync('dist/assets/'+assets[0]);
@@ -112,18 +119,108 @@ export async function browserJourney(workerUrl:string,base:string,office:string,
   try{
    await promisify(execFile)('python',['tests/support/compliance_browser.py','http://127.0.0.1:'+address.port,out],{timeout:120000});
    const stored=await db.prepare(`SELECT j.id,j.workspace_id,j.policy_id,j.status,q.revision_id,q.occurrence_key,
-      (SELECT count(*) FROM compliance_evidence e WHERE e.workspace_id=j.workspace_id AND e.job_id=j.id) AS evidence_count,
+      (SELECT count(DISTINCT e.storage_key) FROM compliance_evidence e WHERE e.workspace_id=j.workspace_id AND e.job_id=j.id) AS evidence_count,
       s.answer_version,(SELECT status FROM compliance_visit_events v WHERE v.job_id=j.id ORDER BY version DESC LIMIT 1) AS visit_status
       FROM compliance_jobs j JOIN compliance_requirements q ON q.workspace_id=j.workspace_id AND q.job_id=j.id
       JOIN compliance_signoffs s ON s.workspace_id=q.workspace_id AND s.job_id=q.job_id AND s.occurrence_key=q.occurrence_key
-      WHERE j.id=?`).bind(job_id).first();
+      WHERE j.id=? AND s.answer_version=2`).bind(job_id).first();
    assert.deepEqual(stored&&{...stored},{id:job_id,workspace_id:'solarcell',policy_id:policyId,status:'COMPLETED',
     revision_id,occurrence_key:await db.prepare('SELECT occurrence_key FROM compliance_requirements WHERE job_id=?').bind(job_id).first('occurrence_key'),
-    evidence_count:3,answer_version:1,visit_status:'CANCELLED'});
+    evidence_count:4,answer_version:2,visit_status:'CANCELLED'});
+   // Verify v1 evidence preserved, v2 carried-forward + 1 new object, no duplicate storage_keys per version, and both signed snapshots/digests.
+   const v1Ev = (await db.prepare("SELECT id, storage_key, digest FROM compliance_evidence WHERE workspace_id='solarcell' AND job_id=? AND answer_version=1 ORDER BY id").bind(job_id).all<{id:string;storage_key:string;digest:string}>()).results;
+   const v2Ev = (await db.prepare("SELECT id, storage_key, digest FROM compliance_evidence WHERE workspace_id='solarcell' AND job_id=? AND answer_version=2 ORDER BY id").bind(job_id).all<{id:string;storage_key:string;digest:string}>()).results;
+   assert.equal(v1Ev.length, 3);
+   assert.equal(new Set(v1Ev.map(e => e.storage_key)).size, 3);
+   assert.equal(v2Ev.length, 1);
+   assert.equal(new Set(v2Ev.map(e => e.storage_key)).size, 1);
+   assert.equal(new Set([...v1Ev, ...v2Ev].map(e => e.storage_key)).size, 4);
+   const snaps = (await db.prepare("SELECT answer_version, snapshot_json, digest FROM compliance_signoffs WHERE workspace_id='solarcell' AND job_id=? AND occurrence_key=? ORDER BY answer_version").bind(job_id, (stored as {occurrence_key:string}).occurrence_key).all<{answer_version:number;snapshot_json:string;digest:string}>()).results;
+   assert.equal(snaps.length, 2);
+   assert.equal(snaps[0].answer_version, 1);
+   assert.equal(createHash('sha256').update(snaps[0].snapshot_json).digest('hex'), snaps[0].digest);
+   const snap1Json = JSON.parse(snaps[0].snapshot_json) as {answers:Record<string,unknown>;evidence_by_field:{proof:string[]}};
+   assert.equal(snap1Json.answers.result, 'PASS');
+   assert.equal(snap1Json.evidence_by_field.proof.length, 3);
+   assert.deepEqual(new Set(snap1Json.evidence_by_field.proof), new Set(v1Ev.map(e => e.id)));
+   assert.equal(snaps[1].answer_version, 2);
+   assert.equal(createHash('sha256').update(snaps[1].snapshot_json).digest('hex'), snaps[1].digest);
+   const snap2Json = JSON.parse(snaps[1].snapshot_json) as {answers:Record<string,unknown>;evidence_by_field:{proof:string[]}};
+   assert.equal(snap2Json.answers.notes, 'Corrected note in Chrome');
+   assert.ok(snap2Json.evidence_by_field.proof.length >= 1);
+   for (const evId of snap2Json.evidence_by_field.proof) {
+     assert.ok(v2Ev.some(e => e.id === evId), `v2 snapshot references unknown evidence id ${evId}`);
+   }
    writeFileSync(join(out,'database-assertions.json'),JSON.stringify(stored,null,2));
   }finally{
    writeFileSync(join(out,'http-receipts.json'),JSON.stringify(receipts,null,2));
    if(!explicitOut) rmSync(out,{recursive:true,force:true});
   }
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
+
+ // P1: READONLY_AUTOFILL initial save, correction after signing, re-signing, stale version, forged autofill.
+ const callJson = async (path: string, method: string, actor: string, body?: unknown, extra: Record<string, string> = {}) => {
+  return fetch(new URL(path, workerUrl), {
+   method,
+   headers: { Authorization: actor, 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID(), ...extra },
+   body: body === undefined ? undefined : JSON.stringify(body),
+  });
+ };
+ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4z8AAAAMBAQCc479ZAAAAAElFTkSuQmCC', 'base64');
+ const autoForm = await post<{ id: string; revision_id: string }>(workspace + '/form-definitions', office, 201, {
+  title: 'Autofill inspection', code: 'AUTOFILL-001', description: 'P1 autofill regression form', category: 'Custom', brand_id: 'solarcell',
+  schema: { sections: [{ title: 'Details', fields: [
+   { key: 'job_ref', label: 'Job reference', type: 'READONLY_AUTOFILL', autofill_source: 'job.id' },
+   { key: 'result', label: 'Result', type: 'PASS_FAIL', required: true },
+   { key: 'notes', label: 'Notes', type: 'TEXT' },
+   { key: 'proof', label: 'Proof', type: 'PHOTO', required: true },
+  ] }] },
+ });
+ const autoFormDetail = await getJson<{ revisions: Array<{ id: string; updated_at: string }> }>(workspace + '/form-definitions/' + autoForm.id, office);
+ await post(workspace + '/form-definitions/' + autoForm.id + '/revisions/' + autoForm.revision_id + '/review', office, 200, { expected_updated_at: autoFormDetail.revisions[0].updated_at });
+ await post(workspace + '/form-definitions/' + autoForm.id + '/revisions/' + autoForm.revision_id + '/approve', admin, 200);
+ const autoType = await post<{ id: string; policyId: string }>(workspace + '/job-types', office, 201, { name: 'Autofill job type', code: 'AUTO-JT-001', brandId: 'solarcell', isDirectToInvoice: false, formRules: [{ form_revision_id: autoForm.revision_id, required: true }] });
+ await post(workspace + '/job-types/' + autoType.id + '/policies/' + autoType.policyId + '/review', office, 200);
+ await post(workspace + '/job-types/' + autoType.id + '/policies/' + autoType.policyId + '/approve', admin, 200);
+ const { job_id: autoJob } = await post<{ job_id: string }>(base, office, 201, { title: 'Autofill fixture', job_type_id: autoType.id, expected_policy_id: autoType.policyId, customer_name: 'Fixture Customer', site_address: '1 Fixture Street', assignee_id: 'test_g01_usr_technician' }, { 'Idempotency-Key': 'p1-autofill-job' });
+ const autoJobPath = base + '/' + autoJob;
+ await db.prepare("INSERT INTO compliance_signer_grants(workspace_id,revision_id,user_id) VALUES('solarcell',?,'test_g01_usr_technician')").bind(autoForm.revision_id).run();
+ const autoInitial = await getJson<{ requirements: Array<{ occurrence_key: string }> }>(autoJobPath, technician);
+ const autoSlot = autoInitial.requirements[0].occurrence_key;
+ // Initial answer save omitting READONLY_AUTOFILL.
+ const autoSave1 = await callJson(autoJobPath, 'PATCH', technician, { occurrence_key: autoSlot, expected_answer_version: 0, answers: { result: 'PASS' } }, { 'If-Match': '"1"' });
+ assert.equal(autoSave1.status, 200, await autoSave1.clone().text());
+ const autoAfterSave1 = await getJson<{ requirements: Array<{ answer_version: number; answers: Record<string, unknown> }> }>(autoJobPath, technician);
+ assert.equal(autoAfterSave1.requirements[0].answer_version, 1);
+ assert.equal(autoAfterSave1.requirements[0].answers.job_ref, autoJob);
+ // Forged READONLY_AUTOFILL submission rejected by server (422 INVALID_FIELD).
+ const forgedAuto = await callJson(autoJobPath, 'PATCH', technician, { occurrence_key: autoSlot, expected_answer_version: 1, answers: { result: 'PASS', job_ref: 'forged-id' } }, { 'If-Match': '"1"' });
+ assert.equal(forgedAuto.status, 422);
+ assert.equal((await forgedAuto.json() as { code: string }).code, 'INVALID_FIELD');
+ // Sign answer_version 1.
+ const autoEv1 = await fetch(new URL(autoJobPath + '/forms/' + encodeURIComponent(autoSlot) + '/evidence', workerUrl), { method: 'POST', headers: { Authorization: technician, 'Content-Type': 'image/png', 'If-Match': '"1"', 'X-Answer-Version': '1' }, body: png });
+ assert.equal(autoEv1.status, 201);
+ const autoEv1Id = (await autoEv1.json() as { upload_id: string }).upload_id;
+ await post(autoJobPath + '/forms/' + encodeURIComponent(autoSlot) + '/evidence/' + autoEv1Id + '/finalize', technician, 200);
+ await post(autoJobPath + '/forms/' + encodeURIComponent(autoSlot) + '/sign', technician, 200, { expected_job_version: 1, answer_version: 1, intent_version: 'cabms-form-attestation-v1', evidence_by_field: { proof: [autoEv1Id] } }, { 'Idempotency-Key': 'p1-sign-1' });
+ // Correction of signed form omitting READONLY_AUTOFILL -> answer_version 2.
+ const autoSave2 = await callJson(autoJobPath, 'PATCH', technician, { occurrence_key: autoSlot, expected_answer_version: 1, answers: { result: 'PASS', notes: 'Corrected after signoff' } }, { 'If-Match': '"1"' });
+ assert.equal(autoSave2.status, 200, await autoSave2.clone().text());
+ const autoAfterSave2 = await getJson<{ requirements: Array<{ answer_version: number; answers: Record<string, unknown> }> }>(autoJobPath, technician);
+ assert.equal(autoAfterSave2.requirements[0].answer_version, 2);
+ assert.equal(autoAfterSave2.requirements[0].answers.job_ref, autoJob);
+ assert.equal(autoAfterSave2.requirements[0].answers.notes, 'Corrected after signoff');
+ // Existing v1 snapshot and evidence preserved.
+ const v1Snap = await db.prepare('SELECT snapshot_json FROM compliance_signoffs WHERE job_id=? AND occurrence_key=? AND answer_version=1').bind(autoJob, autoSlot).first<{ snapshot_json: string }>();
+ assert.ok(v1Snap);
+ assert.equal(JSON.parse(v1Snap.snapshot_json).evidence_by_field.proof[0], autoEv1Id);
+ // Stale version rejection.
+ const stalePatch = await callJson(autoJobPath, 'PATCH', technician, { occurrence_key: autoSlot, expected_answer_version: 1, answers: { result: 'PASS' } }, { 'If-Match': '"1"' });
+ assert.ok([409, 412].includes(stalePatch.status), `expected 409 or 412, got ${stalePatch.status}`);
+ // Re-sign answer_version 2.
+ const autoEv2 = await fetch(new URL(autoJobPath + '/forms/' + encodeURIComponent(autoSlot) + '/evidence', workerUrl), { method: 'POST', headers: { Authorization: technician, 'Content-Type': 'image/png', 'If-Match': '"1"', 'X-Answer-Version': '2' }, body: png });
+ assert.equal(autoEv2.status, 201);
+ const autoEv2Id = (await autoEv2.json() as { upload_id: string }).upload_id;
+ await post(autoJobPath + '/forms/' + encodeURIComponent(autoSlot) + '/evidence/' + autoEv2Id + '/finalize', technician, 200);
+ await post(autoJobPath + '/forms/' + encodeURIComponent(autoSlot) + '/sign', technician, 200, { expected_job_version: 1, answer_version: 2, intent_version: 'cabms-form-attestation-v1', evidence_by_field: { proof: [autoEv2Id] } }, { 'Idempotency-Key': 'p1-sign-2' });
 }

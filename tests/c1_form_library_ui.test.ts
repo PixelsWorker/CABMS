@@ -16,11 +16,11 @@ test('form library renders ten newest active forms, pages and archived filter', 
  (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
  (dom.window.HTMLElement.prototype as any).attachEvent = () => {};
  (dom.window.HTMLElement.prototype as any).detachEvent = () => {};
- const forms = Array.from({length:12},(_,i)=>({id:`id${i}`,title:`Form ${i}`,code:`F${i}`,description:'Test',category:'Safety',brand_id:'solarcell',status:i===11?'ARCHIVED':'DRAFT',created_at:new Date(Date.UTC(2026,0,i+1)).toISOString(),updated_at:new Date(Date.UTC(2026,0,i+1)).toISOString(),published_revision_id:null}));
+  const forms = Array.from({length:12},(_,i)=>({id:`id${i}`,title:`Form ${i}`,code:`F${i}`,description:'Test',category:'Safety',brand_id:'solarcell',status:i===11?'ARCHIVED':i===10?'ACTIVE':'DRAFT',current_version:i===10?'draft-00000000-0000-4000-8000-000000000002':null,display_version:i===10?'Revision 1':null,created_at:new Date(Date.UTC(2026,0,i+1)).toISOString(),updated_at:new Date(Date.UTC(2026,0,i+1)).toISOString(),published_revision_id:i===10?'pub-1':null}));
  setApiFetchHandler(async request => {
   const match = new URL(request.url).pathname.match(/\/form-definitions\/(id\d+)$/);
   if (match && request.method === 'PATCH') { const body = await request.json() as {action:string}; if (body.action === 'restore') forms.find(f=>f.id===match[1])!.status='DRAFT'; return Response.json({success:true}); }
-  return Response.json(match ? {...forms.find(f=>f.id===match[1]),revisions:[{id:'draft-1',status:'DRAFT',version:'v1.1',sections:[]},{id:'review-1',status:'REVIEW',version:'v1.0',sections:[{title:'Review section',fields:[{key:'result',label:'Inspection result',type:'PASS_FAIL',required:true,instructions:'Inspect the inverter before recording a result.'}]}]}]} : forms);
+  return Response.json(match ? {...forms.find(f=>f.id===match[1]),revisions:[{id:'draft-1',status:'DRAFT',version:'v1.1',display_version:'Draft revision',sections:[]},{id:'review-1',status:'REVIEW',version:'v1.0',display_version:'Awaiting approval',sections:[{title:'Review section',fields:[{key:'result',label:'Inspection result',type:'PASS_FAIL',required:true,instructions:'Inspect the inverter before recording a result.'}]}]}]} : forms);
  });
  const session:Session = { profile:{user:{id:'test',email:'test@example.invalid',display_name:null},memberships:[{workspace_id:'solarcell',role:'owner_admin',name:'Solarcell'}]},loading:false,error:'',login:async()=>{},logout:async()=>{},token:async()=>'test-token',workspaceId:'solarcell',selectWorkspace:()=>{},invalidate:()=>{} };
  const container = dom.window.document.getElementById('root')!; const root=createRoot(container);
@@ -28,6 +28,8 @@ test('form library renders ten newest active forms, pages and archived filter', 
   await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(FormLibrary)));});
   assert.equal(container.querySelectorAll('tbody tr').length,10);
   assert.equal(container.querySelector('tbody tr td')?.textContent,'Form 10');
+  assert.match(container.textContent || '',/Revision 1/);
+  assert.doesNotMatch(container.textContent || '',/draft-00000000-0000-4000-8000-000000000002/);
   assert.match(container.textContent || '',/Showing 1–10 of 11/);
   const click=async(label:string)=>{const button=Array.from(container.querySelectorAll('button')).find(b=>b.textContent?.trim()===label);assert.ok(button,`missing ${label}`);await act(async()=>{button.click();});};
   assert.equal(container.querySelector('[aria-label="Form title"]'),null,'creation fields are hidden until Add Form is clicked');
@@ -38,11 +40,16 @@ test('form library renders ten newest active forms, pages and archived filter', 
   assert.equal(container.querySelector('[role="dialog"]'),null);
   await click('View / Edit');
   assert.ok(container.querySelector('[role="dialog"][aria-label="View or edit form definition"]'));
-  await click('View v1.0 · REVIEW');
+  const publishButtons = Array.from(container.querySelectorAll('button')).filter(b=>b.textContent?.includes('Approve & Publish'));
+  assert.equal(publishButtons.length,1);
+  assert.equal(publishButtons[0].textContent?.trim(),'Approve & Publish');
+  await click('View review');
+  const heading = container.querySelector('[aria-label="Read-only form revision"] h4');
+  assert.equal(heading?.textContent?.trim(),'Awaiting approval · REVIEW');
   assert.match(container.textContent || '',/Inspection result/);
   assert.match(container.textContent || '',/Inspect the inverter before recording a result/);
   assert.match(container.textContent || '',/Review section/);
-  await click('View v1.1 · DRAFT');
+  await click('View draft');
   assert.match(container.textContent || '',/No sections yet/);
   await click('Add Section');
   assert.ok(container.querySelector('[aria-label="Section 1 title"]'));
@@ -67,6 +74,11 @@ test('form library renders ten newest active forms, pages and archived filter', 
   await click('Close'); await click('Active');
   assert.equal(container.querySelector('tbody tr td')?.textContent,'Form 11');
   await click('All (12)'); assert.equal(container.querySelector('tbody tr td')?.textContent,'Form 11');
+  // office_staff must not see Approve & Publish button.
+  const staffSession:Session = { ...session, profile:{...session.profile!,memberships:[{workspace_id:'solarcell',role:'office_staff',name:'Solarcell'}]} };
+  await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:staffSession},React.createElement(FormLibrary)));});
+  await click('View / Edit');
+  assert.equal(Array.from(container.querySelectorAll('button')).some(b=>b.textContent?.includes('Approve & Publish')),false);
  } finally {
   await act(async()=>root.unmount()); resetApiFetchHandler(); dom.window.close();
   for (const [key,value] of Object.entries(previous)) Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});

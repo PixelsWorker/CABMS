@@ -358,9 +358,72 @@ test('0014 and 0015 exact proposals on disposable workerd/D1', async t => {
       const inaccessible=await call(office,{...original,visit_id:randomUUID()});
       assert.equal((await inaccessible.json() as {code?:string}).code,'VISIT_ASSIGNEE_MISMATCH');
     });
-    if(process.env.CABMS_RUN_COMPLIANCE_BROWSER==='1'){
+    await authTest.test('F05 evidence carry-forward at 20-photo limit on 0018 workerd/D1',async()=>{
+      const m0018=verifiedMigrations.get('0018_independent_review_remediation.sql')!.toString('utf8')
+        .replace(/^--.*$/gm,'').replace(/^\s*PRAGMA\s+[^;]+;/gmi,'');
+      const stmts0018:string[]=[];
+      let buf='',inTrig=false;
+      for(const line of m0018.split(/\r?\n/)){
+        const t=line.trim();
+        if(!t) continue;
+        buf+=(buf?'\n':'')+line;
+        if(/^CREATE\s+TRIGGER/i.test(t)) inTrig=true;
+        if(inTrig ? /^END;$/i.test(t) : t.endsWith(';')){
+          stmts0018.push(buf.trim());
+          buf='';inTrig=false;
+        }
+      }
+      await db.batch(stmts0018.map(s=>db.prepare(s)));
       await db.prepare("UPDATE compliance_photo_limits SET max_bytes=614400 WHERE workspace_id='solarcell'").run();
       await db.prepare("UPDATE compliance_job_byte_limits SET max_job_bytes=12288000 WHERE workspace_id='solarcell'").run();
+      // Verify 20-photo F05 carry-forward + re-sign without another upload on real workerd/D1.
+      const fRes=await req(root+'solarcell/form-definitions',{method:'POST',headers:{Authorization:office,'Content-Type':'application/json'},body:JSON.stringify({
+        title:'F05 20-Photo Form',code:'F05-20-001',description:'F05 20-photo carry-forward',category:'Custom',brand_id:'solarcell',
+        schema:{sections:[{title:'S',fields:[{key:'notes',label:'Notes',type:'TEXT'},{key:'proof',label:'Proof',type:'PHOTO',required:true}]}]},
+      })});
+      assert.equal(fRes.status,201);
+      const {id:fId,revision_id:fRev}=await fRes.json() as {id:string;revision_id:string};
+      const fDet=await (await req(root+'solarcell/form-definitions/'+fId,{headers:{Authorization:office}})).json() as {revisions:Array<{updated_at:string}>};
+      assert.equal((await req(root+`solarcell/form-definitions/${fId}/revisions/${fRev}/review`,{method:'POST',headers:{Authorization:office,'Content-Type':'application/json'},body:JSON.stringify({expected_updated_at:fDet.revisions[0].updated_at})})).status,200);
+      assert.equal((await req(root+`solarcell/form-definitions/${fId}/revisions/${fRev}/approve`,{method:'POST',headers:{Authorization:owner}})).status,200);
+      const jtRes=await req(root+'solarcell/job-types',{method:'POST',headers:{Authorization:office,'Content-Type':'application/json'},body:JSON.stringify({name:'F05 20-Photo JT',code:'F05-20-JT',brandId:'solarcell',isDirectToInvoice:false,formRules:[{form_revision_id:fRev,required:true}]})});
+      assert.equal(jtRes.status,201);
+      const {id:jtId,policyId:polId}=await jtRes.json() as {id:string;policyId:string};
+      assert.equal((await req(root+`solarcell/job-types/${jtId}/policies/${polId}/review`,{method:'POST',headers:{Authorization:office}})).status,200);
+      assert.equal((await req(root+`solarcell/job-types/${jtId}/policies/${polId}/approve`,{method:'POST',headers:{Authorization:owner}})).status,200);
+      const jRes=await req(base,{method:'POST',headers:{Authorization:office,'Content-Type':'application/json','Idempotency-Key':randomUUID()},body:JSON.stringify({title:'F05 20-Photo Job',job_type_id:jtId,expected_policy_id:polId,customer_name:'C',site_address:'S',assignee_id:G01_TEST_AUTH.technician.userId})});
+      assert.equal(jRes.status,201);
+      const {job_id:f05Job}=await jRes.json() as {job_id:string};
+      await db.prepare("INSERT INTO compliance_signer_grants(workspace_id,revision_id,user_id) VALUES('solarcell',?,'test_g01_usr_technician')").bind(fRev).run();
+      const jDet=await (await req(base+'/'+f05Job,{headers:{Authorization:technician}})).json() as {requirements:Array<{occurrence_key:string}>};
+      const slot=jDet.requirements[0].occurrence_key;
+      assert.equal((await req(base+'/'+f05Job,{method:'PATCH',headers:{Authorization:technician,'Content-Type':'application/json','If-Match':'"1"','Idempotency-Key':randomUUID()},body:JSON.stringify({occurrence_key:slot,expected_answer_version:0,answers:{notes:'v1'}})})).status,200);
+      const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4z8AAAAMBAQCc479ZAAAAAElFTkSuQmCC','base64');
+      const {createHash}=await import('node:crypto');
+      const sha=createHash('sha256').update(png).digest('hex');
+      const bucket=(await worker.getEnv()).PRIVATE_EVIDENCE as {put:(k:string,v:Uint8Array)=>Promise<void>};
+      const evIds:string[]=[];
+      for(let i=0;i<20;i++){
+        const pid=`f05-p-${i}`;
+        const key=`private/solarcell/${f05Job}/${pid}.png`;
+        await bucket.put(key,png);
+        await db.batch([
+          db.prepare("INSERT INTO compliance_uploads VALUES(?,'solarcell',?,?,?,1,1,'image/png',?,?)").bind(pid,f05Job,slot,G01_TEST_AUTH.technician.userId,png.length,sha),
+          db.prepare("INSERT INTO compliance_operations VALUES(?,'solarcell',?,'EVIDENCE',?,1,?)").bind(pid,G01_TEST_AUTH.technician.userId,f05Job,sha),
+          db.prepare("INSERT INTO compliance_evidence VALUES(?,'solarcell',?,?,1,?,?,?,?)").bind(pid,f05Job,slot,png.length,sha,key,pid),
+        ]);
+        evIds.push(pid);
+      }
+      assert.equal((await req(base+'/'+f05Job+'/forms/'+encodeURIComponent(slot)+'/sign',{method:'POST',headers:{Authorization:technician,'Content-Type':'application/json','Idempotency-Key':randomUUID()},body:JSON.stringify({expected_job_version:1,answer_version:1,intent_version:'cabms-form-attestation-v1',evidence_by_field:{proof:[evIds[0]]}})})).status,200);
+      // Save v2 correction -> all 20 photos carry forward automatically; re-sign without another upload!
+      assert.equal((await req(base+'/'+f05Job,{method:'PATCH',headers:{Authorization:technician,'Content-Type':'application/json','If-Match':'"1"','Idempotency-Key':randomUUID()},body:JSON.stringify({occurrence_key:slot,expected_answer_version:1,answers:{notes:'v2'}})})).status,200);
+      assert.equal(await db.prepare('SELECT count(*) AS n FROM compliance_evidence WHERE job_id=? AND answer_version=2').bind(f05Job).first('n'),20);
+      assert.equal(await db.prepare('SELECT count(DISTINCT storage_key) AS n FROM compliance_evidence WHERE job_id=?').bind(f05Job).first('n'),20);
+      const jDet2=await (await req(base+'/'+f05Job,{headers:{Authorization:technician}})).json() as {requirements:Array<{photos:Array<{id:string}>}>};
+      assert.equal(jDet2.requirements[0].photos.length,20);
+      assert.equal((await req(base+'/'+f05Job+'/forms/'+encodeURIComponent(slot)+'/sign',{method:'POST',headers:{Authorization:technician,'Content-Type':'application/json','Idempotency-Key':randomUUID()},body:JSON.stringify({expected_job_version:1,answer_version:2,intent_version:'cabms-form-attestation-v1',evidence_by_field:{proof:[jDet2.requirements[0].photos[0].id]}})})).status,200);
+    });
+    if(process.env.CABMS_RUN_COMPLIANCE_BROWSER==='1'){
       await authTest.test('Chrome technician-to-office compliance journey',async()=>browserJourney(url,base,office,technician,superAdmin,db));
     }
     await authTest.test('the authenticated jobs client follows every workspace-scoped page',async()=>{

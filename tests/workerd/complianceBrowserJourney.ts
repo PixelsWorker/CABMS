@@ -126,15 +126,16 @@ export async function browserJourney(workerUrl:string,base:string,office:string,
       WHERE j.id=? AND s.answer_version=2`).bind(job_id).first();
    assert.deepEqual(stored&&{...stored},{id:job_id,workspace_id:'solarcell',policy_id:policyId,status:'COMPLETED',
     revision_id,occurrence_key:await db.prepare('SELECT occurrence_key FROM compliance_requirements WHERE job_id=?').bind(job_id).first('occurrence_key'),
-    evidence_count:4,answer_version:2,visit_status:'CANCELLED'});
-   // Verify v1 evidence preserved, v2 carried-forward + 1 new object, no duplicate storage_keys per version, and both signed snapshots/digests.
+    evidence_count:3,answer_version:2,visit_status:'CANCELLED'});
+   // Verify v1 evidence preserved, all 3 v1 photos carried forward to v2 without new upload, no duplicates, and both signed snapshots/digests.
    const v1Ev = (await db.prepare("SELECT id, storage_key, digest FROM compliance_evidence WHERE workspace_id='solarcell' AND job_id=? AND answer_version=1 ORDER BY id").bind(job_id).all<{id:string;storage_key:string;digest:string}>()).results;
    const v2Ev = (await db.prepare("SELECT id, storage_key, digest FROM compliance_evidence WHERE workspace_id='solarcell' AND job_id=? AND answer_version=2 ORDER BY id").bind(job_id).all<{id:string;storage_key:string;digest:string}>()).results;
    assert.equal(v1Ev.length, 3);
    assert.equal(new Set(v1Ev.map(e => e.storage_key)).size, 3);
-   assert.equal(v2Ev.length, 1);
-   assert.equal(new Set(v2Ev.map(e => e.storage_key)).size, 1);
-   assert.equal(new Set([...v1Ev, ...v2Ev].map(e => e.storage_key)).size, 4);
+   assert.equal(v2Ev.length, 3);
+   assert.equal(new Set(v2Ev.map(e => e.storage_key)).size, 3);
+   assert.deepEqual(new Set(v2Ev.map(e => e.storage_key)), new Set(v1Ev.map(e => e.storage_key)));
+   assert.equal(new Set([...v1Ev, ...v2Ev].map(e => e.storage_key)).size, 3);
    const snaps = (await db.prepare("SELECT answer_version, snapshot_json, digest FROM compliance_signoffs WHERE workspace_id='solarcell' AND job_id=? AND occurrence_key=? ORDER BY answer_version").bind(job_id, (stored as {occurrence_key:string}).occurrence_key).all<{answer_version:number;snapshot_json:string;digest:string}>()).results;
    assert.equal(snaps.length, 2);
    assert.equal(snaps[0].answer_version, 1);

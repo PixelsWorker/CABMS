@@ -92,12 +92,11 @@ with sync_playwright() as pw:
     admin.get_by_label('Business',exact=True).select_option('smart_home')
     assert admin.evaluate("() => document.documentElement.getAttribute('data-company-panel')") == 'solarcell'
     assert admin.evaluate("() => getComputedStyle(document.documentElement).getPropertyValue('--cabms-brand-primary').trim().toLowerCase()") == '#ffae14'
-    # Switch active workspace to smart_home, verify API call, root attributes & theme, and open smart_home job.
-    with admin.expect_response(lambda r: r.request.method=='GET' and '/api/v1/workspaces/smart_home/compliance-jobs' in r.url) as sh_jobs:
-        admin.get_by_label('Active Brand Workspace Selector').select_option('smart_home')
-    assert sh_jobs.value.status == 200
+    # Opening a filtered smart_home job transitions active workspace & theme WITHOUT a prior header switch.
+    with admin.expect_response(lambda r: r.request.method=='GET' and '/api/v1/workspaces/smart_home/compliance-jobs/' in r.url) as sh_job_detail:
+        admin.get_by_role('button',name='Smart Home authorized workspace fixture',exact=False).click()
+    assert sh_job_detail.value.status == 200
     admin.wait_for_function("() => document.documentElement.getAttribute('data-company-panel') === 'smart_home' && ['#3dae49', '#4be196', '#065f46'].includes(getComputedStyle(document.documentElement).getPropertyValue('--cabms-brand-primary').trim().toLowerCase())")
-    admin.get_by_role('button',name='Smart Home authorized workspace fixture',exact=False).click()
     expect(admin.get_by_text('9 Smart Home Street',exact=True)).to_be_visible()
     # Switch header to cctv and verify root attributes, computed theme, and workspace-scoped API request.
     with admin.expect_response(lambda r: r.request.method=='GET' and '/api/v1/workspaces/cctv/' in r.url) as cctv_req:
@@ -282,8 +281,8 @@ with sync_playwright() as pw:
     assert patch_body['answers']['notes']=='Corrected note in Chrome'
     assert 'job_ref' not in patch_body['answers']
     expect(tech.get_by_text('Answers saved.',exact=True)).to_be_visible()
-    tech.get_by_label('Add photo').set_input_files({'name':'correction.png','mimeType':'image/png','buffer':photo})
-    expect(tech.get_by_text('Photo verified.',exact=True)).to_be_visible()
+    # With 0018 applied, all 3 v1 photos carry forward automatically; re-sign v2 WITHOUT uploading another photo.
+    expect(tech.get_by_text('3 / 20',exact=True)).to_be_visible()
     tech.get_by_label('I confirm the saved answers and linked evidence for this form occurrence.').check()
     tech.get_by_role('button',name='Sign current version').click()
     expect(tech.get_by_text('Signed snapshot recorded.')).to_be_visible()
@@ -325,7 +324,7 @@ with sync_playwright() as pw:
     expect(office.get_by_role('heading',name='Switchboard inspection',exact=True)).to_be_visible()
     expect(office.get_by_text('1 of 1 signed')).to_be_visible()
     office.get_by_role('button',name='Inherited',exact=False).click()
-    expect(office.get_by_text('4 / 20',exact=True)).to_be_visible()
+    expect(office.get_by_text('3 / 20',exact=True)).to_be_visible()
     office.get_by_role('button',name='Back to job',exact=False).click()
     attempts=[]
     def rejected_recovery(route):

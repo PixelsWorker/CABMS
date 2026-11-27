@@ -1,6 +1,5 @@
 ﻿import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import os from 'node:os';
 import path from 'node:path';
 import {
   loadWindowsLocalTargetConfig,
@@ -9,12 +8,8 @@ import {
 } from '../scripts/p0/windowsLocalTarget.ts';
 
 function syntheticTarget(): WindowsLocalTargetConfig {
-  const root =
-    process.platform === 'win32'
-      ? path.win32.join(os.tmpdir(), 'cabms-win-local-fixture')
-      : 'C:\\cabms-win-local-fixture';
   return {
-    root,
+    root: 'C:\\cabms-win-local-fixture',
     database: 'fixture-local.sqlite',
     uid: 'fixture_uid_0001',
     email: 'fixture@example.invalid',
@@ -40,27 +35,34 @@ test('loadWindowsLocalTargetConfig fails closed on missing, blank, or malformed 
     'CABMS_WINDOWS_LOCAL_UID',
     'CABMS_WINDOWS_LOCAL_EMAIL',
   ]) {
-    assert.throws(() => loadWindowsLocalTargetConfig({ ...validEnv, [key]: '' }));
-    assert.throws(() => loadWindowsLocalTargetConfig({ ...validEnv, [key]: '   ' }));
+    assert.throws(
+      () => loadWindowsLocalTargetConfig({ ...validEnv, [key]: '' }),
+      new RegExp(`Missing or blank ${key}`)
+    );
+    assert.throws(
+      () => loadWindowsLocalTargetConfig({ ...validEnv, [key]: '   ' }),
+      new RegExp(`Missing or blank ${key}`)
+    );
     const omitted = { ...validEnv };
     delete (omitted as Record<string, string | undefined>)[key];
-    assert.throws(() => loadWindowsLocalTargetConfig(omitted));
+    assert.throws(() => loadWindowsLocalTargetConfig(omitted), new RegExp(`Missing or blank ${key}`));
   }
 
-  for (const badEnv of [
-    { ...validEnv, CABMS_WINDOWS_LOCAL_ROOT: '\\\\server\\share\\cabms' },
-    { ...validEnv, CABMS_WINDOWS_LOCAL_ROOT: 'https://example.invalid/db' },
-    { ...validEnv, CABMS_WINDOWS_LOCAL_ROOT: 'C:\\cabms\\..\\escape' },
-    { ...validEnv, CABMS_WINDOWS_LOCAL_DATABASE: '../other.sqlite' },
-    { ...validEnv, CABMS_WINDOWS_LOCAL_DATABASE: 'not-sqlite.db' },
-    { ...validEnv, CABMS_WINDOWS_LOCAL_UID: 'bad' },
-    { ...validEnv, CABMS_WINDOWS_LOCAL_EMAIL: 'not-an-email' },
-  ]) {
-    assert.throws(() => loadWindowsLocalTargetConfig(badEnv));
+  const malformedCases: Array<[Record<string, string>, RegExp]> = [
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_ROOT: '\\\\server\\share\\cabms' }, /Malformed CABMS_WINDOWS_LOCAL_ROOT/],
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_ROOT: 'https://example.invalid/db' }, /Malformed CABMS_WINDOWS_LOCAL_ROOT/],
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_ROOT: 'C:\\cabms\\..\\escape' }, /Malformed CABMS_WINDOWS_LOCAL_ROOT/],
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_DATABASE: '../other.sqlite' }, /Malformed CABMS_WINDOWS_LOCAL_DATABASE/],
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_DATABASE: 'not-sqlite.db' }, /Malformed CABMS_WINDOWS_LOCAL_DATABASE/],
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_UID: 'bad' }, /Malformed CABMS_WINDOWS_LOCAL_UID/],
+    [{ ...validEnv, CABMS_WINDOWS_LOCAL_EMAIL: 'not-an-email' }, /Malformed CABMS_WINDOWS_LOCAL_EMAIL/],
+  ];
+  for (const [badEnv, expectedErr] of malformedCases) {
+    assert.throws(() => loadWindowsLocalTargetConfig(badEnv), expectedErr);
   }
 });
 
-test('Windows local enrollment rejects other targets, databases, paths, and identities before access', () => {
+test('Windows local target guard enforces platform and exact rejection reasons', () => {
   const expected = syntheticTarget();
   const valid = {
     root: expected.root,
@@ -69,19 +71,25 @@ test('Windows local enrollment rejects other targets, databases, paths, and iden
     email: expected.email,
     local: true,
   };
-  if (process.platform === 'win32') {
-    assert.doesNotThrow(() => validateWindowsLocalTarget(valid, expected));
+
+  if (process.platform !== 'win32') {
+    assert.throws(() => validateWindowsLocalTarget(valid, expected), /Windows local target required/);
+    return;
   }
-  for (const change of [
-    { root: 'C:\\cabms-other-root' },
-    { root: '\\\\unc\\share\\cabms' },
-    { root: 'https://example.invalid' },
-    { root: `${expected.root}\\..\\escape` },
-    { database: 'other.sqlite' },
-    { uid: 'wrong_uid_0001' },
-    { email: 'wrong@example.invalid' },
-    { local: false },
-  ]) {
-    assert.throws(() => validateWindowsLocalTarget({ ...valid, ...change }, expected));
+
+  assert.doesNotThrow(() => validateWindowsLocalTarget(valid, expected));
+
+  const negativeCases: Array<[Partial<typeof valid>, RegExp]> = [
+    [{ root: 'C:\\cabms-other-root' }, /Unexpected local database root/],
+    [{ root: '\\\\unc\\share\\cabms' }, /Invalid local database root/],
+    [{ root: 'https://example.invalid' }, /Invalid local database root/],
+    [{ root: `${expected.root}\\..\\escape` }, /Invalid local database root/],
+    [{ database: 'other.sqlite' }, /Unexpected local database target/],
+    [{ uid: 'wrong_uid_0001' }, /Unexpected local identity/],
+    [{ email: 'wrong@example.invalid' }, /Unexpected local identity/],
+    [{ local: false }, /Unexpected local database root/],
+  ];
+  for (const [change, expectedErr] of negativeCases) {
+    assert.throws(() => validateWindowsLocalTarget({ ...valid, ...change }, expected), expectedErr);
   }
 });

@@ -12,19 +12,9 @@ import { executeLocalEnrollment } from '../../scripts/p0/adminEnrollmentEngine.t
 import {
   loadWindowsLocalTargetConfig,
   validateWindowsLocalTarget,
-  type WindowsLocalTargetConfig,
 } from '../../scripts/p0/windowsLocalTarget.ts';
 
 const { createTestHarness } = createRequire(import.meta.url)('wrangler');
-
-function syntheticTarget(tempRoot: string): WindowsLocalTargetConfig {
-  return loadWindowsLocalTargetConfig({
-    CABMS_WINDOWS_LOCAL_ROOT: tempRoot,
-    CABMS_WINDOWS_LOCAL_DATABASE: 'fixture-local.sqlite',
-    CABMS_WINDOWS_LOCAL_UID: 'fixture-uid-0001',
-    CABMS_WINDOWS_LOCAL_EMAIL: 'fixture@example.invalid',
-  });
-}
 
 function approval() {
   const key = generateKeyPairSync('ed25519'),
@@ -71,6 +61,49 @@ function approval() {
   );
 }
 
+test('Windows-only target guard enforces platform and exact rejection reasons', () => {
+  const trustedTarget = loadWindowsLocalTargetConfig({
+    CABMS_WINDOWS_LOCAL_ROOT: 'C:\\cabms-win-local-fixture',
+    CABMS_WINDOWS_LOCAL_DATABASE: 'fixture-local.sqlite',
+    CABMS_WINDOWS_LOCAL_UID: 'fixture-uid-0001',
+    CABMS_WINDOWS_LOCAL_EMAIL: 'fixture@example.invalid',
+  });
+  const validInput = {
+    root: trustedTarget.root,
+    database: trustedTarget.database,
+    uid: trustedTarget.uid,
+    email: trustedTarget.email,
+    local: true,
+  };
+
+  if (process.platform !== 'win32') {
+    assert.throws(() => validateWindowsLocalTarget(validInput, trustedTarget), /Windows local target required/);
+    return;
+  }
+
+  assert.doesNotThrow(() => validateWindowsLocalTarget(validInput, trustedTarget));
+  assert.throws(
+    () => validateWindowsLocalTarget({ ...validInput, root: 'C:\\cabms-other-root' }, trustedTarget),
+    /Unexpected local database root/
+  );
+  assert.throws(
+    () => validateWindowsLocalTarget({ ...validInput, database: 'wrong.sqlite' }, trustedTarget),
+    /Unexpected local database target/
+  );
+  assert.throws(
+    () => validateWindowsLocalTarget({ ...validInput, uid: 'wrong-uid-0001' }, trustedTarget),
+    /Unexpected local identity/
+  );
+  assert.throws(
+    () => validateWindowsLocalTarget({ ...validInput, email: 'wrong@example.invalid' }, trustedTarget),
+    /Unexpected local identity/
+  );
+  assert.throws(
+    () => validateWindowsLocalTarget({ ...validInput, local: false }, trustedTarget),
+    /Unexpected local database root/
+  );
+});
+
 test('disposable workerd D1: success, rejection, rollback, replay and uncertain result', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cabms-mode-b-'));
   let server: any;
@@ -106,26 +139,6 @@ test('disposable workerd D1: success, rejection, rollback, replay and uncertain 
     const [db, conflict, uncertain, rollback] = dbs;
     const a = approval(),
       expected = { email: a.manifest.operator_email, uid: a.manifest.operator_uid };
-    const trustedTarget = syntheticTarget(dir);
-
-    assert.throws(() =>
-      validateWindowsLocalTarget(
-        { root: `${trustedTarget.root}-other`, database: trustedTarget.database, uid: trustedTarget.uid, email: trustedTarget.email, local: true },
-        trustedTarget
-      )
-    );
-    assert.throws(() =>
-      validateWindowsLocalTarget(
-        { root: trustedTarget.root, database: 'wrong.sqlite', uid: trustedTarget.uid, email: trustedTarget.email, local: true },
-        trustedTarget
-      )
-    );
-    assert.throws(() =>
-      validateWindowsLocalTarget(
-        { root: trustedTarget.root, database: trustedTarget.database, uid: 'wrong-uid-0001', email: trustedTarget.email, local: true },
-        trustedTarget
-      )
-    );
 
     assert.equal((await executeLocalEnrollment(db, a, { ...expected, uid: 'wrong' })).status, 'REJECTED');
     assert.equal((await executeLocalEnrollment(db, a, expected)).status, 'CONFIRMED_ENROLLED');

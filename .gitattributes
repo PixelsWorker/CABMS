@@ -5,3 +5,6 @@ migrations/0005_g01_retire_synthetic_access.sql -text -eol
 backend/db/migrate.ts text eol=lf
 tests/s2/g01_package1_schema.test.ts text eol=lf
 migrations/0009_demo_job_steps.sql -text -eol
+tests/fixtures/proposals/0014_c1_null_safe_guards_candidate.sql -text -eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tests/fixtures/proposals/0014_job_forms_candidate.sql -text -eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+tests/fixtures/proposals/0014_job_forms_foundation_review.sql -text -eol whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

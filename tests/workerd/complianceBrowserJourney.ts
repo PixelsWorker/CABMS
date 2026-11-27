@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {readFileSync,mkdirSync,readdirSync,writeFileSync} from 'node:fs';
+import {readFileSync,mkdirSync,mkdtempSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {build} from 'esbuild';
-import {proposalPath} from '../support/proposalPath.ts';
 import type {D1Database} from '../../backend/db/d1.ts';
 
 export async function browserJourney(workerUrl:string,base:string,office:string,technician:string,admin:string,db:D1Database){
@@ -106,7 +106,9 @@ export async function browserJourney(workerUrl:string,base:string,office:string,
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
  try{
   const address=server.address();assert.ok(address&&typeof address!=='string');
-  const out=process.env.CABMS_COMPLIANCE_BROWSER_OUTPUT??proposalPath('..','four-screen-completion-sprint','browser-disposable');mkdirSync(out,{recursive:true});
+  const explicitOut=process.env.CABMS_COMPLIANCE_BROWSER_OUTPUT?.trim();
+  const out=explicitOut || mkdtempSync(join(tmpdir(),'cabms-compliance-browser-'));
+  if(explicitOut) mkdirSync(out,{recursive:true});
   try{
    await promisify(execFile)('python',['tests/support/compliance_browser.py','http://127.0.0.1:'+address.port,out],{timeout:120000});
    const stored=await db.prepare(`SELECT j.id,j.workspace_id,j.policy_id,j.status,q.revision_id,q.occurrence_key,
@@ -119,6 +121,9 @@ export async function browserJourney(workerUrl:string,base:string,office:string,
     revision_id,occurrence_key:await db.prepare('SELECT occurrence_key FROM compliance_requirements WHERE job_id=?').bind(job_id).first('occurrence_key'),
     evidence_count:3,answer_version:1,visit_status:'CANCELLED'});
    writeFileSync(join(out,'database-assertions.json'),JSON.stringify(stored,null,2));
-  }finally{writeFileSync(join(out,'http-receipts.json'),JSON.stringify(receipts,null,2));}
+  }finally{
+   writeFileSync(join(out,'http-receipts.json'),JSON.stringify(receipts,null,2));
+   if(!explicitOut) rmSync(out,{recursive:true,force:true});
+  }
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));}
 }

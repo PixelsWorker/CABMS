@@ -1,15 +1,16 @@
-﻿import { proposalPath } from '../support/proposalPath.ts';
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createLocalD1Database, type D1Database, type LocalD1Database } from '../../backend/db/d1.ts';
+import { loadVerifiedMigrations } from '../../backend/db/migrate.ts';
 import {loadPreOperationalMigrations,initializePreOperationalDatabase} from '../support/preOperationalMigrations.ts';
 
 const guardName = '0014_c1_null_safe_guards.sql';
-const guard = readFileSync(proposalPath('job_form_review_2026_11_23', guardName));
+const verifiedMigrations = new Map(loadVerifiedMigrations().map(m => [m.name, Buffer.from(m.bytes)]));
+const guard = verifiedMigrations.get(guardName)!;
 const { createTestHarness } = createRequire(import.meta.url)('wrangler');
 
 async function inventory(db: D1Database) {

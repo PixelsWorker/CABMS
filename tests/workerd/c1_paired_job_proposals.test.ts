@@ -1,5 +1,4 @@
 import {atomicJourney} from './complianceAtomicJourney.ts';
-import { proposalPath } from '../support/proposalPath.ts';
 import { browserJourney } from './complianceBrowserJourney.ts';
 import { signingJourney } from './signingJourney.ts';
 import { evidenceJourney } from './evidenceJourney.ts';
@@ -11,16 +10,17 @@ import { createFirebaseFixture } from '../support/firebaseTokens.ts';
 import { G01_TEST_AUTH, installG01TestAuthFixtures } from '../support/g01SyntheticFixtures.ts';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createLocalD1Database, type D1Database, type LocalD1Database } from '../../backend/db/d1.ts';
+import { loadVerifiedMigrations } from '../../backend/db/migrate.ts';
 import {loadPreOperationalMigrations,initializePreOperationalDatabase} from '../support/preOperationalMigrations.ts';
 
 const guardName = '0014_c1_null_safe_guards.sql';
-const root = 'job_form_review_2026_11_23';
-const guard = readFileSync(proposalPath(root, guardName));
-const compliance = readFileSync(proposalPath(root, '0015_persistent_job_compliance.sql'));
+const verifiedMigrations = new Map(loadVerifiedMigrations().map(m => [m.name, Buffer.from(m.bytes)]));
+const guard = verifiedMigrations.get(guardName)!;
+const compliance = verifiedMigrations.get('0015_persistent_job_compliance.sql')!;
 const { createTestHarness } = createRequire(import.meta.url)('wrangler');
 
 async function inventory(db: D1Database) {
@@ -316,8 +316,8 @@ test('0014 and 0015 exact proposals on disposable workerd/D1', async t => {
       const unavailable=await req(visits,{headers:{Authorization:office}});
       assert.equal(unavailable.status,503);
       assert.equal((await unavailable.json() as {code:string}).code,'OPERATIONAL_STORAGE_NOT_READY');
-      await db.prepare(readFileSync(proposalPath('job_form_review_2026_11_23','functional_integration','visit_events_candidate.sql'),'utf8')).run();
-      const proposedDetails=readFileSync(proposalPath('..','four-screen-completion-sprint','approval','0017_operational_job_details.sql'),'utf8')
+      await db.prepare(verifiedMigrations.get('0016_compliance_visit_events.sql')!.toString('utf8')).run();
+      const proposedDetails=verifiedMigrations.get('0017_operational_job_details.sql')!.toString('utf8')
         .replace(/^--.*$/gm,'').trim().split(/(?=^(?:CREATE|ALTER) )/m);
       await db.batch(proposedDetails.map(sql=>db.prepare(sql.trim())));
       const createJob=(fields:Record<string,string>)=>req(base,{...post(office),headers:{...post(office).headers,'Idempotency-Key':randomUUID()},body:JSON.stringify({title:'Dispatch fixture',job_type_id:'jt-solar-install',expected_policy_id:'invoice-with-slot',assignee_id:G01_TEST_AUTH.technician.userId,...fields})});

@@ -317,11 +317,35 @@ describe('C1 Templates & Content — Cloudflare Worker & Local D1 Binding Integr
     const draftRes = await req(`templates/${created.id}/revisions`,officeStaffAuth,'POST',{content:'Pending change'});
     assert.equal(draftRes.status,201); const draft = await draftRes.json() as {id:string;updated_at:string};
     const update = (stamp:string,content:string)=>fetch(`${BASE_URL}/api/v1/workspaces/solarcell/templates/${created.id}/revisions/${draft.id}`,{method:'PUT',headers:{Authorization:officeStaffAuth,'Content-Type':'application/json','If-Match':`"${stamp}"`},body:JSON.stringify({content})});
-    assert.equal((await update(draft.updated_at,'Saved change')).status,200);
+    const putOk = await update(draft.updated_at,'Saved change');
+    assert.equal(putOk.status,200);
+    const { updated_at: afterPutStamp } = await putOk.json() as { updated_at: string };
     assert.equal((await update(draft.updated_at,'Stale change')).status,412);
+    const patchOk = await req(`templates/${created.id}`, officeStaffAuth, 'PATCH', {
+      revision_id: draft.id,
+      expected_updated_at: afterPutStamp,
+      content: 'Patched change {{client_ref}}',
+      sample_file_name: 'workerd-sample.txt',
+      mapping_status: 'Mapped',
+      output: { category: 'Terms', brand_id: 'solarcell', linked_form_revision_id: null, document_type_id: null, layout: { paper: 'LETTER' }, dynamic_fields: { client_ref: 'customer.name' } },
+    });
+    assert.equal(patchOk.status, 200);
+    const patchStale = await req(`templates/${created.id}`, officeStaffAuth, 'PATCH', {
+      revision_id: draft.id,
+      expected_updated_at: afterPutStamp,
+      content: 'Stale patch {{bad}}',
+      sample_file_name: 'stale.txt',
+      mapping_status: 'Pending Review',
+      output: { category: 'Compliance', brand_id: 'solarcell', linked_form_revision_id: null, document_type_id: null, layout: { paper: 'A4' }, dynamic_fields: { bad: 'job.id' } },
+    });
+    assert.equal(patchStale.status, 412);
     const afterDraft = await (await req(`templates/${created.id}`,officeStaffAuth)).json() as any;
     assert.equal(afterDraft.current_revision_id,created.revisionId);
-    assert.equal(afterDraft.revisions.find((r:any)=>r.id===draft.id).content,'Saved change');
+    assert.equal(afterDraft.sample_file_name,'workerd-sample.txt');
+    const draftAfterPatch = afterDraft.revisions.find((r:any)=>r.id===draft.id);
+    assert.equal(draftAfterPatch.content,'Patched change {{client_ref}}');
+    assert.deepEqual(draftAfterPatch.output.dynamic_fields,{client_ref:'customer.name'});
+    assert.deepEqual(draftAfterPatch.output.layout,{paper:'LETTER'});
 
     // 9. Immutability trigger proof: direct SQL modification of published revision fails
     assert.throws(

@@ -103,8 +103,18 @@ export async function handleFormDefinitions(request: Request, env: Env, workspac
    return result.meta.changes === 1 ? reply({success:true}) : fail();
   }
   if ((input as {action?:unknown}).action !== 'archive') return validationErrorResponse('Unsupported action',[],requestId);
-  const result = await env.DB.prepare(`UPDATE form_definitions SET status='ARCHIVED',updated_at=? WHERE id=? AND workspace_id=? AND status<>'ARCHIVED' AND NOT EXISTS (SELECT 1 FROM policy_catalog_form_rules p JOIN form_revisions r ON r.workspace_id=p.workspace_id AND r.id=p.form_revision_id WHERE r.workspace_id=form_definitions.workspace_id AND r.form_definition_id=form_definitions.id) AND NOT EXISTS (SELECT 1 FROM template_revision_output o JOIN form_revisions r ON r.workspace_id=o.workspace_id AND r.id=o.linked_form_revision_id WHERE r.workspace_id=form_definitions.workspace_id AND r.form_definition_id=form_definitions.id) AND ${staff}`).bind(new Date().toISOString(),id,workspace,...who).run();
+  const result = await env.DB.prepare(`UPDATE form_definitions SET status='ARCHIVED',updated_at=? WHERE id=? AND workspace_id=? AND status<>'ARCHIVED' AND NOT EXISTS (SELECT 1 FROM form_revisions r WHERE r.workspace_id=form_definitions.workspace_id AND r.form_definition_id=form_definitions.id AND (EXISTS (SELECT 1 FROM policy_catalog_form_rules cr JOIN job_types t ON t.workspace_id=cr.workspace_id AND t.id=(SELECT p.job_type_id FROM job_type_compliance_policies p WHERE p.id=cr.policy_version_id) WHERE t.status<>'ARCHIVED' AND cr.workspace_id=r.workspace_id AND cr.form_revision_id=r.id) OR EXISTS (SELECT 1 FROM template_revision_output o JOIN template_revisions v ON v.id=o.revision_id JOIN document_templates t ON t.id=v.template_id WHERE t.status<>'ARCHIVED' AND o.workspace_id=r.workspace_id AND t.workspace_id=r.workspace_id AND o.linked_form_revision_id=r.id))) AND ${staff}`).bind(new Date().toISOString(),id,workspace,...who).run();
   return result.meta.changes === 1 ? reply({success:true}) : fail();
+ }
+ if (request.method === 'POST' && id && revision && action === 'signer-grants') {
+  if (member.role !== 'owner_admin' && member.role !== 'super_admin') return accessDeniedResponse('Admin required to grant signing access',requestId);
+  let input: unknown; try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }
+  const userId = input && typeof input === 'object' && typeof (input as {user_id?:unknown}).user_id === 'string' ? (input as {user_id:string}).user_id.trim() : '';
+  if (!userId) return validationErrorResponse('user_id is required',[],requestId);
+  const exists = await env.DB.prepare(`SELECT 1 FROM form_revisions r JOIN workspace_memberships wm ON wm.workspace_id=r.workspace_id AND wm.user_id=? JOIN users u ON u.id=wm.user_id AND u.disabled=0 JOIN user_identity_mappings im ON im.user_id=u.id AND im.provider_id='firebase' WHERE r.id=? AND r.workspace_id=? AND r.form_definition_id=? AND ${approvedMembership}`).bind(userId,revision,workspace,id).first();
+  if (!exists) return fail();
+  await env.DB.prepare(`INSERT OR IGNORE INTO compliance_signer_grants (workspace_id, revision_id, user_id) VALUES (?, ?, ?)`).bind(workspace,revision,userId).run();
+  return reply({granted:true, workspace_id:workspace, revision_id:revision, user_id:userId}, 201);
  }
  if (request.method === 'POST' && !id) {
   let input: any; try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }

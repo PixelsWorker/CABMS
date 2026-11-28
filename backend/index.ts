@@ -35,6 +35,12 @@ import { handleFormOperation } from './workers/routes/formOperation.ts';
 import { handleEvidence } from './workers/routes/evidence.ts';
 import { handleComplianceJobs } from './workers/routes/complianceJobs.ts';
 import { handleDocumentTypes } from './workers/routes/documentTypes.ts';
+import { handleSettingsProviders } from './workers/routes/settingsProviders.ts';
+import { handleCommunications } from './workers/routes/communications.ts';
+import { handleCustomers } from './workers/routes/customers.ts';
+import { handleQuotations, handlePublicQuotationToken } from './workers/routes/quotations.ts';
+import { handleEnquiries, handlePublicEnquiryIntake } from './workers/routes/enquiries.ts';
+import { sendEmail, type EmailEnv } from './services/emailService.ts';
 
 export function createWorker(authentication: AuthenticationService = productionAuthenticationService) {
   return {
@@ -193,7 +199,7 @@ export function createWorker(authentication: AuthenticationService = productionA
         return addCors(await handleDemoJourney(request, env, journeyMatch[1], journeyMatch[2], journeyMatch[3], requestId, authentication), env);
       }
 
-      const formsMatch = /^\/api\/v1\/workspaces\/([^/]+)\/form-definitions(?:\/([^/]+)(?:\/(revisions)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);
+      const formsMatch = /^\/api\/v1\/workspaces\/([^/]+)\/form-definitions(?:\/([^/]+)(?:\/(revisions)(?:\/([^/]+)(?:\/(review|approve|signer-grants))?)?)?)?$/.exec(pathname);
       if (formsMatch) return addCors(await handleFormDefinitions(request, env, formsMatch[1], formsMatch[2], formsMatch[4], formsMatch[3] && !formsMatch[4] ? 'new-revision' : formsMatch[5], requestId, authentication), env);
 
       const documentTypesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/document-types(?:\/([^/]+)(?:\/(review|publish))?)?$/.exec(pathname);
@@ -206,9 +212,104 @@ export function createWorker(authentication: AuthenticationService = productionA
       }
 
       // Document Templates & Revisions
-      const templatesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/templates(?:\/([^/]+)(?:\/(revisions)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);
+      const templatesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/templates(?:\/([^/]+)(?:\/(revisions|preview)(?:\/([^/]+)(?:\/(review|approve))?)?)?)?$/.exec(pathname);
       if (templatesMatch) {
         return addCors(await handleTemplatesRoute(request, env, templatesMatch[1], templatesMatch[2], templatesMatch[3], templatesMatch[4], templatesMatch[5], requestId, authentication), env);
+      }
+
+      // Provider & System Settings
+      const providerSettingsMatch = /^\/api\/v1\/workspaces\/([^/]+)\/provider-settings(?:\/(test|audit))?$/.exec(pathname);
+      if (providerSettingsMatch) {
+        return addCors(await handleSettingsProviders(request, env, providerSettingsMatch[1], providerSettingsMatch[2], requestId, authentication), env);
+      }
+
+      // Communications & Shared Email Service
+      const commsMatch = /^\/api\/v1\/workspaces\/([^/]+)\/communications(.*)$/.exec(pathname);
+      if (commsMatch) {
+        return addCors(await handleCommunications(request, env, commsMatch[1], commsMatch[2] || '', requestId, authentication), env);
+      }
+
+      // Customers (MYOB Sandbox)
+      const customersMatch = /^\/api\/v1\/workspaces\/([^/]+)\/customers(?:\/([^/]+))?(?:\/(check-duplicate|retry-sync|reconcile))?$/.exec(pathname);
+      if (customersMatch) {
+        const custId = customersMatch[2] === 'check-duplicate' ? undefined : customersMatch[2];
+        const custAction = customersMatch[2] === 'check-duplicate' ? 'check-duplicate' : customersMatch[3];
+        return addCors(await handleCustomers(request, env, customersMatch[1], custId, custAction, requestId, authentication), env);
+      }
+
+      // Quotations & Public Quotation Token
+      const publicQuoteMatch = /^\/api\/v1\/public\/quotations\/([^/]+)(?:\/(accept|refuse))?$/.exec(pathname);
+      if (publicQuoteMatch) {
+        const pubAction = publicQuoteMatch[2] === 'accept' || publicQuoteMatch[2] === 'refuse' ? publicQuoteMatch[2] : undefined;
+        return addCors(await handlePublicQuotationToken(request, env, publicQuoteMatch[1], pubAction, requestId), env);
+      }
+      const quotesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/quotations(?:\/([^/]+)(?:\/(send|resend|accept|refuse|revoke|revise|follow-ups\/dispatch))?)?$/.exec(pathname);
+      if (quotesMatch) {
+        return addCors(await handleQuotations(request, env, quotesMatch[1], quotesMatch[2], quotesMatch[3], requestId, authentication, {
+          emailDispatcher: async req => {
+            const res = await sendEmail(env.DB, env as unknown as EmailEnv, {
+              workspaceId: req.workspaceId,
+              category: 'QUOTE',
+              toEmail: req.to,
+              subject: req.subject,
+              bodyText: req.textBody,
+              bodyHtml: req.htmlBody ?? null,
+              requestId,
+            });
+            const quoteDispatchStatus =
+              res.delivery.status === 'FAILED'
+                ? 'FAILED'
+                : res.delivery.status === 'UNCERTAIN'
+                  ? 'UNCERTAIN'
+                  : res.is_synthetic
+                    ? 'SANDBOX_LOGGED'
+                    : res.delivery.status === 'QUEUED'
+                      ? 'QUEUED'
+                      : 'SENT';
+            return {
+              deliveryId: res.delivery.id,
+              status: quoteDispatchStatus,
+              transport: res.transport_mode,
+            };
+          },
+        }), env);
+      }
+
+      // Website Enquiries (Public Intake & Authenticated Management)
+      const enquiryEmailHook = async (
+        payload: { workspaceId: string; to: string; customerName: string; enquiryId: string; serviceRequested: string; subject: string; text: string },
+        e: { DB: typeof env.DB }
+      ) => {
+        try {
+          const res = await sendEmail(e.DB, env as unknown as EmailEnv, {
+            workspaceId: payload.workspaceId,
+            category: 'ENQUIRY_REPLY',
+            toEmail: payload.to,
+            toName: payload.customerName,
+            subject: payload.subject,
+            bodyText: payload.text,
+            requestId,
+          });
+          if (res.delivery.status === 'FAILED') {
+            return { status: 'FAILED' as const, messageId: res.delivery.id, error: res.delivery.error_message || 'Email dispatch failed' };
+          }
+          if (res.delivery.status === 'UNCERTAIN') {
+            return { status: 'UNCERTAIN' as const, messageId: res.delivery.id, error: res.delivery.error_message || 'Delivery outcome uncertain' };
+          }
+          return {
+            status: res.is_synthetic ? 'SANDBOX_SIMULATED' as const : 'SENT' as const,
+            messageId: res.delivery.id,
+          };
+        } catch (err) {
+          return { status: 'FAILED' as const, error: err instanceof Error ? err.message : 'Email dispatch failed' };
+        }
+      };
+      if (pathname === '/api/v1/public/enquiries') {
+        return addCors(await handlePublicEnquiryIntake(request, env, requestId, enquiryEmailHook), env);
+      }
+      const websiteEnquiriesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/website-enquiries(?:\/([^/]+)(?:\/(convert|dismiss))?)?$/.exec(pathname);
+      if (websiteEnquiriesMatch) {
+        return addCors(await handleEnquiries(request, env, websiteEnquiriesMatch[1], websiteEnquiriesMatch[2], websiteEnquiriesMatch[3], requestId, authentication, enquiryEmailHook), env);
       }
 
       // Unknown API route

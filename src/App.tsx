@@ -25,11 +25,19 @@ import { CustomersView } from './views/CustomersView.tsx';
 import { QuotesAcceptanceView } from './views/QuotesAcceptanceView.tsx';
 import { CommunicationsView } from './views/CommunicationsView.tsx';
 import { WebsiteInboxView } from './views/WebsiteInboxView.tsx';
+import { EnquiriesView } from './views/EnquiriesView.tsx';
 import { TemplatesSettingsView } from './views/TemplatesSettingsView.tsx';
 import { SystemWorkspaceSettingsView } from './views/SystemWorkspaceSettingsView.tsx';
 
 import { SignInScreen } from './components/SignInScreen.tsx';
 import { AccessDeniedView } from './components/AccessDeniedView.tsx';
+import { PublicQuotationPortal } from './components/PublicQuotationPortal.tsx';
+
+function getQuoteTokenFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  return params.has('quote_token') ? (params.get('quote_token') ?? '') : null;
+}
 
 config.autoAddCss = false;
 
@@ -49,6 +57,11 @@ export const AppContent: React.FC = () => {
   const isLiveOperationalTab = operational && ['dashboard','jobs','compliance','schedule','templates','super_admin_setup'].includes(activeTab);
   const destination = CORE_DESTINATIONS.find(item => item.id === activeTab);
   const permitted = canAccessDestination(persona, activeTab);
+  const publicQuoteToken = getQuoteTokenFromLocation();
+
+  if (publicQuoteToken !== null) {
+    return <PublicQuotationPortal token={publicQuoteToken} />;
+  }
 
   if (session ? session.loading || !session.profile : !isSimulatedSignedIn) {
     return (
@@ -95,9 +108,9 @@ export const AppContent: React.FC = () => {
           {permitted && activeTab === 'customers' && <CustomersView />}
           {permitted && activeTab === 'quotes' && <QuotesAcceptanceView />}
           {permitted && activeTab === 'communications' && <CommunicationsView />}
-          {permitted && activeTab === 'website_inbox' && <WebsiteInboxView />}
+          {permitted && activeTab === 'website_inbox' && (session ? <EnquiriesView /> : <WebsiteInboxView />)}
           {permitted && activeTab === 'templates' && <TemplatesSettingsView />}
-          {session ? canAccessDestination(persona, 'super_admin_setup') && <div hidden={activeTab !== 'super_admin_setup'}><SystemWorkspaceSettingsView /></div> : permitted && activeTab === 'super_admin_setup' && <SystemWorkspaceSettingsView />}
+          {session ? canAccessDestination(persona, 'super_admin_setup') && <div hidden={activeTab !== 'super_admin_setup'}><SystemWorkspaceSettingsView isActive={activeTab === 'super_admin_setup'} /></div> : permitted && activeTab === 'super_admin_setup' && <SystemWorkspaceSettingsView />}
         </main>
 
         {/* 5. Footer with Persistent Isolation Disclosure */}
@@ -117,6 +130,10 @@ export const AppContent: React.FC = () => {
 };
 
 export default function App({ demoMode = false }: { demoMode?: boolean }) {
+  const publicQuoteToken = getQuoteTokenFromLocation();
+  if (publicQuoteToken !== null) {
+    return <PublicQuotationPortal token={publicQuoteToken} />;
+  }
   const content = (
     <CabmsProvider>
       <AppContent />

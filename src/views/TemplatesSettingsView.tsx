@@ -14,9 +14,17 @@ import { FormLibrary } from '../components/FormLibrary.tsx';
 import { CatalogPolicyEditor } from '../components/CatalogPolicyEditor.tsx';
 import { JobFormSelector } from '../components/JobFormSelector.tsx';
 import { useG01Session } from '../context/G01Session.tsx';
-import { apiDocumentTypes, apiFormCatalog } from '../services/g01Client.ts';
+import {
+  apiApproveTemplateRevision,
+  apiDocumentTypes,
+  apiFormCatalog,
+  apiGetTemplate,
+  apiListTemplates,
+  apiPatchTemplate,
+  apiSubmitTemplateRevisionReview,
+} from '../services/g01Client.ts';
 import { DocumentTypeCatalog } from '../components/DocumentTypeCatalog.tsx';
-import { templateDraftContent } from '../utils/templateServerMapping.ts';
+import { mapTemplateDetail, templateDraftContent } from '../utils/templateServerMapping.ts';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBoxArchive,
@@ -39,6 +47,113 @@ import {
 import { JobTypeConfig, TemplateSetting, BrandId } from '../types/cabms.ts';
 
 const COMPLIANCE_FORM_TYPES = ['JSA', 'ELECTRICAL', 'SMOKE_ALARM', 'TCA1', 'TCA2'] as const;
+
+const TEMPLATE_MAPPING_SOURCES = [
+  'business.name',
+  'business.abn',
+  'customer.name',
+  'customer.email',
+  'job.id',
+  'job.title',
+  'site.address',
+  'technician.name',
+  'quote.total',
+  'date',
+] as const;
+
+const DEFAULT_PREVIEW_SAMPLE_DATA: Record<string, string> = {
+  'business.name': 'Solarcell Electrical & Solar',
+  'business.abn': '12 345 678 901',
+  'customer.name': 'Brisbane Commercial Properties Pty Ltd',
+  'customer.email': 'facilities@brisbanecommercial.example',
+  'job.id': 'JOB-2026-101',
+  'job.title': '10kW Commercial Solar PV System',
+  'site.address': '42 Creek Street, Brisbane QLD 4000',
+  'technician.name': 'Alex Mercer',
+  'quote.total': '$18,450.00 (incl. GST)',
+  'date': '2026-11-28',
+};
+
+type OutputCategory = 'Compliance' | 'Terms' | 'Email' | 'Contract';
+
+interface TemplateOutputDraft {
+  category: OutputCategory;
+  brand_id: string;
+  linked_form_revision_id: string | null;
+  document_type_id: string | null;
+  layout: Record<string, unknown>;
+}
+
+function inferOutputCategory(typeOrRaw: string | undefined): OutputCategory {
+  if (typeOrRaw === 'QUOTE_TERMS' || typeOrRaw === 'INVOICE_TERMS' || typeOrRaw === 'TERMS') return 'Terms';
+  if (typeOrRaw === 'EMAIL_COVER' || typeOrRaw === 'EMAIL_CONFIRMATION' || typeOrRaw === 'REVIEW_REQUEST' || typeOrRaw === 'QUOTE_FOLLOWUP') return 'Email';
+  return 'Compliance';
+}
+
+function getActiveServerRevision(detail: any) {
+  const revisions = Array.isArray(detail?.revisions) ? detail.revisions : [];
+  const pending = revisions.find((r: any) => r.status === 'DRAFT' || r.status === 'REVIEW');
+  const current = detail?.current_revision_id ? revisions.find((r: any) => r.id === detail.current_revision_id) : undefined;
+  return pending || current || revisions[0];
+}
+
+function extractStringMappings(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'string') out[k] = v;
+  }
+  return out;
+}
+
+function computeAutoMappingStatus(
+  content: string,
+  mappings: Record<string, string>,
+  currentStatus?: TemplateSetting['mappingStatus']
+): TemplateSetting['mappingStatus'] {
+  const placeholders = extractTemplatePlaceholders(content);
+  if (placeholders.length === 0) return currentStatus || 'Mapped';
+  const hasUnmapped = placeholders.some(ph => {
+    if (Object.prototype.hasOwnProperty.call(mappings, ph)) return !mappings[ph];
+    return !(TEMPLATE_MAPPING_SOURCES as readonly string[]).includes(ph);
+  });
+  return hasUnmapped ? 'Pending Review' : 'Mapped';
+}
+
+export function extractTemplatePlaceholders(content: string): string[] {
+  return Array.from(new Set(Array.from(content.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g), m => m[1])));
+}
+
+export function renderSimulatedDocumentPreview(
+  content: string,
+  fieldMappings: Record<string, string> = {},
+  sampleData: Record<string, string> = {}
+) {
+  const placeholders = extractTemplatePlaceholders(content);
+  const unmappedPlaceholders: string[] = [];
+  const resolvedValues: Record<string, string> = {};
+
+  for (const key of placeholders) {
+    const mappedSource = fieldMappings[key] || key;
+    const value = sampleData[key] ?? sampleData[mappedSource] ?? DEFAULT_PREVIEW_SAMPLE_DATA[mappedSource];
+    if (value !== undefined && value !== '') {
+      resolvedValues[key] = value;
+    } else {
+      unmappedPlaceholders.push(key);
+    }
+  }
+
+  const renderedText = content.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key: string) =>
+    resolvedValues[key] !== undefined ? resolvedValues[key] : match
+  );
+
+  return {
+    renderedText,
+    placeholders,
+    resolvedValues,
+    unmappedPlaceholders,
+  };
+}
 
 export const TemplateModal: React.FC<{
   onClose: () => void;
@@ -104,6 +219,7 @@ export const TemplatesSettingsView: React.FC = () => {
   const {
     persona,
     brands,
+    activeTab,
     templates,
     publishTemplateVersion,
     createTemplateDraftRevision,
@@ -122,6 +238,7 @@ export const TemplatesSettingsView: React.FC = () => {
     createJobTypePolicyDraft,
     submitJobTypePolicyForReview,
     approveJobTypePolicy,
+    showDemoNotification,
     demoClock,
   } = useCabms();
 
@@ -169,12 +286,151 @@ export const TemplatesSettingsView: React.FC = () => {
   const [newTplContent, setNewTplContent] = useState('');
   const [newTplSampleFile, setNewTplSampleFile] = useState('');
   const [newTplDescription, setNewTplDescription] = useState('');
+  const [newTplLayoutPaper, setNewTplLayoutPaper] = useState<'A4' | 'LETTER'>('A4');
+  const [newTplMappings, setNewTplMappings] = useState<Record<string, string>>({});
+  const [templateMappings, setTemplateMappings] = useState<Record<string, Record<string, string>>>({});
+  const [templateSampleFiles, setTemplateSampleFiles] = useState<Record<string, string>>({});
+  const [templateOutputs, setTemplateOutputs] = useState<Record<string, TemplateOutputDraft>>({});
+  const [templateMappingStatuses, setTemplateMappingStatuses] = useState<Record<string, TemplateSetting['mappingStatus']>>({});
+  const [serverTemplateDetails, setServerTemplateDetails] = useState<Record<string, any>>({});
+  const [standaloneTemplates, setStandaloneTemplates] = useState<TemplateSetting[] | null>(null);
+  const [dirtyTemplateMeta, setDirtyTemplateMeta] = useState<Record<string, boolean>>({});
+  const [editorPublishedForms, setEditorPublishedForms] = useState<Array<{id:string;title:string;code:string;published_revision_id:string}>>([]);
+  const [editorDocumentTypes, setEditorDocumentTypes] = useState<Array<{id:string;title:string;code:string}>>([]);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [templateSaveFeedback, setTemplateSaveFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [templateUploadNotice, setTemplateUploadNotice] = useState('');
+  const [previewSampleData, setPreviewSampleData] = useState<Record<string, string>>({});
+  const [previewShowRaw, setPreviewShowRaw] = useState(false);
   const [outputCategory, setOutputCategory] = useState<'Compliance'|'Terms'|'Email'|'Contract'>('Compliance');
   const [linkedFormRevision, setLinkedFormRevision] = useState('');
   const [publishedForms, setPublishedForms] = useState<Array<{id:string;title:string;code:string;published_revision_id:string}>>([]);
   const [catalogError, setCatalogError] = useState('');
   const [documentTypes, setDocumentTypes] = useState<Array<{id:string;title:string;code:string}>>([]);
   const [documentTypeId, setDocumentTypeId] = useState('');
+
+  const dirtyTemplateMetaRef = React.useRef<Record<string, boolean>>({});
+  dirtyTemplateMetaRef.current = dirtyTemplateMeta;
+  const hasEditedTemplateRef = React.useRef(false);
+  hasEditedTemplateRef.current = hasEditedTemplate;
+  const currentTemplateIdRef = React.useRef<string | undefined>(undefined);
+  const latestTemplateMappingsRef = React.useRef<Record<string, Record<string, string>>>({});
+  latestTemplateMappingsRef.current = templateMappings;
+  const latestTemplateOutputsRef = React.useRef<Record<string, TemplateOutputDraft>>({});
+  latestTemplateOutputsRef.current = templateOutputs;
+  const latestTemplateSampleFilesRef = React.useRef<Record<string, string>>({});
+  latestTemplateSampleFilesRef.current = templateSampleFiles;
+  const latestTemplateMappingStatusesRef = React.useRef<Record<string, TemplateSetting['mappingStatus']>>({});
+  latestTemplateMappingStatusesRef.current = templateMappingStatuses;
+
+  const hydrateFromServerDetail = (templateId: string, detail: any, force = false) => {
+    if (!detail || typeof detail !== 'object') return;
+    setServerTemplateDetails(prev => ({ ...prev, [templateId]: detail }));
+    const activeRev = getActiveServerRevision(detail);
+    const revOutput = activeRev?.output || detail.output || null;
+    const savedSampleFile = typeof activeRev?.sample_file_name === 'string' && activeRev.sample_file_name.trim()
+      ? activeRev.sample_file_name
+      : (typeof detail.sample_file_name === 'string' ? detail.sample_file_name : '');
+    const savedMappingStatus = (detail.mapping_status as TemplateSetting['mappingStatus']) || 'Mapped';
+    const savedMappings = extractStringMappings(revOutput?.dynamic_fields);
+    const savedOutput: TemplateOutputDraft = {
+      category: (revOutput?.category as OutputCategory) || inferOutputCategory(detail.template_type),
+      brand_id: revOutput?.brand_id || detail.workspace_id || session?.workspaceId || '',
+      linked_form_revision_id: revOutput?.linked_form_revision_id ?? null,
+      document_type_id: revOutput?.document_type_id ?? null,
+      layout: (revOutput?.layout && typeof revOutput.layout === 'object' && !Array.isArray(revOutput.layout))
+        ? { paper: 'A4', ...revOutput.layout }
+        : { paper: 'A4' },
+    };
+
+    if (force || !dirtyTemplateMetaRef.current[templateId]) {
+      latestTemplateSampleFilesRef.current = { ...latestTemplateSampleFilesRef.current, [templateId]: savedSampleFile };
+      latestTemplateMappingStatusesRef.current = { ...latestTemplateMappingStatusesRef.current, [templateId]: savedMappingStatus };
+      latestTemplateMappingsRef.current = { ...latestTemplateMappingsRef.current, [templateId]: savedMappings };
+      latestTemplateOutputsRef.current = { ...latestTemplateOutputsRef.current, [templateId]: savedOutput };
+      setTemplateSampleFiles(prev => ({ ...prev, [templateId]: savedSampleFile }));
+      setTemplateMappingStatuses(prev => ({ ...prev, [templateId]: savedMappingStatus }));
+      setTemplateMappings(prev => ({ ...prev, [templateId]: savedMappings }));
+      setTemplateOutputs(prev => ({ ...prev, [templateId]: savedOutput }));
+    }
+    if (force && templateId === currentTemplateIdRef.current && typeof activeRev?.content === 'string') {
+      setHasEditedTemplate(false);
+      setEditingContent(activeRev.content);
+    } else if (!hasEditedTemplateRef.current && templateId === currentTemplateIdRef.current && typeof activeRev?.content === 'string') {
+      setEditingContent(activeRev.content);
+    }
+  };
+
+  useEffect(() => {
+    latestTemplateMappingsRef.current = {};
+    latestTemplateOutputsRef.current = {};
+    latestTemplateSampleFilesRef.current = {};
+    latestTemplateMappingStatusesRef.current = {};
+    setServerTemplateDetails({});
+    setStandaloneTemplates(null);
+    setTemplateOutputs({});
+    setTemplateMappingStatuses({});
+    setTemplateMappings({});
+    setTemplateSampleFiles({});
+    setDirtyTemplateMeta({});
+    setHasEditedTemplate(false);
+    setEditingContent('');
+    setTemplateUploadNotice('');
+    setTemplateSaveFeedback(null);
+    setEditorPublishedForms([]);
+    setEditorDocumentTypes([]);
+  }, [session?.workspaceId, session?.profile?.user.id]);
+
+  useEffect(() => {
+    if (!session?.workspaceId || !session?.profile) return;
+    let active = true;
+    const workspace = session.workspaceId;
+    void (async () => {
+      try {
+        const token = await session.token();
+        const [formsRes, typesRes] = await Promise.all([
+          apiFormCatalog<Array<{id:string;title:string;code:string;published_revision_id:string}>>(workspace, token, '?published=1'),
+          apiDocumentTypes<Array<{id:string;title:string;code:string}>>(workspace, token, '?published=1'),
+        ]);
+        if (!active) return;
+        if (formsRes.ok && Array.isArray(formsRes.data)) setEditorPublishedForms(formsRes.data);
+        if (typesRes.ok && Array.isArray(typesRes.data)) setEditorDocumentTypes(typesRes.data);
+      } catch {
+        // Editor catalog dropdowns remain optional
+      }
+    })();
+    return () => { active = false; };
+  }, [session?.workspaceId, session?.profile?.user.id]);
+
+  useEffect(() => {
+    if (!session?.workspaceId || !session?.profile || activeTab === 'templates') {
+      if (activeTab === 'templates') setStandaloneTemplates(null);
+      return;
+    }
+    let active = true;
+    const workspace = session.workspaceId;
+    void (async () => {
+      try {
+        const token = await session.token();
+        const listRes = await apiListTemplates(workspace, token);
+        if (!active || !listRes.ok || !Array.isArray(listRes.data)) return;
+        const details = await Promise.all(listRes.data.map(row => apiGetTemplate(workspace, row.id, token)));
+        if (!active) return;
+        const mappedList: TemplateSetting[] = [];
+        for (const d of details) {
+          if (!d.ok || !d.data) continue;
+          const mapped = mapTemplateDetail(d.data);
+          if (mapped) mappedList.push(mapped);
+          hydrateFromServerDetail(d.data.id, d.data);
+        }
+        setStandaloneTemplates(mappedList);
+      } catch {
+        // Keep existing template list if standalone load fails
+      }
+    })();
+    return () => { active = false; };
+  }, [session?.workspaceId, session?.profile?.user.id, activeTab]);
+
   useEffect(() => {
     let active = true;
     setJobCatalogForms([]); setNewJtFormRevisions([]); setJobCatalogError('');
@@ -204,40 +460,23 @@ export const TemplatesSettingsView: React.FC = () => {
     return () => { active = false; };
   }, [isAddTemplateOpen,session?.workspaceId,session?.profile?.user.id]);
 
-  // Role Gate: Owner/Admin or Super Admin only (evaluated AFTER hooks)
-  if (persona === 'technician') {
-    return (
-      <AccessDeniedView
-        resourceName="Compliance Templates & Terms Management"
-        requiredRoleDescription="Admin or Super Admin"
-        customExplanation="Technicians cannot alter master compliance forms or standard Terms of Service."
-      />
-    );
-  }
+  const baseTemplates = (session?.workspaceId && session?.profile && standaloneTemplates !== null)
+    ? standaloneTemplates
+    : templates;
 
-  const handleStartDraft = () => {
-    if (!currentTemplate) return;
-    createTemplateDraftRevision(
-      currentTemplate.id,
-      templateDraftContent(editingContent, currentTemplate.content, hasEditedTemplate)
-    );
-  };
-
-  const getBrandDisplayName = (brandId: string) => {
-    if (brands[brandId]?.name) return brands[brandId].name;
-    if (brandId === 'solarcell') return 'Solarcell';
-    if (brandId === 'smart_home') return 'Gold Coast Smart Home';
-    if (brandId === 'cctv') return 'Gold Coast CCTV';
-    return 'Shared Fleet';
-  };
-
-  const filteredJobTypes = jobTypes.filter(jt => {
-    if (jobTypeFilter === 'ACTIVE') return jt.status !== 'ARCHIVED';
-    if (jobTypeFilter === 'ARCHIVED') return jt.status === 'ARCHIVED';
-    return true;
+  const effectiveTemplates = baseTemplates.map(tpl => {
+    const detail = serverTemplateDetails[tpl.id];
+    if (!detail) return tpl;
+    const mapped = mapTemplateDetail(detail);
+    if (!mapped) return tpl;
+    return {
+      ...mapped,
+      sampleFileName: templateSampleFiles[tpl.id] || mapped.sampleFileName,
+      mappingStatus: templateMappingStatuses[tpl.id] || mapped.mappingStatus,
+    };
   });
 
-  const filteredTemplates = templates.filter(t => {
+  const filteredTemplates = effectiveTemplates.filter(t => {
     if (templateTypeFilter !== 'ALL' && t.type !== templateTypeFilter) return false;
     if (templateSearch.trim()) {
       const q = templateSearch.trim().toLowerCase();
@@ -256,12 +495,245 @@ export const TemplatesSettingsView: React.FC = () => {
   }, [filteredTemplates, selectedTemplateId]);
 
   const currentTemplate = filteredTemplates.find(t => t.id === selectedTemplateId) || filteredTemplates[0];
+  const currentTemplateId = currentTemplate?.id;
+  currentTemplateIdRef.current = currentTemplateId;
+
+  useEffect(() => {
+    if (!session?.workspaceId || !session?.profile || !currentTemplateId) return;
+    let active = true;
+    const workspace = session.workspaceId;
+    void (async () => {
+      try {
+        const token = await session.token();
+        const res = await apiGetTemplate(workspace, currentTemplateId, token);
+        if (!active || !res.ok || !res.data) return;
+        hydrateFromServerDetail(currentTemplateId, res.data);
+      } catch {
+        // Keep currently loaded template state if detail fetch fails
+      }
+    })();
+    return () => { active = false; };
+  }, [session?.workspaceId, session?.profile?.user.id, currentTemplateId]);
+
+  // Role Gate: Owner/Admin or Super Admin only (evaluated AFTER hooks)
+  if (persona === 'technician') {
+    return (
+      <AccessDeniedView
+        resourceName="Compliance Templates & Terms Management"
+        requiredRoleDescription="Admin or Super Admin"
+        customExplanation="Technicians cannot alter master compliance forms or standard Terms of Service."
+      />
+    );
+  }
+
+  const refreshServerTemplate = async (templateId: string, force = false) => {
+    if (!session?.workspaceId || !session?.profile) return null;
+    const token = await session.token();
+    const res = await apiGetTemplate(session.workspaceId, templateId, token);
+    if (res.ok && res.data) {
+      hydrateFromServerDetail(templateId, res.data, force);
+      const mapped = mapTemplateDetail(res.data);
+      if (mapped && standaloneTemplates !== null) {
+        setStandaloneTemplates(prev => {
+          if (!prev) return prev;
+          return prev.some(item => item.id === templateId)
+            ? prev.map(item => (item.id === templateId ? mapped : item))
+            : [...prev, mapped];
+        });
+      }
+      return res.data;
+    }
+    return null;
+  };
+
+  const handleStartDraft = async () => {
+    if (!currentTemplate) return;
+    const nextContent = templateDraftContent(editingContent, currentTemplate.content, hasEditedTemplate);
+    if (!session?.workspaceId || !session?.profile) {
+      createTemplateDraftRevision(currentTemplate.id, nextContent);
+      setHasEditedTemplate(false);
+      setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: false }));
+      return;
+    }
+    if (!nextContent.trim()) {
+      const msg = 'Content is required and must be at most 100000 characters';
+      setTemplateSaveFeedback({ type: 'error', message: msg });
+      showDemoNotification(msg, 'error');
+      return;
+    }
+
+    setIsSavingDraft(true);
+    setTemplateSaveFeedback(null);
+    try {
+      const token = await session.token();
+      let detail = serverTemplateDetails[currentTemplate.id];
+      if (!detail) {
+        const fetched = await apiGetTemplate(session.workspaceId, currentTemplate.id, token);
+        if (!fetched.ok || !fetched.data) {
+          const msg = fetched.problem?.detail || 'Unable to load latest template revision before saving.';
+          setTemplateSaveFeedback({ type: 'error', message: msg });
+          showDemoNotification(msg, 'error');
+          return;
+        }
+        detail = fetched.data;
+        hydrateFromServerDetail(currentTemplate.id, detail);
+      }
+
+      const revisions = Array.isArray(detail.revisions) ? detail.revisions : [];
+      const draftRev = revisions.find((r: any) => r.status === 'DRAFT');
+      const activeRev = getActiveServerRevision(detail);
+      const activeMappings = latestTemplateMappingsRef.current[currentTemplate.id] || templateMappings[currentTemplate.id] || {};
+      const placeholders = extractTemplatePlaceholders(nextContent);
+      const dynamicFieldsToSave: Record<string, string> = {};
+      for (const [k, v] of Object.entries(activeMappings)) {
+        if (typeof v === 'string') {
+          dynamicFieldsToSave[k] = v;
+        }
+      }
+      for (const ph of placeholders) {
+        if (!Object.prototype.hasOwnProperty.call(dynamicFieldsToSave, ph) && (TEMPLATE_MAPPING_SOURCES as readonly string[]).includes(ph)) {
+          dynamicFieldsToSave[ph] = ph;
+        }
+      }
+      const currentOutput = latestTemplateOutputsRef.current[currentTemplate.id] || templateOutputs[currentTemplate.id];
+      const outputPayload = {
+        category: currentOutput?.category || inferOutputCategory(detail.template_type || currentTemplate.type),
+        brand_id: session.workspaceId,
+        linked_form_revision_id: currentOutput?.linked_form_revision_id || null,
+        document_type_id: currentOutput?.document_type_id || null,
+        layout: currentOutput?.layout || { paper: 'A4' },
+        dynamic_fields: dynamicFieldsToSave,
+      };
+      const sampleFileName = (
+        latestTemplateSampleFilesRef.current[currentTemplate.id]
+        ?? templateSampleFiles[currentTemplate.id]
+        ?? detail.sample_file_name
+        ?? currentTemplate.sampleFileName
+        ?? ''
+      ).trim() || undefined;
+      const mappingStatus = latestTemplateMappingStatusesRef.current[currentTemplate.id]
+        || templateMappingStatuses[currentTemplate.id]
+        || computeAutoMappingStatus(nextContent, dynamicFieldsToSave, currentTemplate.mappingStatus);
+
+      const patchBody: Record<string, unknown> = {
+        content: nextContent,
+        ...(sampleFileName ? { sample_file_name: sampleFileName } : {}),
+        mapping_status: mappingStatus,
+        output: outputPayload,
+        ...(draftRev
+          ? { revision_id: draftRev.id, expected_updated_at: draftRev.updated_at }
+          : { base_revision_id: detail.current_revision_id || activeRev?.id }),
+      };
+
+      const res = await apiPatchTemplate(session.workspaceId, currentTemplate.id, token, patchBody);
+      if (!res.ok || !res.data?.updated_at) {
+        const msg = res.problem?.detail || 'Draft could not be saved. Reload before saving.';
+        setTemplateSaveFeedback({ type: 'error', message: msg });
+        showDemoNotification(msg, 'error');
+        return;
+      }
+
+      const freshDetail = res.data.template || await refreshServerTemplate(currentTemplate.id, true);
+      setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: false }));
+      if (freshDetail) {
+        hydrateFromServerDetail(currentTemplate.id, freshDetail, true);
+        const mapped = mapTemplateDetail(freshDetail);
+        if (mapped && standaloneTemplates !== null) {
+          setStandaloneTemplates(prev => prev ? prev.map(item => (item.id === currentTemplate.id ? mapped : item)) : prev);
+        }
+      } else {
+        setHasEditedTemplate(false);
+      }
+      const msg = 'Draft template revision, output configuration, and field mappings saved.';
+      setTemplateSaveFeedback({ type: 'success', message: msg });
+      showDemoNotification(msg, 'success');
+    } catch (err: any) {
+      const msg = err?.message || 'Could not save template draft.';
+      setTemplateSaveFeedback({ type: 'error', message: msg });
+      showDemoNotification(msg, 'error');
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
+  const handleSubmitCurrentTemplateReview = async () => {
+    if (!currentTemplate) return;
+    if (!session?.workspaceId || !session?.profile) {
+      submitTemplateForReview(currentTemplate.id);
+      return;
+    }
+    const detail = serverTemplateDetails[currentTemplate.id];
+    const draftRev = Array.isArray(detail?.revisions) ? detail.revisions.find((r: any) => r.status === 'DRAFT') : null;
+    if (!draftRev?.id) {
+      submitTemplateForReview(currentTemplate.id);
+      return;
+    }
+    try {
+      const token = await session.token();
+      const res = await apiSubmitTemplateRevisionReview(session.workspaceId, currentTemplate.id, draftRev.id, token);
+      if (!res.ok) {
+        showDemoNotification(res.problem?.detail || 'Failed to submit template revision for review', 'error');
+        return;
+      }
+      await refreshServerTemplate(currentTemplate.id, true);
+      showDemoNotification('Template revision submitted for Admin compliance review.', 'info');
+    } catch (err: any) {
+      showDemoNotification(`Network error submitting revision for review: ${err?.message || 'Unknown error'}`, 'error');
+    }
+  };
+
+  const handlePublishCurrentTemplate = async () => {
+    if (!currentTemplate) return;
+    if (!session?.workspaceId || !session?.profile) {
+      publishTemplateVersion(currentTemplate.id);
+      return;
+    }
+    const detail = serverTemplateDetails[currentTemplate.id];
+    const reviewRev = Array.isArray(detail?.revisions) ? detail.revisions.find((r: any) => r.status === 'REVIEW') : null;
+    if (!reviewRev?.id) {
+      publishTemplateVersion(currentTemplate.id);
+      return;
+    }
+    try {
+      const token = await session.token();
+      const res = await apiApproveTemplateRevision(session.workspaceId, currentTemplate.id, reviewRev.id, token);
+      if (!res.ok) {
+        showDemoNotification(res.problem?.detail || 'Template approval failed on server', 'error');
+        return;
+      }
+      await refreshServerTemplate(currentTemplate.id, true);
+      showDemoNotification('Template version published. Full revision and review audit history retained.', 'success');
+    } catch (err: any) {
+      showDemoNotification(`Network error publishing template: ${err?.message || 'Unknown error'}`, 'error');
+    }
+  };
+
+  const getBrandDisplayName = (brandId: string) => {
+    if (brands[brandId]?.name) return brands[brandId].name;
+    if (brandId === 'solarcell') return 'Solarcell';
+    if (brandId === 'smart_home') return 'Gold Coast Smart Home';
+    if (brandId === 'cctv') return 'Gold Coast CCTV';
+    return 'Shared Fleet';
+  };
+
+  const filteredJobTypes = jobTypes.filter(jt => {
+    if (jobTypeFilter === 'ACTIVE') return jt.status !== 'ARCHIVED';
+    if (jobTypeFilter === 'ARCHIVED') return jt.status === 'ARCHIVED';
+    return true;
+  });
+
   const isTemplateDirty = !!currentTemplate && hasEditedTemplate && editingContent !== currentTemplate.content;
+  const hasUnsavedTemplateChanges = isTemplateDirty || (!!currentTemplate && !!dirtyTemplateMeta[currentTemplate.id]);
   const confirmDiscardTemplateEdits = () => {
-    if (!isTemplateDirty) return true;
+    if (!hasUnsavedTemplateChanges) return true;
     if (typeof window !== 'undefined' && !window.confirm('You have unsaved template edits. Discard changes?')) return false;
     setHasEditedTemplate(false);
     setEditingContent('');
+    if (currentTemplate) {
+      setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: false }));
+      const cached = serverTemplateDetails[currentTemplate.id];
+      if (cached) hydrateFromServerDetail(currentTemplate.id, cached, true);
+    }
     return true;
   };
 
@@ -307,8 +779,72 @@ export const TemplatesSettingsView: React.FC = () => {
     }
   };
 
+  const handleSampleFileUpload = async (file: File | undefined, target: 'create' | 'edit') => {
+    if (!file) return;
+    const isTextLike = /\.(txt|md|html|htm|json|csv)$/i.test(file.name) || file.type.startsWith('text/');
+    if (isTextLike) {
+      const text = await file.text();
+      if (target === 'create') {
+        setNewTplSampleFile(file.name);
+        if (!newTplContent.trim()) setNewTplContent(text);
+        const placeholders = extractTemplatePlaceholders(text);
+        if (placeholders.length > 0) {
+          const autoMap: Record<string, string> = {};
+          for (const p of placeholders) {
+            if ((TEMPLATE_MAPPING_SOURCES as readonly string[]).includes(p)) autoMap[p] = p;
+          }
+          setNewTplMappings(prev => ({ ...autoMap, ...prev }));
+        }
+      } else if (currentTemplate) {
+        const placeholders = extractTemplatePlaceholders(text);
+        const existingMappings = latestTemplateMappingsRef.current[currentTemplate.id] || {};
+        const autoMap: Record<string, string> = {};
+        for (const p of placeholders) {
+          if ((TEMPLATE_MAPPING_SOURCES as readonly string[]).includes(p)) autoMap[p] = p;
+        }
+        const mergedMappings = { ...autoMap, ...existingMappings };
+        const nextStatus = computeAutoMappingStatus(text, mergedMappings, latestTemplateMappingStatusesRef.current[currentTemplate.id]);
+        latestTemplateSampleFilesRef.current = { ...latestTemplateSampleFilesRef.current, [currentTemplate.id]: file.name };
+        latestTemplateMappingsRef.current = { ...latestTemplateMappingsRef.current, [currentTemplate.id]: mergedMappings };
+        latestTemplateMappingStatusesRef.current = { ...latestTemplateMappingStatusesRef.current, [currentTemplate.id]: nextStatus };
+        setTemplateSampleFiles(prev => ({ ...prev, [currentTemplate.id]: file.name }));
+        setTemplateMappings(prev => ({ ...prev, [currentTemplate.id]: mergedMappings }));
+        setTemplateMappingStatuses(prev => ({
+          ...prev,
+          [currentTemplate.id]: nextStatus,
+        }));
+        setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+        setHasEditedTemplate(true);
+        setEditingContent(text);
+      }
+      setTemplateUploadNotice(`Loaded "${file.name}" (${Math.max(1, Math.round(file.size / 1024))} KB) into template editor.`);
+      return;
+    }
+
+    if (target === 'create') {
+      setNewTplSampleFile(file.name);
+    } else if (currentTemplate) {
+      latestTemplateSampleFilesRef.current = { ...latestTemplateSampleFilesRef.current, [currentTemplate.id]: file.name };
+      setTemplateSampleFiles(prev => ({ ...prev, [currentTemplate.id]: file.name }));
+      setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+    }
+    setTemplateUploadNotice(
+      `Attached "${file.name}" (${Math.max(1, Math.round(file.size / 1024))} KB). Binary DOCX/PDF parsing & rendering are simulated (no binary engine installed).`
+    );
+  };
+
   const handleCreateTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
+    const createdOutput = session?.workspaceId && session.profile
+      ? {
+          category: outputCategory,
+          brand_id: session.workspaceId,
+          linked_form_revision_id: linkedFormRevision || null,
+          document_type_id: documentTypeId || null,
+          layout: { paper: newTplLayoutPaper },
+          dynamic_fields: newTplMappings,
+        }
+      : undefined;
     const res = await addTemplate({
       name: newTplName,
       code: newTplCode,
@@ -316,16 +852,43 @@ export const TemplatesSettingsView: React.FC = () => {
       content: newTplContent,
       description: newTplDescription,
       sampleFileName: newTplSampleFile,
-      ...(session?.workspaceId && session.profile ? {output:{category:outputCategory,brand_id:session.workspaceId,linked_form_revision_id:linkedFormRevision || null,document_type_id:documentTypeId || null,layout:{},dynamic_fields:{}}} : {}),
+      ...(createdOutput ? { output: createdOutput } : {}),
     });
     if (res.success && res.id) {
+      const createdId = res.id;
+      if (Object.keys(newTplMappings).length > 0) {
+        setTemplateMappings(prev => ({ ...prev, [createdId]: newTplMappings }));
+      }
+      if (newTplSampleFile.trim()) {
+        setTemplateSampleFiles(prev => ({ ...prev, [createdId]: newTplSampleFile.trim() }));
+      }
+      if (createdOutput) {
+        setTemplateOutputs(prev => ({
+          ...prev,
+          [createdId]: {
+            category: createdOutput.category,
+            brand_id: createdOutput.brand_id,
+            linked_form_revision_id: createdOutput.linked_form_revision_id,
+            document_type_id: createdOutput.document_type_id,
+            layout: createdOutput.layout,
+          },
+        }));
+      }
+      setDirtyTemplateMeta(prev => ({ ...prev, [createdId]: false }));
       setIsAddTemplateOpen(false);
-      setSelectedTemplateId(res.id);
+      setSelectedTemplateId(createdId);
+      setHasEditedTemplate(false);
+      setEditingContent(newTplContent);
       setNewTplName('');
       setNewTplCode('');
       setNewTplContent('');
       setNewTplSampleFile('');
       setNewTplDescription('');
+      setNewTplMappings({});
+      setTemplateUploadNotice('');
+      if (session?.workspaceId && session.profile) {
+        void refreshServerTemplate(createdId, true);
+      }
     }
   };
 
@@ -428,7 +991,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <thead className="cabms-surface-subtle text-(--cabms-text-secondary) text-[11px] uppercase border-b cabms-border">
               <tr>
                 <th className="p-3">Job Type Category</th>
-                <th className="p-3">Brand Affiliation</th>
+                <th className="p-3">Business</th>
                 <th className="p-3">Required Compliance Forms</th>
                 <th className="p-3">Matrix Version</th>
                 <th className="p-3">Completion Rule</th>
@@ -668,7 +1231,7 @@ export const TemplatesSettingsView: React.FC = () => {
               className="w-full px-2.5 py-1.5 cabms-input rounded text-xs"
             >
               <option value="ALL">All Types</option>
-              {Array.from(new Set(templates.map(t => t.type))).map(type => (
+              {Array.from(new Set(effectiveTemplates.map(t => t.type))).map(type => (
                 <option key={type} value={type}>{type.replaceAll('_', ' ')}</option>
               ))}
             </select>
@@ -709,7 +1272,13 @@ export const TemplatesSettingsView: React.FC = () => {
                     if (tpl.id !== selectedTemplateId && !confirmDiscardTemplateEdits()) return;
                     setSelectedTemplateId(tpl.id);
                     setHasEditedTemplate(false);
+                    setTemplateUploadNotice('');
+                    setTemplateSaveFeedback(null);
                     setEditingContent(tpl.content);
+                    if (session?.workspaceId && session?.profile) {
+                      const cached = serverTemplateDetails[tpl.id];
+                      if (cached) hydrateFromServerDetail(tpl.id, cached);
+                    }
                   }}
                   className={`p-3.5 rounded-xl border transition cursor-pointer ${
                     isSelected
@@ -780,7 +1349,12 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="flex items-center space-x-2">
               <button
                 type="button"
-                onClick={() => setPreviewModalDoc({ ...currentTemplate, content: hasEditedTemplate ? editingContent : currentTemplate.content })}
+                onClick={() => setPreviewModalDoc({
+                  ...currentTemplate,
+                  content: hasEditedTemplate ? editingContent : currentTemplate.content,
+                  sampleFileName: templateSampleFiles[currentTemplate.id] || currentTemplate.sampleFileName,
+                  mappingStatus: templateMappingStatuses[currentTemplate.id] || currentTemplate.mappingStatus,
+                })}
                 className="px-3 py-1.5 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1 hover:border-amber-500"
               >
                 <FontAwesomeIcon icon={faEye} className="w-3.5 h-3.5" />
@@ -817,6 +1391,200 @@ export const TemplatesSettingsView: React.FC = () => {
             </div>
           </div>
 
+          {/* Template Upload, Metadata & Field Mapping */}
+          {(() => {
+            const activeContent = hasEditedTemplate ? editingContent : currentTemplate.content;
+            const placeholders = extractTemplatePlaceholders(activeContent);
+            const activeMappings = templateMappings[currentTemplate.id] || {};
+            const activeSampleFile = templateSampleFiles[currentTemplate.id] || currentTemplate.sampleFileName || 'custom-template.docx';
+            const activeMappingStatus = templateMappingStatuses[currentTemplate.id] || currentTemplate.mappingStatus;
+            const currentOutput = templateOutputs[currentTemplate.id] || {
+              category: inferOutputCategory(currentTemplate.type),
+              brand_id: session?.workspaceId || '',
+              linked_form_revision_id: null,
+              document_type_id: null,
+              layout: { paper: 'A4' },
+            };
+            return (
+              <div className="cabms-card-subtle p-3.5 rounded-lg border cabms-border space-y-2.5 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-(--cabms-text-secondary)">
+                      Sample File &amp; Dynamic Field Mapping
+                    </span>
+                    <div className="text-(--cabms-text-primary) font-medium mt-0.5">
+                      File: <span className="font-mono">{activeSampleFile}</span> • Mapping:{' '}
+                      <span className="text-sky-400 font-semibold">{activeMappingStatus}</span>
+                    </div>
+                  </div>
+                  <label className="px-2.5 py-1 cabms-surface-subtle border cabms-border rounded text-[11px] font-semibold text-(--cabms-text-primary) hover:border-amber-500 cursor-pointer">
+                    Upload Sample File
+                    <input
+                      type="file"
+                      aria-label="Upload sample template file"
+                      accept=".txt,.md,.html,.htm,.json,.docx,.pdf"
+                      className="sr-only"
+                      onChange={e => { void handleSampleFileUpload(e.target.files?.[0], 'edit'); e.target.value = ''; }}
+                    />
+                  </label>
+                </div>
+                {templateUploadNotice && (
+                  <p role="status" className="text-[11px] text-amber-300 bg-amber-950/30 border border-amber-800/40 rounded px-2.5 py-1.5">
+                    {templateUploadNotice}
+                  </p>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-slate-800/60">
+                  <label className="text-[11px] text-(--cabms-text-secondary) space-y-1">
+                    <span className="block font-semibold">Output Category</span>
+                    <select
+                      aria-label="Template output category"
+                      value={currentOutput.category}
+                      onChange={e => {
+                        const category = e.target.value as OutputCategory;
+                        const base = latestTemplateOutputsRef.current[currentTemplate.id] || currentOutput;
+                        const nextOutput = { ...base, category };
+                        latestTemplateOutputsRef.current = { ...latestTemplateOutputsRef.current, [currentTemplate.id]: nextOutput };
+                        setTemplateOutputs(prev => ({ ...prev, [currentTemplate.id]: nextOutput }));
+                        setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+                      }}
+                      className="w-full cabms-input rounded px-2 py-1 text-[11px]"
+                    >
+                      {(['Compliance', 'Terms', 'Email', 'Contract'] as const).map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-(--cabms-text-secondary) space-y-1">
+                    <span className="block font-semibold">Paper Layout</span>
+                    <select
+                      aria-label="Template paper layout"
+                      value={String(currentOutput.layout?.paper || 'A4')}
+                      onChange={e => {
+                        const paper = e.target.value;
+                        const base = latestTemplateOutputsRef.current[currentTemplate.id] || currentOutput;
+                        const nextOutput = { ...base, layout: { ...base.layout, paper } };
+                        latestTemplateOutputsRef.current = { ...latestTemplateOutputsRef.current, [currentTemplate.id]: nextOutput };
+                        setTemplateOutputs(prev => ({ ...prev, [currentTemplate.id]: nextOutput }));
+                        setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+                      }}
+                      className="w-full cabms-input rounded px-2 py-1 text-[11px]"
+                    >
+                      <option value="A4">A4</option>
+                      <option value="LETTER">Letter</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-(--cabms-text-secondary) space-y-1">
+                    <span className="block font-semibold">Mapping Status</span>
+                    <select
+                      aria-label="Template mapping status"
+                      value={activeMappingStatus}
+                      onChange={e => {
+                        const nextStatus = e.target.value as TemplateSetting['mappingStatus'];
+                        latestTemplateMappingStatusesRef.current = { ...latestTemplateMappingStatusesRef.current, [currentTemplate.id]: nextStatus };
+                        setTemplateMappingStatuses(prev => ({ ...prev, [currentTemplate.id]: nextStatus }));
+                        setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+                      }}
+                      className="w-full cabms-input rounded px-2 py-1 text-[11px]"
+                    >
+                      <option value="Mapped">Mapped</option>
+                      <option value="Pending Review">Pending Review</option>
+                      <option value="Unsupported">Unsupported</option>
+                    </select>
+                  </label>
+                </div>
+                {session?.profile && (editorDocumentTypes.length > 0 || editorPublishedForms.length > 0 || currentOutput.document_type_id || currentOutput.linked_form_revision_id) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="text-[11px] text-(--cabms-text-secondary) space-y-1">
+                      <span className="block font-semibold">Approved Document Type</span>
+                      <select
+                        aria-label="Template document type"
+                        value={currentOutput.document_type_id || ''}
+                        onChange={e => {
+                          const docId = e.target.value || null;
+                          const base = latestTemplateOutputsRef.current[currentTemplate.id] || currentOutput;
+                          const nextOutput = { ...base, document_type_id: docId };
+                          latestTemplateOutputsRef.current = { ...latestTemplateOutputsRef.current, [currentTemplate.id]: nextOutput };
+                          setTemplateOutputs(prev => ({ ...prev, [currentTemplate.id]: nextOutput }));
+                          setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+                        }}
+                        className="w-full cabms-input rounded px-2 py-1 text-[11px]"
+                      >
+                        <option value="">No document type selected</option>
+                        {editorDocumentTypes.map(t => (
+                          <option key={t.id} value={t.id}>{t.title} ({t.code})</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-[11px] text-(--cabms-text-secondary) space-y-1">
+                      <span className="block font-semibold">Linked Form Definition</span>
+                      <select
+                        aria-label="Template linked form"
+                        value={currentOutput.linked_form_revision_id || ''}
+                        onChange={e => {
+                          const formRevId = e.target.value || null;
+                          const base = latestTemplateOutputsRef.current[currentTemplate.id] || currentOutput;
+                          const nextOutput = { ...base, linked_form_revision_id: formRevId };
+                          latestTemplateOutputsRef.current = { ...latestTemplateOutputsRef.current, [currentTemplate.id]: nextOutput };
+                          setTemplateOutputs(prev => ({ ...prev, [currentTemplate.id]: nextOutput }));
+                          setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+                        }}
+                        className="w-full cabms-input rounded px-2 py-1 text-[11px]"
+                      >
+                        <option value="">No linked form</option>
+                        {editorPublishedForms.map(f => (
+                          <option key={f.id} value={f.published_revision_id}>{f.title} ({f.code})</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
+                {placeholders.length > 0 ? (
+                  <div className="space-y-1.5 pt-1 border-t border-slate-800/60">
+                    <span className="text-[11px] font-semibold text-(--cabms-text-secondary) block">
+                      Detected Placeholders ({placeholders.length})
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {placeholders.map(ph => (
+                        <label key={ph} className="flex items-center justify-between gap-2 cabms-surface-subtle border cabms-border rounded px-2 py-1 text-[11px]">
+                          <span className="font-mono text-amber-400 truncate">{`{{${ph}}}`}</span>
+                          <select
+                            aria-label={`Map placeholder ${ph}`}
+                            value={activeMappings[ph] ?? ((TEMPLATE_MAPPING_SOURCES as readonly string[]).includes(ph) ? ph : '')}
+                            onChange={e => {
+                              const nextMappings = { ...(latestTemplateMappingsRef.current[currentTemplate.id] || {}), [ph]: e.target.value };
+                              const nextStatus = computeAutoMappingStatus(activeContent, nextMappings, latestTemplateMappingStatusesRef.current[currentTemplate.id]);
+                              latestTemplateMappingsRef.current = { ...latestTemplateMappingsRef.current, [currentTemplate.id]: nextMappings };
+                              latestTemplateMappingStatusesRef.current = { ...latestTemplateMappingStatusesRef.current, [currentTemplate.id]: nextStatus };
+                              setTemplateMappings(prev => ({
+                                ...prev,
+                                [currentTemplate.id]: nextMappings,
+                              }));
+                              setTemplateMappingStatuses(prev => ({
+                                ...prev,
+                                [currentTemplate.id]: nextStatus,
+                              }));
+                              setDirtyTemplateMeta(prev => ({ ...prev, [currentTemplate.id]: true }));
+                            }}
+                            className="cabms-input rounded px-1.5 py-0.5 text-[11px] max-w-[140px]"
+                          >
+                            <option value="">Unmapped</option>
+                            {TEMPLATE_MAPPING_SOURCES.map(src => (
+                              <option key={src} value={src}>{src}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-(--cabms-text-secondary)">
+                    Tip: Add placeholders like <code className="font-mono text-amber-400">{'{{customer.name}}'}</code> or <code className="font-mono text-amber-400">{'{{business.name}}'}</code> to test dynamic field mapping and generated-document preview.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Bounded Text Content Editor */}
           <div className="space-y-2 text-xs">
             <label className="block text-(--cabms-text-secondary) font-semibold">
@@ -833,21 +1601,35 @@ export const TemplatesSettingsView: React.FC = () => {
             </p>
           </div>
 
+          {templateSaveFeedback && (
+            <p
+              role="status"
+              className={`text-xs rounded px-3 py-2 border ${
+                templateSaveFeedback.type === 'error'
+                  ? 'text-rose-300 bg-rose-950/30 border-rose-800/50'
+                  : 'text-emerald-300 bg-emerald-950/30 border-emerald-800/50'
+              }`}
+            >
+              {templateSaveFeedback.message}
+            </p>
+          )}
+
           {/* Workflow Action Controls */}
           <div className="pt-3 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center space-x-2">
               <button
                 type="button"
-                onClick={handleStartDraft}
-                className="px-3 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-semibold rounded-lg transition cursor-pointer hover:border-amber-500"
+                disabled={isSavingDraft}
+                onClick={() => { void handleStartDraft(); }}
+                className="px-3 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-semibold rounded-lg transition cursor-pointer hover:border-amber-500 disabled:opacity-50"
               >
-                Save Draft Revision
+                {isSavingDraft ? 'Saving Draft...' : 'Save Draft Revision'}
               </button>
 
               {currentTemplate.activeStatus === 'DRAFT' && (
                 <button
                   type="button"
-                  onClick={() => submitTemplateForReview(currentTemplate.id)}
+                  onClick={() => { void handleSubmitCurrentTemplateReview(); }}
                   className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-lg transition shadow cursor-pointer flex items-center space-x-1"
                 >
                   <FontAwesomeIcon icon={faClock} className="w-3.5 h-3.5" />
@@ -859,7 +1641,7 @@ export const TemplatesSettingsView: React.FC = () => {
             <div>
               <button
                 type="button"
-                onClick={() => publishTemplateVersion(currentTemplate.id)}
+                onClick={() => { void handlePublishCurrentTemplate(); }}
                 disabled={persona === 'office_staff' || currentTemplate.activeStatus !== 'REVIEW'}
                 className={`px-4 py-2 rounded-lg font-bold text-xs transition flex items-center space-x-1.5 ${
                   persona === 'office_staff' || currentTemplate.activeStatus !== 'REVIEW'
@@ -908,49 +1690,117 @@ export const TemplatesSettingsView: React.FC = () => {
         </div> : <div className="lg:col-span-7 cabms-card p-6 text-xs text-(--cabms-text-secondary)">No template is available to display.</div>}
       </div>
 
-      {/* Modal 1: Synthetic Document Preview Modal */}
-      {previewModalDoc && (
-        <TemplateModal onClose={() => setPreviewModalDoc(null)} titleId="sample-preview-title" maxWidthClass="max-w-lg">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div>
-                <h3 id="sample-preview-title" className="text-base font-bold text-(--cabms-text-primary)">Sample preview: {previewModalDoc.name}</h3>
-                <span className="text-xs text-sky-400 font-mono">
-                  Version: {previewModalDoc.currentVersion} ({previewModalDoc.activeStatus})
-                </span>
+      {/* Modal 1: Synthetic Generated-Document Preview Modal */}
+      {previewModalDoc && (() => {
+        const previewMappings = templateMappings[previewModalDoc.id] || {};
+        const previewResult = renderSimulatedDocumentPreview(previewModalDoc.content, previewMappings, previewSampleData);
+        const sampleFile = templateSampleFiles[previewModalDoc.id] || previewModalDoc.sampleFileName || 'custom.docx';
+        const businessName = session?.workspaceId ? getBrandDisplayName(session.workspaceId) : 'Solarcell Electrical & Solar';
+        return (
+          <TemplateModal onClose={() => { setPreviewModalDoc(null); setPreviewShowRaw(false); }} titleId="sample-preview-title" maxWidthClass="max-w-2xl">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                  <h3 id="sample-preview-title" className="text-base font-bold text-(--cabms-text-primary)">
+                    Generated Document Preview: {previewModalDoc.name}
+                  </h3>
+                  <span className="text-xs text-sky-400 font-mono">
+                    Version: {previewModalDoc.currentVersion} ({previewModalDoc.activeStatus}) • Business: {businessName}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close sample preview"
+                  onClick={() => { setPreviewModalDoc(null); setPreviewShowRaw(false); }}
+                  className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold"
+                >
+                  ✕
+                </button>
               </div>
-              <button
-                type="button"
-                aria-label="Close sample preview"
-                onClick={() => setPreviewModalDoc(null)}
-                className="text-(--cabms-text-secondary) hover:text-(--cabms-text-primary) text-lg font-bold"
-              >
-                ✕
-              </button>
-            </div>
 
-            <div className="cabms-card-subtle p-4 text-xs text-(--cabms-text-secondary) space-y-3 font-sans leading-relaxed rounded-lg">
-              <div className="text-[11px] font-mono text-slate-500 uppercase">
-                Sample File: {previewModalDoc.sampleFileName || 'custom.docx'} • Mapping: {previewModalDoc.mappingStatus}
+              <div className="text-[11px] text-amber-300 bg-amber-950/40 p-2.5 rounded border border-amber-700/60 font-medium">
+                Simulated / synthetic document rendering — binary DOCX/PDF engine is not installed in this environment. No live job certificate, quote, or report has been issued.
               </div>
-              <p className="cabms-surface-subtle p-3 rounded border cabms-border">
-                {previewModalDoc.content}
-              </p>
-              <div className="text-[10px] text-amber-300/80 bg-amber-950/30 p-2 rounded border border-amber-800/40">
-                Sample content only. No job certificate or report has been issued.
-              </div>
-            </div>
 
-            <div className="flex justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setPreviewModalDoc(null)}
-                className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer"
-              >
-                Close Preview
-              </button>
-            </div>
-        </TemplateModal>
-      )}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="text-[11px] font-mono text-(--cabms-text-secondary)">
+                  Sample File: {sampleFile} • Mapping: {previewModalDoc.mappingStatus}
+                </div>
+                <div className="flex gap-1.5" role="tablist" aria-label="Preview rendering mode">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={!previewShowRaw}
+                    onClick={() => setPreviewShowRaw(false)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold border cursor-pointer ${!previewShowRaw ? 'cabms-tab-active' : 'cabms-surface-subtle cabms-border text-(--cabms-text-secondary)'}`}
+                  >
+                    Rendered Document
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={previewShowRaw}
+                    onClick={() => setPreviewShowRaw(true)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold border cursor-pointer ${previewShowRaw ? 'cabms-tab-active' : 'cabms-surface-subtle cabms-border text-(--cabms-text-secondary)'}`}
+                  >
+                    Raw Template Source
+                  </button>
+                </div>
+              </div>
+
+              <div className="cabms-card-subtle p-4 text-xs text-(--cabms-text-secondary) space-y-3 font-sans leading-relaxed rounded-lg border cabms-border">
+                <div className="border-b cabms-border pb-2 flex items-center justify-between text-[11px]">
+                  <span className="font-bold text-(--cabms-text-primary)">{businessName}</span>
+                  <span className="font-mono text-(--cabms-text-secondary)">{previewModalDoc.code || previewModalDoc.id}</span>
+                </div>
+                <div className="cabms-surface-subtle p-3 rounded border cabms-border whitespace-pre-wrap text-(--cabms-text-primary)">
+                  {previewShowRaw ? previewModalDoc.content : previewResult.renderedText}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-1 border-t cabms-border">
+                  <span>
+                    Placeholders detected: <strong>{previewResult.placeholders.length}</strong> • Resolved: <strong>{Object.keys(previewResult.resolvedValues).length}</strong>
+                  </span>
+                  {previewResult.unmappedPlaceholders.length > 0 && (
+                    <span className="text-amber-400 font-mono">
+                      Unmapped: {previewResult.unmappedPlaceholders.map(p => `{{${p}}}`).join(', ')}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {previewResult.placeholders.length > 0 && (
+                <details className="cabms-card-subtle p-3 rounded-lg border cabms-border text-xs">
+                  <summary className="cursor-pointer font-semibold text-(--cabms-text-primary)">
+                    Synthetic Sample Data Overrides
+                  </summary>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2.5">
+                    {['business.name', 'customer.name', 'job.title', 'site.address'].map(key => (
+                      <label key={key} className="block text-[11px] text-(--cabms-text-secondary)">
+                        {key}
+                        <input
+                          type="text"
+                          aria-label={`Sample value for ${key}`}
+                          value={previewSampleData[key] ?? DEFAULT_PREVIEW_SAMPLE_DATA[key] ?? ''}
+                          onChange={e => setPreviewSampleData(prev => ({ ...prev, [key]: e.target.value }))}
+                          className="w-full mt-0.5 px-2 py-1 cabms-input rounded text-xs"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              <div className="flex justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setPreviewModalDoc(null); setPreviewShowRaw(false); }}
+                  className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-semibold rounded-lg transition cursor-pointer"
+                >
+                  Close Preview
+                </button>
+              </div>
+          </TemplateModal>
+        );
+      })()}
 
       {/* Modal 2: View Job Type Details & Policy Version History */}
       {viewingJobType && (
@@ -961,7 +1811,7 @@ export const TemplatesSettingsView: React.FC = () => {
                   {viewingJobType.name}
                 </h3>
                 <span className="text-xs text-sky-400 font-mono">
-                  Code: {viewingJobType.code || viewingJobType.id} • Brand: {getBrandDisplayName(viewingJobType.brandId)}
+                  Code: {viewingJobType.code || viewingJobType.id} • Business: {getBrandDisplayName(viewingJobType.brandId)}
                 </span>
               </div>
               <button
@@ -999,12 +1849,19 @@ export const TemplatesSettingsView: React.FC = () => {
             <div className="space-y-1.5">
               <span className="text-[10px] text-(--cabms-text-secondary) font-bold uppercase">Currently Required Forms</span>
               <div className="flex flex-wrap gap-1.5">
-                {viewingJobType.formsRequired.length > 0 ? (
-                  viewingJobType.formsRequired.map(f => (
-                    <span key={f} className="px-2 py-0.5 rounded text-[11px] font-mono bg-sky-950 border border-sky-800 text-sky-300">
-                      {f}
-                    </span>
-                  ))
+                {viewingJobType.formsRequired.length > 0 || (viewingJobType.catalogForms?.length || 0) > 0 ? (
+                  <>
+                    {viewingJobType.formsRequired.map(f => (
+                      <span key={f} className="px-2 py-0.5 rounded text-[11px] font-mono bg-sky-950 border border-sky-800 text-sky-300">
+                        {f}
+                      </span>
+                    ))}
+                    {viewingJobType.catalogForms?.map(f => (
+                      <span key={f.revision_id} className="px-2 py-0.5 rounded text-[11px] font-mono bg-sky-950 border border-sky-800 text-sky-300">
+                        {f.title} ({f.code}){f.required ? ' • Required' : ' • Optional'}
+                      </span>
+                    ))}
+                  </>
                 ) : (
                   <span className="text-slate-500 italic">Direct-to-invoice service exception (zero required forms).</span>
                 )}
@@ -1453,20 +2310,40 @@ export const TemplatesSettingsView: React.FC = () => {
 
               <div>
                 {session?.profile && <div className="space-y-2">
-                  <label className="block font-semibold">Output Category<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={outputCategory} onChange={e=>setOutputCategory(e.target.value as typeof outputCategory)}>{['Compliance','Terms','Email','Contract'].map(c=><option key={c}>{c}</option>)}</select></label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block font-semibold">Output Category<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={outputCategory} onChange={e=>setOutputCategory(e.target.value as typeof outputCategory)}>{['Compliance','Terms','Email','Contract'].map(c=><option key={c}>{c}</option>)}</select></label>
+                    <label className="block font-semibold">Paper Layout<select aria-label="Paper layout" className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={newTplLayoutPaper} onChange={e=>setNewTplLayoutPaper(e.target.value as 'A4' | 'LETTER')}><option value="A4">A4</option><option value="LETTER">Letter</option></select></label>
+                  </div>
                   <label className="block font-semibold">Approved Document Type (optional)<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={documentTypeId} onChange={e=>setDocumentTypeId(e.target.value)}><option value="">No document type selected</option>{documentTypes.map(t=><option key={t.id} value={t.id}>{t.title} ({t.code})</option>)}</select></label>
                   <label className="block font-semibold">Linked Form Definition (optional)<select className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700" value={linkedFormRevision} onChange={e=>setLinkedFormRevision(e.target.value)}><option value="">No linked form</option>{publishedForms.map(f=><option key={f.id} value={f.published_revision_id}>{f.title} ({f.code})</option>)}</select></label>
                   {catalogError && <p role="status">{catalogError}</p>}
-                  <p>Brand: {session.workspaceId}. Layout and dynamic mappings are not yet configured.</p>
+                  <p className="text-[11px] text-(--cabms-text-secondary)">Business: {session.workspaceId ? getBrandDisplayName(session.workspaceId) : 'Workspace'} ({session.workspaceId ?? 'unassigned'}).</p>
                 </div>}
-                <label className="text-(--cabms-text-secondary) block font-semibold mb-1">Sample Filename (text only; no document is stored)</label>
-                <input
-                  type="text"
-                  value={newTplSampleFile}
-                  onChange={e => setNewTplSampleFile(e.target.value)}
-                  placeholder="e.g. cctv-sla-template-v1.docx"
-                  className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
-                />
+                <div className="space-y-2 mt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-(--cabms-text-secondary) block font-semibold">Sample File (upload text/DOCX metadata)</label>
+                    <label className="px-2 py-1 cabms-surface-subtle border cabms-border rounded text-[11px] font-semibold text-(--cabms-text-primary) hover:border-amber-500 cursor-pointer">
+                      Choose File
+                      <input
+                        type="file"
+                        aria-label="Upload new template sample file"
+                        accept=".txt,.md,.html,.htm,.json,.docx,.pdf"
+                        className="sr-only"
+                        onChange={e => { void handleSampleFileUpload(e.target.files?.[0], 'create'); e.target.value = ''; }}
+                      />
+                    </label>
+                  </div>
+                  <input
+                    type="text"
+                    value={newTplSampleFile}
+                    onChange={e => setNewTplSampleFile(e.target.value)}
+                    placeholder="e.g. cctv-sla-template-v1.docx"
+                    className="w-full p-2.5 cabms-card-subtle rounded border border-slate-700 text-(--cabms-text-primary)"
+                  />
+                  {templateUploadNotice && (
+                    <p role="status" className="text-[11px] text-amber-300">{templateUploadNotice}</p>
+                  )}
+                </div>
               </div>
 
               <div>

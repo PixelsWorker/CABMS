@@ -30,6 +30,7 @@ import {
   deleteTemplateDraft,
   createTemplateRevisionDraft,
   updateTemplateDraftContent,
+  previewTemplate,
   submitTemplateRevisionReview,
   approveTemplateRevision,
 } from '../../modules/templates/templatesRepo.ts';
@@ -183,6 +184,62 @@ export async function handleJobTypesRoute(
   return new Response('Method Not Allowed', { status: 405 });
 }
 
+async function validateTemplateOutput(
+  db: Env['DB'],
+  workspace: string,
+  out: any,
+  requestId: string
+): Promise<Response | null> {
+  const object = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (
+    !object(out) ||
+    !['Compliance', 'Terms', 'Email', 'Contract'].includes(out.category) ||
+    out.brand_id !== workspace ||
+    !object(out.layout) ||
+    !object(out.dynamic_fields) ||
+    JSON.stringify(out).length > 16000 ||
+    (out.linked_form_revision_id != null && typeof out.linked_form_revision_id !== 'string')
+  ) {
+    return validationErrorResponse('Invalid output configuration', [], requestId);
+  }
+  if (!await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first()) {
+    return createProblemResponse(503, 'CATALOG_NOT_READY', 'catalog-not-ready', 'Form catalog unavailable', 'The form catalog has not been initialized for this environment.', requestId);
+  }
+  if (out.document_type_id != null) {
+    if (typeof out.document_type_id !== 'string') return validationErrorResponse('Invalid document type reference', [], requestId);
+    const documentType = await db.prepare(`SELECT id FROM document_type_catalog WHERE id=? AND workspace_id=? AND status='PUBLISHED'`).bind(out.document_type_id, workspace).first();
+    if (!documentType) return validationErrorResponse('Document type must be published in this workspace', [], requestId);
+  }
+  if (out.linked_form_revision_id) {
+    const form = await db.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions d ON d.id=r.form_definition_id AND d.workspace_id=r.workspace_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND d.status='ACTIVE' AND d.brand_id=?`).bind(out.linked_form_revision_id, workspace, out.brand_id).first();
+    if (!form) return validationErrorResponse('Linked form revision must be published and in this workspace and business', [], requestId);
+  }
+  return null;
+}
+
+const VALID_MAPPING_STATUSES = ['Mapped', 'Pending Review', 'Unsupported'] as const;
+type MappingStatusValue = (typeof VALID_MAPPING_STATUSES)[number];
+
+function parseDraftOptions(body: Record<string, any>) {
+  const sampleFileName = typeof body.sample_file_name === 'string'
+    ? body.sample_file_name
+    : (typeof body.sampleFileName === 'string' ? body.sampleFileName : undefined);
+  const rawMappingStatus = body.mapping_status !== undefined ? body.mapping_status : body.mappingStatus;
+  return {
+    sampleFileName,
+    rawMappingStatus,
+    mappingStatus: rawMappingStatus as MappingStatusValue | undefined,
+    output: body.output,
+  };
+}
+
+function parseIfMatchTimestamp(headerValue: string | null): string | null | undefined {
+  if (!headerValue) return undefined;
+  const parsed = /^"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)"$/.exec(headerValue);
+  if (!parsed || !Number.isFinite(Date.parse(parsed[1]))) return null;
+  return parsed[1];
+}
+
 export async function handleTemplatesRoute(
   request: Request,
   env: Env,
@@ -216,6 +273,26 @@ export async function handleTemplatesRoute(
     return reply(tpl);
   }
 
+  // 2b. GET or POST /templates/:id/preview (simulated document preview)
+  if ((request.method === 'GET' || request.method === 'POST') && templateId && subAction === 'preview' && !subId) {
+    let options: { revisionId?: string; content?: string; dynamicFields?: Record<string, unknown>; sampleData?: Record<string, string> } = {};
+    if (request.method === 'POST') {
+      let body: any;
+      try { body = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        options = {
+          revisionId: typeof body.revisionId === 'string' ? body.revisionId : undefined,
+          content: typeof body.content === 'string' ? body.content : undefined,
+          dynamicFields: body.dynamicFields && typeof body.dynamicFields === 'object' && !Array.isArray(body.dynamicFields) ? body.dynamicFields : undefined,
+          sampleData: body.sampleData && typeof body.sampleData === 'object' && !Array.isArray(body.sampleData) ? body.sampleData : undefined,
+        };
+      }
+    }
+    const preview = await previewTemplate(env.DB, workspace, auth, templateId, options);
+    if (!preview) return resourceNotFoundResponse('Template not found', requestId);
+    return reply(preview);
+  }
+
   // Technician role cannot make any modifications
   if (membership.role === 'technician') {
     return accessDeniedResponse('Technicians cannot modify document templates', requestId);
@@ -225,38 +302,38 @@ export async function handleTemplatesRoute(
   if (request.method === 'POST' && !templateId) {
     let input: any;
     try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
-    if (!input || typeof input !== 'object' || !input.name || !input.templateType || !input.content) {
+    if (!input || typeof input !== 'object' || Array.isArray(input) || !input.name || !input.templateType || !input.content) {
       return validationErrorResponse('Name, templateType, and content are required', [], requestId);
     }
-    if (input.output !== undefined) {
-      const out = input.output;
-      const object = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
-      if (!object(out) || !['Compliance','Terms','Email','Contract'].includes(out.category) || out.brand_id !== workspace || !object(out.layout) || !object(out.dynamic_fields) || JSON.stringify(out).length > 16000 || (out.linked_form_revision_id != null && typeof out.linked_form_revision_id !== 'string')) return validationErrorResponse('Invalid output configuration', [], requestId);
-      if (!await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first()) return createProblemResponse(503,'CATALOG_NOT_READY','catalog-not-ready','Form catalog unavailable','The form catalog has not been initialized for this environment.',requestId);
-      if (out.document_type_id != null) {
-        if (typeof out.document_type_id !== 'string') return validationErrorResponse('Invalid document type reference',[],requestId);
-        const documentType = await env.DB.prepare(`SELECT id FROM document_type_catalog WHERE id=? AND workspace_id=? AND status='PUBLISHED'`).bind(out.document_type_id,workspace).first();
-        if (!documentType) return validationErrorResponse('Document type must be published in this workspace',[],requestId);
-      }
-      if (out.linked_form_revision_id) {
-        const form = await env.DB.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions d ON d.id=r.form_definition_id AND d.workspace_id=r.workspace_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND d.status='ACTIVE' AND d.brand_id=?`).bind(out.linked_form_revision_id,workspace,out.brand_id).first();
-        if (!form) return validationErrorResponse('Linked form revision must be published and in this workspace and brand',[],requestId);
-      }
+    const opts = parseDraftOptions(input);
+    if (opts.rawMappingStatus !== undefined && !VALID_MAPPING_STATUSES.includes(String(opts.rawMappingStatus) as MappingStatusValue)) {
+      return validationErrorResponse('Invalid mappingStatus', [], requestId);
     }
-    const res = await createTemplate(env.DB, workspace, auth, input);
+    if (opts.output !== undefined) {
+      const outputErr = await validateTemplateOutput(env.DB, workspace, opts.output, requestId);
+      if (outputErr) return outputErr;
+    }
+    const res = await createTemplate(env.DB, workspace, auth, {
+      ...input,
+      sampleFileName: opts.sampleFileName,
+      mappingStatus: opts.mappingStatus,
+    });
     if (!res) return createProblemResponse(400, 'CREATION_FAILED', 'creation-failed', 'Creation Failed', 'Could not create template', requestId);
     return reply(res, 201);
   }
 
-  // 4. PATCH /templates/:id (archive / restore)
+  // 4. PATCH /templates/:id (archive / restore / draft save)
   if (request.method === 'PATCH' && templateId && !subAction) {
     let input: any;
     try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
-    if (input?.action === 'archive') {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return validationErrorResponse('Invalid JSON payload', [], requestId);
+    }
+    if (input.action === 'archive') {
       const ok = await setTemplateStatus(env.DB, workspace, auth, templateId, 'ARCHIVED');
       return ok ? reply({ success: true }) : resourceNotFoundResponse('Template not found', requestId);
     }
-    if (input?.action === 'restore') {
+    if (input.action === 'restore') {
       const ok = await setTemplateStatus(env.DB, workspace, auth, templateId, 'ACTIVE');
       if (!ok) {
         const tpl = await getTemplate(env.DB, workspace, auth, templateId);
@@ -265,7 +342,92 @@ export async function handleTemplatesRoute(
       }
       return reply({ success: true });
     }
-    return validationErrorResponse('Unsupported action', [], requestId);
+
+    const opts = parseDraftOptions(input);
+    const hasDraftFields = input.content !== undefined || opts.output !== undefined || opts.sampleFileName !== undefined || opts.rawMappingStatus !== undefined || input.revision_id !== undefined || input.revisionId !== undefined || input.base_revision_id !== undefined || input.baseRevisionId !== undefined;
+    if (!hasDraftFields) {
+      return validationErrorResponse('Unsupported action', [], requestId);
+    }
+    if (input.content !== undefined && (typeof input.content !== 'string' || !input.content.trim() || input.content.length > 100000)) {
+      return validationErrorResponse('Content must be a non-empty string of at most 100000 characters', [], requestId);
+    }
+    if (opts.rawMappingStatus !== undefined && !VALID_MAPPING_STATUSES.includes(String(opts.rawMappingStatus) as MappingStatusValue)) {
+      return validationErrorResponse('Invalid mappingStatus', [], requestId);
+    }
+    if (opts.output !== undefined) {
+      const outputErr = await validateTemplateOutput(env.DB, workspace, opts.output, requestId);
+      if (outputErr) return outputErr;
+    }
+
+    const tpl = await getTemplate(env.DB, workspace, auth, templateId);
+    if (!tpl) return resourceNotFoundResponse('Template not found', requestId);
+    if (tpl.status === 'ARCHIVED') {
+      return createProblemResponse(412, 'PRECONDITION_FAILED', 'precondition-failed', 'Precondition Failed', 'Archived templates cannot be edited.', requestId);
+    }
+
+    const headerMatch = parseIfMatchTimestamp(request.headers.get('If-Match'));
+    if (headerMatch === null) return validationErrorResponse('Invalid draft version', [], requestId);
+    const bodyExpected = input.expected_updated_at !== undefined ? input.expected_updated_at : input.expectedUpdatedAt;
+    if (bodyExpected !== undefined && (typeof bodyExpected !== 'string' || !Number.isFinite(Date.parse(bodyExpected)))) {
+      return validationErrorResponse('Invalid draft version', [], requestId);
+    }
+    const expectedUpdatedAt = headerMatch ?? (typeof bodyExpected === 'string' ? bodyExpected : undefined);
+
+    const requestedRevisionId = typeof input.revision_id === 'string'
+      ? input.revision_id
+      : (typeof input.revisionId === 'string' ? input.revisionId : undefined);
+    const existingDraft = tpl.revisions.find((r: any) => r.status === 'DRAFT');
+
+    if (requestedRevisionId || existingDraft) {
+      const targetRevId = requestedRevisionId || existingDraft!.id;
+      if (!expectedUpdatedAt) {
+        return createProblemResponse(428, 'PRECONDITION_REQUIRED', 'precondition-required', 'Precondition Required', 'expected_updated_at or If-Match is required to save a draft', requestId);
+      }
+      const updated = await updateTemplateDraftContent(
+        env.DB,
+        workspace,
+        auth,
+        templateId,
+        targetRevId,
+        expectedUpdatedAt,
+        typeof input.content === 'string' ? input.content : undefined,
+        {
+          sampleFileName: opts.sampleFileName,
+          mappingStatus: opts.mappingStatus,
+          output: opts.output,
+        }
+      );
+      if (!updated) {
+        return createProblemResponse(412, 'PRECONDITION_FAILED', 'precondition-failed', 'Precondition Failed', 'Draft changed or is no longer editable. Reload before saving.', requestId);
+      }
+      const refreshed = await getTemplate(env.DB, workspace, auth, templateId);
+      return reply({ updated_at: updated, revision_id: targetRevId, template: refreshed });
+    }
+
+    // No DRAFT revision exists yet: guard against stale draft saves or stale base revision
+    if (expectedUpdatedAt) {
+      return createProblemResponse(412, 'PRECONDITION_FAILED', 'precondition-failed', 'Precondition Failed', 'Draft changed or is no longer editable. Reload before saving.', requestId);
+    }
+    const baseRevisionId = typeof input.base_revision_id === 'string'
+      ? input.base_revision_id
+      : (typeof input.baseRevisionId === 'string' ? input.baseRevisionId : undefined);
+    if (baseRevisionId && tpl.current_revision_id && baseRevisionId !== tpl.current_revision_id) {
+      return createProblemResponse(412, 'PRECONDITION_FAILED', 'precondition-failed', 'Precondition Failed', 'Template changed on the server. Reload before saving.', requestId);
+    }
+    const draftContent = typeof input.content === 'string' ? input.content : (tpl.current_content || '');
+    if (!draftContent.trim()) {
+      return validationErrorResponse('Content is required and must be at most 100000 characters', [], requestId);
+    }
+    const created = await createTemplateRevisionDraft(env.DB, workspace, auth, templateId, draftContent, {
+      sampleFileName: opts.sampleFileName,
+      mappingStatus: opts.mappingStatus,
+      output: opts.output,
+    });
+    if (!created) {
+      return createProblemResponse(412, 'PRECONDITION_FAILED', 'precondition-failed', 'Precondition Failed', 'Could not create template draft. Reload before saving.', requestId);
+    }
+    const refreshed = await getTemplate(env.DB, workspace, auth, templateId);
+    return reply({ updated_at: created.updated_at, revision_id: created.id, version: created.version, template: refreshed });
   }
 
   // 5. DELETE /templates/:id (delete draft)
@@ -281,9 +443,23 @@ export async function handleTemplatesRoute(
   if (request.method === 'POST' && templateId && subAction === 'revisions' && !subId) {
     let input: any;
     try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
-    if (!input?.content || !input.content.trim()) return validationErrorResponse('Content is required', [], requestId);
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.content !== 'string' || !input.content.trim() || input.content.length > 100000) {
+      return validationErrorResponse('Content is required', [], requestId);
+    }
+    const opts = parseDraftOptions(input);
+    if (opts.rawMappingStatus !== undefined && !VALID_MAPPING_STATUSES.includes(String(opts.rawMappingStatus) as MappingStatusValue)) {
+      return validationErrorResponse('Invalid mappingStatus', [], requestId);
+    }
+    if (opts.output !== undefined) {
+      const outputErr = await validateTemplateOutput(env.DB, workspace, opts.output, requestId);
+      if (outputErr) return outputErr;
+    }
 
-    const res = await createTemplateRevisionDraft(env.DB, workspace, auth, templateId, input.content.trim());
+    const res = await createTemplateRevisionDraft(env.DB, workspace, auth, templateId, input.content.trim(), {
+      sampleFileName: opts.sampleFileName,
+      mappingStatus: opts.mappingStatus,
+      output: opts.output,
+    });
     if (!res) return resourceNotFoundResponse('Template not found', requestId);
     return reply(res, 201);
   }
@@ -292,11 +468,24 @@ export async function handleTemplatesRoute(
   if (request.method === 'PUT' && templateId && subAction === 'revisions' && subId && !action) {
     const match = request.headers.get('If-Match');
     if (!match) return createProblemResponse(428,'PRECONDITION_REQUIRED','precondition-required','Precondition Required','If-Match is required to save a draft',requestId);
-    const parsed = /^"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)"$/.exec(match);
-    if (!parsed || !Number.isFinite(Date.parse(parsed[1]))) return validationErrorResponse('Invalid draft version',[],requestId);
+    const parsedTimestamp = parseIfMatchTimestamp(match);
+    if (!parsedTimestamp) return validationErrorResponse('Invalid draft version',[],requestId);
     let input:unknown; try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }
-    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof (input as {content?:unknown}).content !== 'string' || !(input as {content:string}).content.trim() || (input as {content:string}).content.length > 100000) return validationErrorResponse('Content is required and must be at most 100000 characters',[],requestId);
-    const updated = await updateTemplateDraftContent(env.DB,workspace,auth,templateId,subId,parsed[1],(input as {content:string}).content);
+    const body = input as Record<string, any>;
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof body.content !== 'string' || !body.content.trim() || body.content.length > 100000) return validationErrorResponse('Content is required and must be at most 100000 characters',[],requestId);
+    const opts = parseDraftOptions(body);
+    if (opts.rawMappingStatus !== undefined && !VALID_MAPPING_STATUSES.includes(String(opts.rawMappingStatus) as MappingStatusValue)) {
+      return validationErrorResponse('Invalid mappingStatus', [], requestId);
+    }
+    if (opts.output !== undefined) {
+      const outputErr = await validateTemplateOutput(env.DB, workspace, opts.output, requestId);
+      if (outputErr) return outputErr;
+    }
+    const updated = await updateTemplateDraftContent(env.DB,workspace,auth,templateId,subId,parsedTimestamp,body.content, {
+      sampleFileName: opts.sampleFileName,
+      mappingStatus: opts.mappingStatus,
+      output: opts.output,
+    });
     return updated ? reply({updated_at:updated}) : createProblemResponse(412,'PRECONDITION_FAILED','precondition-failed','Precondition Failed','Draft changed or is no longer editable. Reload before saving.',requestId);
   }
 

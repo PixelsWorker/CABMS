@@ -532,15 +532,64 @@ function CalendarDays({days,selectedDay,setSelectedDay}:{days:string[];selectedD
 
 );}
 
-function businessDay(time:Date){return new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'}).format(time);}
-function localTime(date:string){return new Intl.DateTimeFormat('en-GB',{timeZone:'Australia/Brisbane',hour:'2-digit',minute:'2-digit'}).format(new Date(date));}
+function isValidCalendarDate(value: string): boolean {
+  if (typeof value !== 'string') return false;
+  const match = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
+export function normalizeCalendarDate(value: string, fallback?: string): string {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (isValidCalendarDate(trimmed)) return trimmed;
+  if (fallback && isValidCalendarDate(fallback.trim())) return fallback.trim();
+  const today = businessDay(new Date());
+  return isValidCalendarDate(today) ? today : '2026-11-02';
+}
+
+export function buildCalendarDays(anchor: string, count = 4, fallback?: string): string[] {
+  const base = normalizeCalendarDate(anchor, fallback);
+  const [year, month, day] = base.split('-').map(Number);
+  return Array.from({ length: count }, (_, i) =>
+    new Date(Date.UTC(year, month - 1, day + i)).toISOString().slice(0, 10)
+  );
+}
+
+export function parseVisitDateTimeIso(dateStr: string, timeStr: string): string | null {
+  const cleanDate = typeof dateStr === 'string' ? dateStr.trim() : '';
+  const cleanTime = typeof timeStr === 'string' ? timeStr.trim() : '';
+  if (!isValidCalendarDate(cleanDate) || !/^([01]\d|2[0-3]):([0-5]\d)$/.test(cleanTime)) {
+    return null;
+  }
+  const timestamp = Date.parse(`${cleanDate}T${cleanTime}:00+10:00`);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString();
+}
+
+export { isValidCalendarDate };
+
+function businessDay(time:Date){
+ if(Number.isNaN(time.getTime()))return '';
+ return new Intl.DateTimeFormat('en-CA',{timeZone:'Australia/Brisbane',year:'numeric',month:'2-digit',day:'2-digit'}).format(time);
+}
+function localTime(date:string){
+ const d=new Date(date);
+ if(Number.isNaN(d.getTime()))return '--:--';
+ return new Intl.DateTimeFormat('en-GB',{timeZone:'Australia/Brisbane',hour:'2-digit',minute:'2-digit'}).format(d);
+}
 function PersistentCalendar({workspace,onJob}:{workspace:string;onJob?:OpenJob}){
  const session=useG01Session()!;
  const api=useMemo(()=>jobsClient(session.token),[session.token]);
  const role=session.profile?.memberships.find(m=>m.workspace_id===workspace)?.role;
  const dispatch=!!role&&role!=='technician';
- const [day,setDay]=useState(()=>businessDay(new Date())),[anchor,setAnchor]=useState(day);
- const days=Array.from({length:4},(_,i)=>new Date(Date.parse(anchor+'T00:00:00Z')+i*86400000).toISOString().slice(0,10));
+ const [day,setDay]=useState(()=>normalizeCalendarDate(businessDay(new Date()))),[anchor,setAnchor]=useState(day);
+ const [dateError,setDateError]=useState('');
+ const days=buildCalendarDays(anchor,4,day);
  const [visits,setVisits]=useState<Visit[]>([]),[jobs,setJobs]=useState<PersistentJob[]>([]),[staff,setStaff]=useState<{id:string;display_name:string}[]>([]);
  const [loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[tick,refresh]=useState(0);
  const [edit,setEdit]=useState<VisitWrite|null>(null),[time,setTime]=useState(''),[date,setDate]=useState('');
@@ -553,31 +602,52 @@ function PersistentCalendar({workspace,onJob}:{workspace:string;onJob?:OpenJob})
  const schedulable=jobs.filter(j=>j.status==='OPEN'&&staff.some(t=>t.id===j.assignee_id));
  const selectedJob=jobs.find(j=>j.id===edit?.job_id);
  const eligible=staff.find(t=>t.id===selectedJob?.assignee_id);
+ const shiftAnchor=(deltaDays:number)=>{
+  const base=normalizeCalendarDate(anchor,day);
+  const [y,m,d]=base.split('-').map(Number);
+  const next=new Date(Date.UTC(y,m-1,d+deltaDays)).toISOString().slice(0,10);
+  setDateError('');setDay(next);setAnchor(next);
+ };
  const start=(v?:Visit,cancel=false)=>{
-  setNotice('');setDate(v?businessDay(new Date(v.starts_at)):day);setTime(v?localTime(v.starts_at):'09:00');
+  setNotice('');setDate(v?normalizeCalendarDate(businessDay(new Date(v.starts_at)),day):day);setTime(v?localTime(v.starts_at):'09:00');
   const first=schedulable[0];
   setEdit({visit_id:v?.visit_id??generateUuid(),version:(v?.version??0)+1,job_id:v?.job_id??first?.id??'',
    technician_id:(v?(cancel?v.technician_id:jobs.find(j=>j.id===v.job_id)?.assignee_id):first?.assignee_id)??'',
    starts_at:v?.starts_at??'',duration_minutes:v?.duration_minutes??60,status:cancel?'CANCELLED':'SCHEDULED',reason:''});
  };
  const saved=()=>{
-  if(edit?.status==='SCHEDULED'){
+  if(edit?.status==='SCHEDULED'&&isValidCalendarDate(date)){
+   setDateError('');
    setDay(date);
    setAnchor(date);
   }
   setEdit(null);setRecovery(null);setNotice('Visit saved.');refresh(n=>n+1);
  };
- const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!edit||latch.current)return;latch.current=true;setBusy(true);
-  try{await api.saveVisit(workspace,{...edit,starts_at:edit.status==='CANCELLED'?edit.starts_at:new Date(date+'T'+time+':00+10:00').toISOString()},generateUuid());saved();}
+ const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!edit||latch.current)return;
+  let startsAt=edit.starts_at;
+  if(edit.status!=='CANCELLED'){
+   const parsed=parseVisitDateTimeIso(date,time);
+   if(!parsed){setNotice('Enter a valid visit date (4-digit year YYYY-MM-DD) and time.');return;}
+   startsAt=parsed;
+  }
+  latch.current=true;setBusy(true);
+  try{await api.saveVisit(workspace,{...edit,starts_at:startsAt},generateUuid());saved();}
   catch(e){setNotice(e instanceof Error?e.message:'Unable to save visit.');if(e instanceof JobError&&e.reconcile)setRecovery(e);if(e instanceof JobError&&e.status===412){setEdit(null);refresh(n=>n+1);}}
   finally{latch.current=false;setBusy(false);}
  };
  const agenda=visits.filter(v=>businessDay(new Date(v.starts_at))===day);
  return <div className="space-y-6"><div className="cabms-card p-5 shadow-sm">
  <div className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-xl font-bold"><FontAwesomeIcon icon={faCalendar}/> Field Service Dispatch &amp; Calendar Scheduling</h1>
- <label>Calendar date <input className="cabms-input" type="date" value={day} onChange={e=>{if(e.target.value){setDay(e.target.value);setAnchor(e.target.value);}}}/></label></div>
- <CalendarDays days={days} selectedDay={day} setSelectedDay={setDay}/></div>
+ <div className="flex flex-wrap items-center gap-2 text-xs">
+  <button type="button" className="cabms-surface-subtle border cabms-border px-2.5 py-1.5 rounded font-semibold cursor-pointer" onClick={()=>shiftAnchor(-4)}>Prev 4 days</button>
+  <button type="button" className="cabms-surface-subtle border cabms-border px-2.5 py-1.5 rounded font-semibold cursor-pointer" onClick={()=>{const today=normalizeCalendarDate(businessDay(new Date()));setDateError('');setDay(today);setAnchor(today);}}>Today</button>
+  <button type="button" className="cabms-surface-subtle border cabms-border px-2.5 py-1.5 rounded font-semibold cursor-pointer" onClick={()=>shiftAnchor(4)}>Next 4 days</button>
+  <label>Calendar date <input className="cabms-input" type="date" min="1900-01-01" max="9999-12-31" value={day} onChange={e=>{const val=e.target.value;if(!isValidCalendarDate(val)){setDateError('Enter a valid 4-digit year date (YYYY-MM-DD).');return;}setDateError('');setDay(val);setAnchor(val);}}/></label>
+ </div></div>
+ {dateError&&<p role="alert" className="mt-2 text-xs text-red-400">{dateError}</p>}
+ <CalendarDays days={days} selectedDay={day} setSelectedDay={d=>{if(isValidCalendarDate(d)){setDateError('');setDay(d);}}}/></div>
  <section className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-bold uppercase tracking-wider"><FontAwesomeIcon icon={faCalendarDays}/> Agenda for {formatBusinessCalendarDate(day,{weekday:'long',day:'numeric',month:'long'})}</h2>
+ <span className="text-xs text-(--cabms-text-secondary)">{agenda.length} visit{agenda.length===1?'':'s'} scheduled</span>
  {dispatch&&!loading&&!error&&<button className="cabms-card px-3 py-2" disabled={!!edit||!schedulable.length} onClick={()=>start()}>Schedule visit</button>}</div>
  {dispatch&&!loading&&!error&&!schedulable.length&&<p>Assign an active technician to an open work order to schedule a visit.</p>}
  {loading?<p role="status">Loading visits...</p>:error?<p role="alert">{error} <button onClick={()=>refresh(n=>n+1)}>Retry calendar</button></p>:agenda.length===0?<p className="cabms-card p-5">No visits scheduled for this day.</p>:agenda.map(v=><article className="cabms-card p-5" key={v.visit_id}>
@@ -599,7 +669,7 @@ function PersistentCalendar({workspace,onJob}:{workspace:string;onJob?:OpenJob})
  {edit&&<form className="cabms-card p-5" onSubmit={submit}><fieldset className="grid gap-3" disabled={busy||!!recovery}><legend>{edit.status==='CANCELLED'?'Cancel visit':edit.version===1?'Schedule visit':'Reschedule visit'}</legend>
  <label>Work order <select className="cabms-input" aria-label="Work order" disabled={edit.version!==1} value={edit.job_id} onChange={e=>{const job=schedulable.find(j=>j.id===e.target.value);if(job)setEdit({...edit,job_id:job.id,technician_id:job.assignee_id??''});}}>{(edit.version===1?schedulable:jobs.filter(j=>j.id===edit.job_id)).map(j=><option key={j.id} value={j.id}>{j.title}</option>)}</select></label>
  <label>Visit technician <input className="cabms-input" readOnly value={edit.status==='CANCELLED'?(visits.find(v=>v.visit_id===edit.visit_id)?.technician??''):eligible?.display_name??'No eligible technician assigned'}/></label>
- <label>Visit date <input className="cabms-input" type="date" required disabled={edit.status==='CANCELLED'} value={date} onChange={e=>setDate(e.target.value)}/></label>
+ <label>Visit date <input className="cabms-input" type="date" min="1900-01-01" max="9999-12-31" required disabled={edit.status==='CANCELLED'} value={date} onChange={e=>setDate(e.target.value)}/></label>
  <label>Visit time (Queensland) <input className="cabms-input" type="time" required disabled={edit.status==='CANCELLED'} value={time} onChange={e=>setTime(e.target.value)}/></label>
  <label>Duration (minutes) <input className="cabms-input" type="number" min={1} max={1440} required disabled={edit.status==='CANCELLED'} value={edit.duration_minutes||''} onChange={e=>setEdit({...edit,duration_minutes:Number(e.target.value)})}/></label>
  {edit.status==='CANCELLED'&&<label>Cancellation reason <input className="cabms-input" required maxLength={1000} value={edit.reason} onChange={e=>setEdit({...edit,reason:e.target.value})}/></label>}

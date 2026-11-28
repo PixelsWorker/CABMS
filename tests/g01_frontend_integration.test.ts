@@ -235,7 +235,7 @@ test('G01 mounted dashboard for CCTV-only member renders without crash and filte
 
     const work = container.querySelector('[aria-label="Compliance operations"]')!;
     assert.ok(work, 'Authenticated compliance dashboard is the default');
-    const filter = work.querySelector('select')!;
+    const filter = work.querySelector('select[aria-label="Business"]') as HTMLSelectElement;
     assert.deepEqual(Array.from(filter.options, option => option.value), ['all', 'cctv']);
     assert.ok(!container.textContent!.includes('Open legacy preview'));
     // Mount the isolated legacy dashboard explicitly for the original fixture scoping checks.
@@ -347,7 +347,7 @@ test('G01 mounted dashboard for Smart-Home-only member renders without crash and
 
     const work = container.querySelector('[aria-label="Compliance operations"]')!;
     assert.ok(work, 'Authenticated compliance dashboard is the default');
-    const filter = work.querySelector('select')!;
+    const filter = work.querySelector('select[aria-label="Business"]') as HTMLSelectElement;
     assert.deepEqual(Array.from(filter.options, option => option.value), ['all', 'smart_home']);
     assert.ok(!container.textContent!.includes('Open legacy preview'));
     // Mount the isolated legacy dashboard explicitly for the original fixture scoping checks.

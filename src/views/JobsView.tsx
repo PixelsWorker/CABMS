@@ -35,7 +35,7 @@ import {
   faTriangleExclamation,
   faUser,
 } from '@fortawesome/free-solid-svg-icons';
-import { Job, JobStatus, ActivityLogEntry } from '../types/cabms.ts';
+import { BrandId, Job, JobStatus, ActivityLogEntry } from '../types/cabms.ts';
 import { CompletionValidationResult } from '../utils/cabmsLogic.ts';
 
 export function JobSearch({searchQuery,setSearchQuery}:{searchQuery:string;setSearchQuery:(q:string)=>void}){return (
@@ -85,6 +85,7 @@ const SimulatedJobsView: React.FC = () => {
     selectedJobId,
     setSelectedJobId,
     activeBrandId,
+    setActiveBrandId,
     brands,
     persona,
     customers,
@@ -103,10 +104,16 @@ const SimulatedJobsView: React.FC = () => {
     demoClock,
   } = useCabms();
 
-  // Resolve selection only inside the active business/persona boundary. A stale id
+  const [businessFilter, setBusinessFilter] = useState<'all' | BrandId>(activeBrandId);
+  useEffect(() => {
+    setBusinessFilter(activeBrandId);
+  }, [activeBrandId]);
+
+  // Resolve selection only inside the filtered business/persona boundary. A stale id
   // after a brand or persona switch must never select an out-of-scope record.
   const authorizedJobs = jobs.filter(j =>
-    j.brandId === activeBrandId && (persona !== 'technician' || j.assignedTechId === 'TECH-001')
+    (businessFilter === 'all' || j.brandId === businessFilter) &&
+    (persona !== 'technician' || j.assignedTechId === 'TECH-001')
   );
 
   const [statusFilter, setStatusFilter] = useState<string>(() => {
@@ -296,9 +303,40 @@ const SimulatedJobsView: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Pane: Job Directory / List (5 cols) */}
         <div className="lg:col-span-5 space-y-3">
-          {/* Search and Status Filter */}
+          {/* Search, Business Switcher/Filter, and Status Filter */}
           <div className="cabms-card p-3 space-y-2">
             <JobSearch searchQuery={searchQuery} setSearchQuery={setSearchQuery}/>
+            <div className="flex items-center justify-between text-xs text-(--cabms-text-secondary)">
+              <label htmlFor="jobs-active-business">Active business:</label>
+              <select
+                id="jobs-active-business"
+                aria-label="Active business"
+                title="Switch active business (updates header, theme, and new-job destination)"
+                value={activeBrandId}
+                onChange={e => setActiveBrandId(e.target.value as BrandId)}
+                className="cabms-input rounded px-2 py-1 text-(--cabms-text-primary) text-xs font-medium cursor-pointer"
+              >
+                {Object.values(brands).map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-center justify-between text-xs text-(--cabms-text-secondary)">
+              <label htmlFor="jobs-filter-business">Filter jobs by business:</label>
+              <select
+                id="jobs-filter-business"
+                aria-label="Filter jobs by business"
+                title="Filter displayed jobs by business"
+                value={businessFilter}
+                onChange={e => setBusinessFilter(e.target.value as 'all' | BrandId)}
+                className="cabms-input rounded px-2 py-1 text-(--cabms-text-primary) text-xs font-medium cursor-pointer"
+              >
+                <option value="all">All authorized businesses</option>
+                {Object.values(brands).map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="flex items-center justify-between text-xs text-(--cabms-text-secondary)">
               <span>Status:</span>
               <select
@@ -726,7 +764,10 @@ const SimulatedJobsView: React.FC = () => {
       {isNewJobModalOpen && (
         <TemplateModal onClose={() => setIsNewJobModalOpen(false)} titleId="demo-create-work-order-title" maxWidthClass="max-w-lg">
             <div className="flex items-center justify-between border-b cabms-border pb-3">
-              <h3 id="demo-create-work-order-title" className="text-base font-bold text-(--cabms-text-primary)">Create New Work Order</h3>
+              <div>
+                <h3 id="demo-create-work-order-title" className="text-base font-bold text-(--cabms-text-primary)">Create New Work Order</h3>
+                <p className="text-xs text-(--cabms-text-secondary)">Destination business: <strong>{brands[activeBrandId]?.name}</strong></p>
+              </div>
               <button
                 type="button"
                 aria-label="Close dialog"

@@ -136,10 +136,23 @@ test('integrated client journey: website enquiry -> customer -> quote -> test em
     assert.equal(sendQuote.status, 200);
     assert.equal(sendQuote.json.quotation.acceptance_status, 'SENT');
     assert.ok(sendQuote.json.email_dispatch.deliveryId);
+    const quoteToken = sendQuote.json.acceptance_token as string;
+    assert.ok(quoteToken);
 
-    const acceptQuote = await call(officeToken, `/api/v1/workspaces/solarcell/quotations/${quoteId}/accept`, 'POST', {
+    const dispatchedEmail = await db
+      .prepare('SELECT body_text FROM email_deliveries WHERE id = ?')
+      .bind(sendQuote.json.email_dispatch.deliveryId)
+      .first<{ body_text: string }>();
+    assert.ok(dispatchedEmail?.body_text.includes(`?quote_token=${encodeURIComponent(quoteToken)}`));
+    assert.ok(dispatchedEmail?.body_text.includes(`/api/v1/public/quotations/${encodeURIComponent(quoteToken)}`));
+
+    const publicQuoteGet = await call(null, `/api/v1/public/quotations/${encodeURIComponent(quoteToken)}`);
+    assert.equal(publicQuoteGet.status, 200);
+    assert.equal(publicQuoteGet.json.quotation.id, quoteId);
+
+    const acceptQuote = await call(null, `/api/v1/public/quotations/${encodeURIComponent(quoteToken)}/accept`, 'POST', {
+      confirmed: true,
       accepted_by_name: 'Jordan Preview',
-      acceptance_source: 'STAFF_RECORDED',
     });
     assert.equal(acceptQuote.status, 200);
     assert.equal(acceptQuote.json.quotation.acceptance_status, 'ACCEPTED');
@@ -174,23 +187,16 @@ test('integrated client journey: website enquiry -> customer -> quote -> test em
     assert.equal((await call(officeToken, `/api/v1/workspaces/solarcell/job-types/${jtId}/policies/${polId}/review`, 'POST', {})).status, 200);
     assert.equal((await call(adminToken, `/api/v1/workspaces/solarcell/job-types/${jtId}/policies/${polId}/approve`, 'POST', {})).status, 200);
 
-    // Convert enquiry to track conversion linkage
+    // Convert enquiry directly into a real persisted compliance job using jtId
     const conv = await call(officeToken, `/api/v1/workspaces/solarcell/website-enquiries/${enquiryId}/convert`, 'POST', {
       customer_mode: 'existing',
       customer_id: customerId,
+      job_type_id: jtId,
       job_title: 'Solar Inverter Inspection Job',
     });
     assert.equal(conv.status, 201);
-
-    const job = await call(officeToken, '/api/v1/workspaces/solarcell/compliance-jobs', 'POST', {
-      title: 'Solar Inverter Inspection Job',
-      customer_name: 'Jordan Preview',
-      site_address: '42 Sunshine Way, Gold Coast QLD',
-      job_type_id: jtId,
-      expected_policy_id: polId,
-    }, { 'Idempotency-Key': randomUUID() });
-    assert.equal(job.status, 201);
-    const jobId = job.json.job_id as string;
+    const jobId = conv.json.job_id as string;
+    assert.ok(jobId);
 
     // Assign technician & grant signer permission
     assert.equal((await call(officeToken, `/api/v1/workspaces/solarcell/compliance-jobs/${jobId}?operation=ASSIGN`, 'POST', {

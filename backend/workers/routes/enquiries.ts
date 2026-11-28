@@ -9,7 +9,7 @@
  * - POST /api/v1/workspaces/:workspaceId/enquiries/:enquiryId/dismiss (atomic enquiry dismissal)
  */
 
-import type { D1Database } from '../../db/d1.ts';
+import type { D1Database, D1PreparedStatement } from '../../db/d1.ts';
 import type { AuthContext, Env } from '../../types.ts';
 import { authorizeWorkspaceAccess, productionAuthenticationService, type AuthenticationService } from '../auth.ts';
 import { approvedMembership } from '../privilegedApproval.ts';
@@ -791,6 +791,9 @@ async function handleConvertEnquiry(
     );
   }
 
+  const now = new Date().toISOString();
+  const batchStatements: D1PreparedStatement[] = [];
+
   let resolvedCustomerId: string;
   if (customerMode === 'matched' || customerMode === 'existing') {
     const candidateId = customerMode === 'matched' ? (requestedCustomerId ?? existing.matched_customer_id) : requestedCustomerId;
@@ -809,34 +812,70 @@ async function handleConvertEnquiry(
     resolvedCustomerId = candidateId;
   } else {
     resolvedCustomerId = `CUST-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const myobCustomerId = `MYOB-SBX-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     if (await tableExists(db, 'customers')) {
-      try {
-        await db
+      batchStatements.push(
+        db
           .prepare(
-            `INSERT INTO customers (id, workspace_id, name, email, phone, billing_address, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO customers (
+               id, workspace_id, myob_customer_id, name, contact_person,
+               email, phone, billing_address, sync_status, myob_sandbox_mode,
+               version, created_by, created_at, updated_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', 1, 1, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM website_enquiries
+               WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW'
+             )`
           )
           .bind(
             resolvedCustomerId,
             workspaceId,
+            myobCustomerId,
+            existing.customer_name,
             existing.customer_name,
             existing.email,
             existing.phone,
             existing.site_address ?? '',
-            new Date().toISOString(),
-            new Date().toISOString()
+            auth.userId,
+            now,
+            now,
+            workspaceId,
+            enquiryId
           )
-          .run();
-      } catch {
-        // Fallback if customers table schema differs across feature branches
-      }
+      );
+    }
+    if (await tableExists(db, 'customer_brand_affiliations')) {
+      batchStatements.push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO customer_brand_affiliations (customer_id, workspace_id, brand_id, created_at)
+             SELECT ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM website_enquiries
+               WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW'
+             )`
+          )
+          .bind(resolvedCustomerId, workspaceId, workspaceId, now, workspaceId, enquiryId)
+      );
     }
   }
 
-  let convertedJobId = `JOB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  let convertedJobId: string | null = null;
   const jobTitle = requestedJobTitle ?? `${existing.service_requested} — ${existing.customer_name}`.slice(0, 500);
+  const siteAddress = (existing.site_address ?? 'Site address pending').trim() || 'Site address pending';
 
-  if (requestedJobTypeId && (await tableExists(db, 'compliance_jobs')) && (await tableExists(db, 'job_types'))) {
+  if (requestedJobTypeId) {
+    if (!(await tableExists(db, 'compliance_jobs')) || !(await tableExists(db, 'job_types'))) {
+      return createProblemResponse(
+        503,
+        'OPERATIONAL_STORAGE_NOT_READY',
+        'service-unavailable',
+        'Service Unavailable',
+        'Compliance job storage is not ready for enquiry conversion.',
+        requestId
+      );
+    }
     const jt = await db
       .prepare(
         `SELECT t.id, p.id AS policy_id
@@ -847,66 +886,91 @@ async function handleConvertEnquiry(
       .bind(workspaceId, requestedJobTypeId)
       .first<{ id: string; policy_id: string }>();
 
-    if (jt) {
-      const opId = await sha256Hex(['ENQUIRY_CONVERT', workspaceId, enquiryId, auth.userId]);
-      const opFingerprint = await sha256Hex([enquiryId, jt.id, jt.policy_id, jobTitle]);
-      try {
-        await db.batch([
-          db
-            .prepare(
-              `INSERT INTO compliance_operations (id, workspace_id, actor_id, action, target_id, expected_version, fingerprint)
-               VALUES (?, ?, ?, 'CREATE', ?, 0, ?)`
-            )
-            .bind(opId, workspaceId, auth.userId, convertedJobId, opFingerprint),
-          db
-            .prepare(
-              `INSERT INTO compliance_jobs (id, workspace_id, job_type_id, policy_id, title, status, version, operation_id, customer_name, site_address)
-               VALUES (?, ?, ?, ?, ?, 'OPEN', 1, ?, ?, ?)`
-            )
-            .bind(
-              convertedJobId,
-              workspaceId,
-              jt.id,
-              jt.policy_id,
-              jobTitle,
-              opId,
-              existing.customer_name,
-              existing.site_address ?? 'Site address pending'
-            ),
-          db.prepare('INSERT INTO compliance_receipts (operation_id) VALUES (?)').bind(opId),
-        ]);
-      } catch {
-        // If compliance_jobs triggers reject (e.g. missing policy mappings), retain generated convertedJobId on enquiry
-      }
+    if (!jt) {
+      return validationErrorResponse(
+        'Selected job_type_id is not an active published job type in this workspace.',
+        [{ pointer: '/job_type_id', code: 'NOT_FOUND', message: 'Active published job_type_id required' }],
+        requestId
+      );
     }
+
+    convertedJobId = `JOB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    const opId = await sha256Hex(['ENQUIRY_CONVERT', workspaceId, enquiryId, auth.userId, convertedJobId]);
+    const opFingerprint = await sha256Hex([enquiryId, jt.id, jt.policy_id, jobTitle, existing.customer_name, siteAddress]);
+    const hasSnapshot = Boolean(
+      await db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='compliance_job_site_snapshot_create'").first()
+    );
+
+    batchStatements.push(
+      db
+        .prepare(
+          `INSERT INTO compliance_operations (id, workspace_id, actor_id, action, target_id, expected_version, fingerprint)
+           SELECT ?, ?, ?, 'CREATE', ?, 0, ?
+           WHERE EXISTS (
+             SELECT 1 FROM website_enquiries
+             WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW'
+           )`
+        )
+        .bind(opId, workspaceId, auth.userId, convertedJobId, opFingerprint, workspaceId, enquiryId),
+      db
+        .prepare(
+          `INSERT INTO compliance_jobs (
+             id, workspace_id, job_type_id, policy_id, title, assignee_id, operation_id${hasSnapshot ? ', customer_name, site_address' : ''}
+           )
+           SELECT ?, ?, ?, ?, ?, NULL, ?${hasSnapshot ? ', ?, ?' : ''}
+           WHERE EXISTS (
+             SELECT 1 FROM compliance_operations WHERE id = ? AND workspace_id = ?
+           )`
+        )
+        .bind(
+          convertedJobId,
+          workspaceId,
+          jt.id,
+          jt.policy_id,
+          jobTitle,
+          opId,
+          ...(hasSnapshot ? [existing.customer_name, siteAddress] : []),
+          opId,
+          workspaceId
+        )
+    );
   }
 
-  const now = new Date().toISOString();
-  const updated = await db
-    .prepare(
-      `UPDATE website_enquiries
-       SET status = 'CONVERTED_TO_JOB',
-           matched_customer_id = ?,
-           converted_job_id = ?,
-           converted_job_type_id = ?,
-           reviewed_by_user_id = ?,
-           reviewed_at = ?,
-           updated_at = ?
-       WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}
-       RETURNING *`
-    )
-    .bind(
-      resolvedCustomerId,
-      convertedJobId,
-      requestedJobTypeId,
-      auth.userId,
-      now,
-      now,
-      workspaceId,
-      enquiryId,
-      ...staffBindings(workspaceId, auth)
-    )
-    .first<WebsiteEnquiryRow>();
+  batchStatements.push(
+    db
+      .prepare(
+        `UPDATE website_enquiries
+         SET status = 'CONVERTED_TO_JOB',
+             matched_customer_id = ?,
+             converted_job_id = ?,
+             converted_job_type_id = ?,
+             reviewed_by_user_id = ?,
+             reviewed_at = ?,
+             updated_at = ?
+         WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}`
+      )
+      .bind(
+        resolvedCustomerId,
+        convertedJobId,
+        requestedJobTypeId,
+        auth.userId,
+        now,
+        now,
+        workspaceId,
+        enquiryId,
+        ...staffBindings(workspaceId, auth)
+      )
+  );
+
+  const batchResults = await db.batch(batchStatements);
+  const updateMeta = batchResults[batchResults.length - 1]?.meta;
+  const updated =
+    updateMeta && updateMeta.changes > 0
+      ? await db
+          .prepare('SELECT * FROM website_enquiries WHERE workspace_id = ? AND id = ?')
+          .bind(workspaceId, enquiryId)
+          .first<WebsiteEnquiryRow>()
+      : null;
 
   if (!updated) {
     return createProblemResponse(

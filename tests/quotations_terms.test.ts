@@ -371,3 +371,108 @@ test('quotations: enforces refusal, revocation, expiry, and revise/supersede gua
   assert.equal(expDetail.quotation.acceptance_status, 'EXPIRED');
   assert.ok(expDetail.quotation.follow_ups.every(f => f.status === 'CANCELLED'));
 });
+
+test('P1 #2 & #3 regression: validates recipient_email before freezing/sending and includes public acceptance link', async t => {
+  const db = await setupQuotationDb(t);
+  const fixture = await createFirebaseFixture();
+  const authService = createAuthenticationService(fixture.transport);
+
+  const staffToken = await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email);
+  await seedPublishedQuoteTerms(db, 'solarcell', 'v3.0', 'Standard 14-day acceptance terms.');
+  const dispatchedBodies: string[] = [];
+
+  const env = {
+    DB: db,
+    ENVIRONMENT: 'test',
+    FIREBASE_PROJECT_ID: 'cabms-test',
+  };
+  const routeOpts = {
+    emailDispatcher: async (req: { textBody: string }) => {
+      dispatchedBodies.push(req.textBody);
+      return { deliveryId: 'em_test_1', status: 'SENT' as const, transport: 'SANDBOX_SYNTHETIC' };
+    },
+  };
+
+  const createRes = await handleQuotations(
+    new Request('http://localhost/api/v1/workspaces/solarcell/quotations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${staffToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'JOB-RECIP-CHECK',
+        customer_id: 'CUST-RECIP',
+        customer_name: 'Recipient Test',
+        customer_email: 'recipient@example.invalid',
+        title: 'Recipient Validation Quote',
+        line_items: [{ id: '1', description: 'Checkup', quantity: 1, unit_price: 100 }],
+      }),
+    }),
+    env,
+    'solarcell',
+    undefined,
+    undefined,
+    'req_q_create',
+    authService,
+    routeOpts
+  );
+  assert.equal(createRes.status, 201);
+  const { quotation } = (await createRes.json()) as { quotation: { id: string } };
+
+  // Invalid recipient_email MUST fail 422 BEFORE mutating status or freezing terms
+  const badSend = await handleQuotations(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/quotations/${quotation.id}/send`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${staffToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient_email: 'not-a-valid-email' }),
+    }),
+    env,
+    'solarcell',
+    quotation.id,
+    'send',
+    'req_q_bad_send',
+    authService,
+    routeOpts
+  );
+  assert.equal(badSend.status, 422);
+  const stillDraft = await db.prepare('SELECT acceptance_status, terms_revision_id FROM quotations WHERE id = ?').bind(quotation.id).first<{ acceptance_status: string; terms_revision_id: string | null }>();
+  assert.equal(stillDraft?.acceptance_status, 'DRAFT');
+  assert.equal(stillDraft?.terms_revision_id, null);
+
+  // Valid send includes public portal link + API link and supports public GET + refuse
+  const goodSend = await handleQuotations(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/quotations/${quotation.id}/send`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${staffToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient_email: 'recipient@example.invalid' }),
+    }),
+    env,
+    'solarcell',
+    quotation.id,
+    'send',
+    'req_q_good_send',
+    authService,
+    routeOpts
+  );
+  assert.equal(goodSend.status, 200);
+  const { acceptance_token: rawToken } = (await goodSend.json()) as { acceptance_token: string };
+  assert.equal(dispatchedBodies.length, 1);
+  assert.ok(dispatchedBodies[0].includes(`?quote_token=${encodeURIComponent(rawToken)}`));
+  assert.ok(dispatchedBodies[0].includes(`/api/v1/public/quotations/${encodeURIComponent(rawToken)}`));
+
+  const pubGet = await handlePublicQuotationToken(new Request(`http://localhost/api/v1/public/quotations/${rawToken}`), env, rawToken, undefined, 'req_pub_get', routeOpts);
+  assert.equal(pubGet.status, 200);
+  const pubRefuse = await handlePublicQuotationToken(
+    new Request(`http://localhost/api/v1/public/quotations/${rawToken}/refuse`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Customer chose another date' }),
+    }),
+    env,
+    rawToken,
+    'refuse',
+    'req_pub_refuse',
+    routeOpts
+  );
+  assert.equal(pubRefuse.status, 200);
+  const refusedData = (await pubRefuse.json()) as { quotation: { acceptance_status: string } };
+  assert.equal(refusedData.quotation.acceptance_status, 'REFUSED');
+});

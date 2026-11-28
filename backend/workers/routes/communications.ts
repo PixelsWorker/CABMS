@@ -98,7 +98,7 @@ export async function handleCommunications(
 
   // 1. GET /communications/status
   if (normalizedSub === 'status' && method === 'GET') {
-    const transport = emailService.getTransportStatus(emailEnv);
+    const transport = await emailService.getWorkspaceTransportStatus(env.DB, workspaceId, emailEnv);
     const sender = await emailService.resolveSenderIdentity(env.DB, workspaceId);
     return jsonResponse({ transport_status: transport, sender_identity: sender }, 200, requestId);
   }
@@ -181,7 +181,7 @@ export async function handleCommunications(
       {
         deliveries,
         audit_events: auditEvents,
-        transport_status: emailService.getTransportStatus(emailEnv),
+        transport_status: await emailService.getWorkspaceTransportStatus(env.DB, workspaceId, emailEnv),
       },
       200,
       requestId

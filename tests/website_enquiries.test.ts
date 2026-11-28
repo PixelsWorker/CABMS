@@ -506,6 +506,28 @@ test('EnquiriesView UI: enforces technician RBAC and supports create & convert',
     await new Promise(r => setTimeout(r, 20));
   });
 
+  const uiJobTypeId = container.querySelector<HTMLSelectElement>('select[aria-label="Job type"]')?.value;
+  if (uiJobTypeId) {
+    const now = new Date().toISOString();
+    await db.exec(`
+      INSERT OR IGNORE INTO form_definitions (id, workspace_id, brand_id, code, title, category, status, created_by, created_at, updated_at)
+      VALUES ('fd_ui_enq', 'solarcell', 'solarcell', 'UI-ENQ-01', 'UI Safety Form', 'Custom', 'ACTIVE', '${G01_TEST_AUTH.officeStaff.userId}', '${now}', '${now}');
+      INSERT OR IGNORE INTO form_revisions (id, workspace_id, form_definition_id, version, status, created_by, created_at, updated_at)
+      VALUES ('rev_ui_enq', 'solarcell', 'fd_ui_enq', '1.0', 'DRAFT', '${G01_TEST_AUTH.officeStaff.userId}', '${now}', '${now}');
+      UPDATE form_revisions SET status = 'REVIEW' WHERE id = 'rev_ui_enq';
+      UPDATE form_revisions SET status = 'PUBLISHED', approved_by = '${G01_TEST_AUTH.ownerAdmin.userId}', approved_at = '${now}' WHERE id = 'rev_ui_enq';
+      INSERT OR IGNORE INTO job_types (id, workspace_id, brand_id, code, name, status, created_at, updated_at)
+      VALUES ('${uiJobTypeId}', 'solarcell', 'solarcell', 'JT-UI', 'UI Job Type', 'ACTIVE', '${now}', '${now}');
+      INSERT OR IGNORE INTO job_type_compliance_policies (id, job_type_id, version, status, created_by, created_at, updated_at)
+      VALUES ('pol_ui_enq', '${uiJobTypeId}', '1.0', 'DRAFT', '${G01_TEST_AUTH.officeStaff.userId}', '${now}', '${now}');
+      INSERT OR IGNORE INTO policy_catalog_form_rules (id, workspace_id, policy_version_id, form_revision_id, required, display_order)
+      VALUES ('rule_ui_enq', 'solarcell', 'pol_ui_enq', 'rev_ui_enq', 1, 1);
+      UPDATE job_type_compliance_policies SET status = 'REVIEW' WHERE id = 'pol_ui_enq';
+      UPDATE job_type_compliance_policies SET status = 'PUBLISHED', approved_by = '${G01_TEST_AUTH.ownerAdmin.userId}', approved_at = '${now}' WHERE id = 'pol_ui_enq';
+      UPDATE job_types SET current_policy_version_id = 'pol_ui_enq' WHERE id = '${uiJobTypeId}';
+    `);
+  }
+
   await act(async () => {
     const confirmBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Confirm Conversion'))!;
     confirmBtn.click();
@@ -513,4 +535,99 @@ test('EnquiriesView UI: enforces technician RBAC and supports create & convert',
   });
 
   assert.match(container.textContent!, /CONVERTED_TO_JOB/);
+});
+
+test('P1 #1 regression: enquiry conversion persists real customer & compliance job records atomically and rejects invalid job_type_id', async t => {
+  const db = await setupEnquiriesDb();
+  t.after(() => db.getSqliteHandle().close());
+
+  const fixture = await createFirebaseFixture();
+  const authService = createAuthenticationService(fixture.transport);
+  const env: EnquiriesEnv = { DB: db, ENVIRONMENT: 'test', FIREBASE_PROJECT_ID: 'cabms-test' };
+  const officeToken = await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email);
+
+  // Seed a published form revision, active job type, and published policy
+  const now = new Date().toISOString();
+  await db.exec(`
+    INSERT INTO form_definitions (id, workspace_id, brand_id, code, title, category, status, created_by, created_at, updated_at)
+    VALUES ('fd_enq', 'solarcell', 'solarcell', 'ENQ-01', 'Enquiry Safety Form', 'Custom', 'ACTIVE', '${G01_TEST_AUTH.officeStaff.userId}', '${now}', '${now}');
+    INSERT INTO form_revisions (id, workspace_id, form_definition_id, version, status, created_by, created_at, updated_at)
+    VALUES ('rev_enq', 'solarcell', 'fd_enq', '1.0', 'DRAFT', '${G01_TEST_AUTH.officeStaff.userId}', '${now}', '${now}');
+    UPDATE form_revisions SET status = 'REVIEW' WHERE id = 'rev_enq';
+    UPDATE form_revisions SET status = 'PUBLISHED', approved_by = '${G01_TEST_AUTH.ownerAdmin.userId}', approved_at = '${now}' WHERE id = 'rev_enq';
+    INSERT INTO job_types (id, workspace_id, brand_id, code, name, status, created_at, updated_at)
+    VALUES ('jt_enq', 'solarcell', 'solarcell', 'JT-ENQ', 'Enquiry Job Type', 'ACTIVE', '${now}', '${now}');
+    INSERT INTO job_type_compliance_policies (id, job_type_id, version, status, created_by, created_at, updated_at)
+    VALUES ('pol_enq', 'jt_enq', '1.0', 'DRAFT', '${G01_TEST_AUTH.officeStaff.userId}', '${now}', '${now}');
+    INSERT INTO policy_catalog_form_rules (id, workspace_id, policy_version_id, form_revision_id, required, display_order)
+    VALUES ('rule_enq', 'solarcell', 'pol_enq', 'rev_enq', 1, 1);
+    UPDATE job_type_compliance_policies SET status = 'REVIEW' WHERE id = 'pol_enq';
+    UPDATE job_type_compliance_policies SET status = 'PUBLISHED', approved_by = '${G01_TEST_AUTH.ownerAdmin.userId}', approved_at = '${now}' WHERE id = 'pol_enq';
+    UPDATE job_types SET current_policy_version_id = 'pol_enq' WHERE id = 'jt_enq';
+  `);
+
+  const intake = await handlePublicEnquiryIntake(
+    new Request('http://localhost/api/v1/public/enquiries', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        workspace_id: 'solarcell',
+        source_website: 'https://solarcell.example.invalid',
+        customer_name: 'Atomic Convert Customer',
+        email: 'atomic@example.invalid',
+        phone: '0411222333',
+        site_address: '100 Solar Rd, Brisbane QLD',
+        service_requested: 'Battery Install',
+      }),
+    }),
+    env,
+    'req_enq_intake'
+  );
+  assert.equal(intake.status, 201);
+  const { enquiry } = (await intake.json()) as { enquiry: { id: string } };
+
+  // Invalid job_type_id must be rejected with 422 and NOT convert or create customer
+  const badConv = await handleEnquiries(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/website-enquiries/${enquiry.id}/convert`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${officeToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_mode: 'new', job_type_id: 'jt_nonexistent' }),
+    }),
+    env,
+    'solarcell',
+    enquiry.id,
+    'convert',
+    'req_enq_bad_jt',
+    authService
+  );
+  assert.equal(badConv.status, 422);
+  const badCust = await db.prepare(`SELECT COUNT(*) AS cnt FROM customers WHERE email = 'atomic@example.invalid'`).first<{ cnt: number }>();
+  assert.equal(badCust?.cnt, 0);
+
+  // Valid conversion creates real customer + brand affiliation + compliance_job + compliance_requirements
+  const goodConv = await handleEnquiries(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/website-enquiries/${enquiry.id}/convert`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${officeToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_mode: 'new', job_type_id: 'jt_enq' }),
+    }),
+    env,
+    'solarcell',
+    enquiry.id,
+    'convert',
+    'req_enq_good_conv',
+    authService
+  );
+  assert.equal(goodConv.status, 201);
+  const convData = (await goodConv.json()) as { customer_id: string; job_id: string };
+  assert.ok(convData.customer_id);
+  assert.ok(convData.job_id);
+
+  const persistedCust = await db.prepare(`SELECT id, myob_customer_id, sync_status FROM customers WHERE workspace_id = 'solarcell' AND id = ?`).bind(convData.customer_id).first<{ id: string; myob_customer_id: string; sync_status: string }>();
+  assert.ok(persistedCust);
+  assert.match(persistedCust.myob_customer_id, /^MYOB-SBX-/);
+
+  const persistedJob = await db.prepare(`SELECT id, status, title FROM compliance_jobs WHERE workspace_id = 'solarcell' AND id = ?`).bind(convData.job_id).first<{ id: string; status: string; title: string }>();
+  assert.ok(persistedJob);
+  assert.equal(persistedJob.status, 'OPEN');
 });

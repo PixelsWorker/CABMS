@@ -20,6 +20,7 @@ import { authorizeWorkspaceAccess, productionAuthenticationService, type Authent
 import { parseIfMatchHeader, generateStrongETag } from '../http.ts';
 import { StructuredLogger } from '../logger.ts';
 import { approvedMembership } from '../privilegedApproval.ts';
+import { getWorkspaceTransportStatus, resolveSenderIdentity } from '../../services/emailService.ts';
 import {
   authenticationRequiredResponse,
   accessDeniedResponse,
@@ -752,15 +753,29 @@ async function handleTestProviderConnection(
   let updateParams: unknown[] = [];
 
   if (provider === 'smtp') {
+    const resolvedTransport = await getWorkspaceTransportStatus(db, workspaceId);
+    const resolvedSender = await resolveSenderIdentity(db, workspaceId);
     if (!current.sender_email || !current.smtp_host) {
       ok = false;
       status = 'FAILED';
-      message = '[SIMULATED SANDBOX TEST] Missing sender email or SMTP host configuration.';
+      message = '[PROVIDER TEST] Missing sender email or SMTP host configuration.';
+    } else if (current.smtp_transport_mode === 'smtp_relay' && !current.smtp_use_tls) {
+      ok = false;
+      status = 'FAILED';
+      message = '[PROVIDER TEST] TLS is required for smtp_relay (smtp_use_tls must be enabled). Plaintext SMTP authentication is blocked.';
+    } else if (current.smtp_transport_mode === 'smtp_relay' && (!current.smtp_username || !current.has_smtp_secret)) {
+      ok = false;
+      status = 'FAILED';
+      message = '[PROVIDER TEST] SMTP username and server-side secret are required for smtp_relay.';
+    } else if (resolvedTransport.mode === 'SMTP_TCP') {
+      ok = true;
+      status = 'PASSED_LIVE';
+      message = `[TLS SMTP CONFIGURED] Verified sender ${resolvedSender.sender_name} <${resolvedSender.sender_email}> via ${current.smtp_host}:${current.smtp_port} with TLS enabled and server-side secret.`;
     } else {
       ok = true;
       status = 'PASSED_SANDBOX';
       const secretNote = current.has_smtp_secret ? 'server-side secret verified' : 'no secret configured (sandbox mode)';
-      message = `[SIMULATED SANDBOX TEST] Verified sender ${current.sender_email} via ${current.smtp_host}:${current.smtp_port} (${current.smtp_transport_mode}, ${secretNote}). No live external email was sent.`;
+      message = `[SIMULATED SANDBOX TEST] Verified sender ${resolvedSender.sender_name} <${resolvedSender.sender_email}> via ${current.smtp_host}:${current.smtp_port} (${current.smtp_transport_mode}, ${secretNote}; resolved transport: ${resolvedTransport.mode}). No live external email was sent.`;
     }
     updateSql = `UPDATE workspace_provider_configs
                  SET smtp_last_test_status = ?, smtp_last_test_at = ?, smtp_last_test_message = ?,

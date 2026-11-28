@@ -348,4 +348,93 @@ describe('System & Workspace Provider Settings (D1 + RBAC + Secrets + Sandbox Te
       dom.window.close();
     }
   });
+
+  it('P1 #4 & #5 regression: provider SMTP test fails closed when smtp_relay lacks TLS or secret, and succeeds when configured', async () => {
+    const getRes = await handleSettingsProviders(
+      new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings', {
+        headers: { Authorization: ownerAdminAuth },
+      }),
+      env,
+      'solarcell',
+      undefined,
+      'req_prov_get',
+      authService
+    );
+    const etag1 = getRes.headers.get('ETag')!;
+
+    // Configure smtp_relay with smtp_use_tls = false -> test must FAIL
+    const patchNoTls = await handleSettingsProviders(
+      new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings', {
+        method: 'PATCH',
+        headers: { Authorization: ownerAdminAuth, 'Content-Type': 'application/json', 'If-Match': etag1 },
+        body: JSON.stringify({
+          sender_email: 'ops@solarcell.example.invalid',
+          smtp_host: 'smtp.solarcell.example.invalid',
+          smtp_port: 587,
+          smtp_username: 'mailer',
+          smtp_use_tls: false,
+          smtp_transport_mode: 'smtp_relay',
+          smtp_secret: 'secret-123',
+        }),
+      }),
+      env,
+      'solarcell',
+      undefined,
+      'req_prov_patch1',
+      authService
+    );
+    assert.equal(patchNoTls.status, 200);
+    const etag2 = patchNoTls.headers.get('ETag')!;
+
+    const testFail = await handleSettingsProviders(
+      new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings/test', {
+        method: 'POST',
+        headers: { Authorization: ownerAdminAuth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'smtp' }),
+      }),
+      env,
+      'solarcell',
+      'test',
+      'req_prov_test_fail',
+      authService
+    );
+    assert.equal(testFail.status, 200);
+    const failBody = (await testFail.json()) as { ok: boolean; status: string; message: string };
+    assert.equal(failBody.ok, false);
+    assert.equal(failBody.status, 'FAILED');
+    assert.match(failBody.message, /TLS/i);
+    const etag3 = testFail.headers.get('ETag') ?? etag2;
+
+    // Enable TLS -> test passes with PASSED_LIVE config check
+    const patchTls = await handleSettingsProviders(
+      new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings', {
+        method: 'PATCH',
+        headers: { Authorization: ownerAdminAuth, 'Content-Type': 'application/json', 'If-Match': etag3 },
+        body: JSON.stringify({ smtp_use_tls: true }),
+      }),
+      env,
+      'solarcell',
+      undefined,
+      'req_prov_patch2',
+      authService
+    );
+    assert.equal(patchTls.status, 200);
+
+    const testPass = await handleSettingsProviders(
+      new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings/test', {
+        method: 'POST',
+        headers: { Authorization: ownerAdminAuth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'smtp' }),
+      }),
+      env,
+      'solarcell',
+      'test',
+      'req_prov_test_pass',
+      authService
+    );
+    assert.equal(testPass.status, 200);
+    const passBody = (await testPass.json()) as { ok: boolean; status: string };
+    assert.equal(passBody.ok, true);
+    assert.equal(passBody.status, 'PASSED_LIVE');
+  });
 });

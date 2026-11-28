@@ -333,3 +333,82 @@ test('handleCommunications enforces RBAC, validation, and workspace-scoped route
   assert.equal(retryBody.delivery.status, 'SENT');
   assert.equal(retryBody.delivery.attempt_count, 2);
 });
+
+test('P1 #4 & #5 regression: workspace provider settings wire into emailService and SMTP requires TLS before AUTH', async () => {
+  const db = await setupCommunicationsDb();
+  const now = new Date().toISOString();
+  await db.exec(`INSERT OR IGNORE INTO workspaces (id, name, slug, created_at, updated_at) VALUES ('cctv', 'CCTV', 'cctv', '${now}', '${now}');`);
+  const sql0019 = readFileSync(resolve('migrations/0019_settings_providers.sql'), 'utf8');
+  await db.exec(sql0019);
+  await db.prepare('DELETE FROM workspace_provider_configs WHERE workspace_id = ?').bind('solarcell').run();
+
+  await db.exec(`
+    INSERT INTO workspace_provider_configs (
+      workspace_id, sender_name, sender_email, reply_to_email, smtp_host, smtp_port, smtp_username,
+      smtp_use_tls, smtp_transport_mode, version, updated_at, updated_by_user_id
+    ) VALUES (
+      'solarcell', 'SolarCell Configured Desk', 'dispatch@solarcell-custom.example.invalid',
+      'reply@solarcell-custom.example.invalid', 'smtp.solarcell.example.invalid', 587, 'mailer',
+      0, 'smtp_relay', 1, '${now}', 'usr_admin'
+    );
+    INSERT INTO workspace_provider_secrets (workspace_id, secret_key, secret_value, updated_at, updated_by_user_id)
+    VALUES ('solarcell', 'smtp_secret', 'super-secret-smtp-pass', '${now}', 'usr_admin');
+  `);
+
+  // Sender identity reflects persisted workspace_provider_configs
+  const sender = await emailService.resolveSenderIdentity(db, 'solarcell');
+  assert.equal(sender.sender_name, 'SolarCell Configured Desk');
+  assert.equal(sender.sender_email, 'dispatch@solarcell-custom.example.invalid');
+  assert.equal(sender.reply_to_email, 'reply@solarcell-custom.example.invalid');
+
+  // With smtp_use_tls = 0, live SMTP transport MUST remain disabled (SANDBOX_SYNTHETIC)
+  const tlsDisabledStatus = await emailService.getWorkspaceTransportStatus(db, 'solarcell');
+  assert.equal(tlsDisabledStatus.mode, 'SANDBOX_SYNTHETIC');
+  assert.equal(tlsDisabledStatus.is_synthetic, true);
+  assert.match(tlsDisabledStatus.reason, /TLS/i);
+
+  // Enabling smtp_use_tls = 1 activates SMTP_TCP with server-side secret
+  await db.prepare(`UPDATE workspace_provider_configs SET smtp_use_tls = 1 WHERE workspace_id = 'solarcell'`).run();
+  const tlsEnabledStatus = await emailService.getWorkspaceTransportStatus(db, 'solarcell');
+  assert.equal(tlsEnabledStatus.mode, 'SMTP_TCP');
+  assert.equal(tlsEnabledStatus.is_synthetic, false);
+
+  // dispatchViaSmtpTcp refuses plaintext (useTls: false) before any socket or AUTH
+  const plaintextBlocked = await emailService.dispatchViaSmtpTcp(
+    {},
+    { fromName: 'Test', fromEmail: 'a@example.invalid', toEmail: 'b@example.invalid', subject: 'Hi', bodyText: 'Hello' },
+    { host: 'smtp.example.invalid', port: 587, user: 'u', pass: 'p', useTls: false }
+  );
+  assert.equal(plaintextBlocked.status, 'FAILED');
+  assert.equal(plaintextBlocked.errorCode, 'SMTP_TLS_REQUIRED');
+
+  // dispatchViaSmtpTcp refuses server that omits STARTTLS before sending AUTH LOGIN
+  const sentCommands: string[] = [];
+  const fakeNoStartTlsSocket = () => {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const responses = ['220 smtp.example.invalid ESMTP\r\n', '250-smtp.example.invalid\r\n250 AUTH LOGIN\r\n'];
+    let idx = 0;
+    return {
+      readable: new ReadableStream<Uint8Array>({
+        pull(ctrl) {
+          if (idx < responses.length) ctrl.enqueue(encoder.encode(responses[idx++]));
+          else ctrl.close();
+        },
+      }),
+      writable: new WritableStream<Uint8Array>({
+        write(chunk) { sentCommands.push(decoder.decode(chunk).trim()); },
+      }),
+      close: async () => undefined,
+    };
+  };
+  const noStartTlsRes = await emailService.dispatchViaSmtpTcp(
+    {},
+    { fromName: 'Test', fromEmail: 'a@example.invalid', toEmail: 'b@example.invalid', subject: 'Hi', bodyText: 'Hello' },
+    { host: 'smtp.example.invalid', port: 587, user: 'u', pass: 'secret-never-sent', useTls: true },
+    fakeNoStartTlsSocket
+  );
+  assert.equal(noStartTlsRes.status, 'FAILED');
+  assert.equal(noStartTlsRes.errorCode, 'SMTP_TLS_REQUIRED');
+  assert.ok(!sentCommands.some(c => c.includes('AUTH LOGIN') || c.includes(btoa('secret-never-sent'))));
+});

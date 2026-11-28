@@ -36,6 +36,7 @@ export interface EmailEnv extends Env {
   SMTP_PORT?: string;
   SMTP_USER?: string;
   SMTP_PASS?: string;
+  SMTP_USE_TLS?: string;
   EMAIL_SANDBOX_ONLY?: string;
   EMAIL_FETCH_OVERRIDE?: typeof fetch;
 }
@@ -250,8 +251,157 @@ export function getTransportStatus(env?: EmailEnv): EmailTransportStatus {
   };
 }
 
+export interface ResolvedSmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  useTls: boolean;
+}
+
+async function hasProviderConfigTables(db: D1Database): Promise<boolean> {
+  const row = await db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workspace_provider_configs'")
+    .first<{ name: string }>();
+  return Boolean(row);
+}
+
+async function resolveWorkspaceTransport(
+  db: D1Database,
+  workspaceId: string,
+  env?: EmailEnv
+): Promise<{ status: EmailTransportStatus; smtpConfig?: ResolvedSmtpConfig }> {
+  const forceSandbox = env?.EMAIL_SANDBOX_ONLY === '1' || env?.EMAIL_SANDBOX_ONLY === 'true';
+  if (forceSandbox) {
+    return { status: getTransportStatus(env) };
+  }
+
+  if (await hasProviderConfigTables(db)) {
+    const cfg = await db
+      .prepare(
+        `SELECT smtp_host, smtp_port, smtp_username, smtp_use_tls, smtp_transport_mode
+         FROM workspace_provider_configs
+         WHERE workspace_id = ?`
+      )
+      .bind(workspaceId)
+      .first<{
+        smtp_host: string | null;
+        smtp_port: number;
+        smtp_username: string | null;
+        smtp_use_tls: number;
+        smtp_transport_mode: string;
+      }>();
+
+    if (cfg) {
+      if (cfg.smtp_transport_mode === 'sandbox') {
+        return {
+          status: {
+            mode: 'SANDBOX_SYNTHETIC',
+            is_synthetic: true,
+            configured_providers: ['SANDBOX_SYNTHETIC'],
+            reason: 'Workspace provider settings are in sandbox mode; using deterministic sandbox/synthetic transport.',
+          },
+        };
+      }
+      if (cfg.smtp_transport_mode === 'http_relay') {
+        const hasHttpsRelay = Boolean(env?.EMAIL_RELAY_URL?.trim() && env?.EMAIL_RELAY_API_KEY?.trim());
+        if (hasHttpsRelay) {
+          return {
+            status: {
+              mode: 'HTTPS_RELAY',
+              is_synthetic: false,
+              configured_providers: ['HTTPS_RELAY', 'SANDBOX_SYNTHETIC'],
+              reason: 'Workspace http_relay mode active with server-side HTTPS relay credentials.',
+            },
+          };
+        }
+        return {
+          status: {
+            mode: 'SANDBOX_SYNTHETIC',
+            is_synthetic: true,
+            configured_providers: ['SANDBOX_SYNTHETIC'],
+            reason: 'Workspace http_relay mode selected, but EMAIL_RELAY_URL/EMAIL_RELAY_API_KEY are not configured; keeping live transport disabled.',
+          },
+        };
+      }
+      if (cfg.smtp_transport_mode === 'smtp_relay') {
+        const secretRow = await db
+          .prepare(
+            `SELECT secret_value FROM workspace_provider_secrets
+             WHERE workspace_id = ? AND secret_key = 'smtp_secret'`
+          )
+          .bind(workspaceId)
+          .first<{ secret_value: string }>();
+
+        const host = cfg.smtp_host?.trim() ?? '';
+        const port = Number(cfg.smtp_port) || 587;
+        const user = cfg.smtp_username?.trim() ?? '';
+        const pass = secretRow?.secret_value?.trim() ?? '';
+        const useTls = cfg.smtp_use_tls === 1;
+
+        if (host && user && pass && useTls) {
+          return {
+            status: {
+              mode: 'SMTP_TCP',
+              is_synthetic: false,
+              configured_providers: ['SMTP_TCP', 'SANDBOX_SYNTHETIC'],
+              reason: `Workspace SMTP relay configured with TLS (${host}:${port}).`,
+            },
+            smtpConfig: { host, port, user, pass, useTls: true },
+          };
+        }
+        return {
+          status: {
+            mode: 'SANDBOX_SYNTHETIC',
+            is_synthetic: true,
+            configured_providers: ['SANDBOX_SYNTHETIC'],
+            reason: !useTls
+              ? 'SMTP live transport disabled: TLS (smtp_use_tls=1) is required before authenticating.'
+              : 'SMTP live transport disabled: host, username, and server-side smtp_secret are required.',
+          },
+        };
+      }
+    }
+  }
+
+  const envStatus = getTransportStatus(env);
+  if (envStatus.mode === 'SMTP_TCP') {
+    const envUseTls = env?.SMTP_USE_TLS !== 'false' && env?.SMTP_USE_TLS !== '0';
+    if (!envUseTls) {
+      return {
+        status: {
+          mode: 'SANDBOX_SYNTHETIC',
+          is_synthetic: true,
+          configured_providers: ['SANDBOX_SYNTHETIC'],
+          reason: 'SMTP live transport disabled: SMTP_USE_TLS cannot be disabled.',
+        },
+      };
+    }
+    return {
+      status: envStatus,
+      smtpConfig: {
+        host: env!.SMTP_HOST!.trim(),
+        port: Number.parseInt(env?.SMTP_PORT || '587', 10) || 587,
+        user: env!.SMTP_USER!.trim(),
+        pass: env!.SMTP_PASS!.trim(),
+        useTls: true,
+      },
+    };
+  }
+  return { status: envStatus };
+}
+
+export async function getWorkspaceTransportStatus(
+  db: D1Database,
+  workspaceId: string,
+  env?: EmailEnv
+): Promise<EmailTransportStatus> {
+  const resolved = await resolveWorkspaceTransport(db, workspaceId, env);
+  return resolved.status;
+}
+
 /**
- * Resolves business-specific sender identity from workspace_settings & workspaces.
+ * Resolves business-specific sender identity from workspace_provider_configs, workspace_settings & workspaces.
  */
 export async function resolveSenderIdentity(
   db: D1Database,
@@ -275,17 +425,52 @@ export async function resolveSenderIdentity(
       review_url: string | null;
     }>();
 
+  const providerCfg = (await hasProviderConfigTables(db))
+    ? await db
+        .prepare(
+          `SELECT sender_name, sender_email, reply_to_email
+           FROM workspace_provider_configs
+           WHERE workspace_id = ?`
+        )
+        .bind(workspaceId)
+        .first<{
+          sender_name: string | null;
+          sender_email: string | null;
+          reply_to_email: string | null;
+        }>()
+    : null;
+
   const slug = row?.workspace_slug || workspaceId.replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'workspace';
-  const senderName = (overrides?.fromName?.trim() || row?.trading_name?.trim() || row?.workspace_name?.trim() || 'CABMS Workspace');
-  const configuredEmail = overrides?.fromEmail?.trim() || row?.contact_email?.trim() || '';
+  const providerSenderName = providerCfg?.sender_name?.trim() || '';
+  const hasCustomProviderSender =
+    providerSenderName.length > 0 &&
+    (providerSenderName !== 'CABMS Operations' || Boolean(providerCfg?.sender_email?.trim()));
+
+  const senderName =
+    overrides?.fromName?.trim() ||
+    (hasCustomProviderSender ? providerSenderName : '') ||
+    row?.trading_name?.trim() ||
+    row?.workspace_name?.trim() ||
+    providerSenderName ||
+    'CABMS Workspace';
+
+  const configuredEmail = overrides?.fromEmail?.trim() || providerCfg?.sender_email?.trim() || row?.contact_email?.trim() || '';
   const hasValidConfigured = configuredEmail.length > 0 && isValidEmailAddress(configuredEmail);
   const senderEmail = hasValidConfigured ? configuredEmail : `noreply@${slug}.cabms-demo.invalid`;
+
+  const providerReplyTo = providerCfg?.reply_to_email?.trim() || '';
+  const replyToEmail =
+    providerReplyTo && isValidEmailAddress(providerReplyTo)
+      ? providerReplyTo
+      : hasValidConfigured
+        ? configuredEmail
+        : null;
 
   return {
     workspace_id: workspaceId,
     sender_name: senderName,
     sender_email: senderEmail,
-    reply_to_email: hasValidConfigured ? configuredEmail : null,
+    reply_to_email: replyToEmail,
     review_url: row?.review_url || null,
     is_synthetic_sender: !hasValidConfigured,
   };
@@ -374,36 +559,57 @@ async function dispatchViaHttpsRelay(
   }
 }
 
-async function dispatchViaSmtpTcp(
-  env: EmailEnv,
+export interface SmtpSocketLike {
+  readable: ReadableStream<Uint8Array>;
+  writable: WritableStream<Uint8Array>;
+  close: () => Promise<void>;
+  startTls?: () => SmtpSocketLike;
+}
+
+export type SmtpConnectFn = (
+  addr: { hostname: string; port: number },
+  options?: { secureTransport?: 'on' | 'off' | 'starttls'; allowHalfOpen?: boolean }
+) => SmtpSocketLike;
+
+export async function dispatchViaSmtpTcp(
+  env: Partial<EmailEnv> | undefined,
   payload: {
     fromName: string;
     fromEmail: string;
     toEmail: string;
     subject: string;
     bodyText: string;
-  }
+  },
+  smtpOverride?: ResolvedSmtpConfig,
+  connectOverride?: SmtpConnectFn
 ): Promise<TransportDispatchOutcome> {
-  const host = env.SMTP_HOST!.trim();
-  const port = Number.parseInt(env.SMTP_PORT || '587', 10) || 587;
-  const user = env.SMTP_USER!.trim();
-  const pass = env.SMTP_PASS!.trim();
+  const host = (smtpOverride?.host ?? env?.SMTP_HOST ?? '').trim();
+  const port = smtpOverride?.port ?? (Number.parseInt(env?.SMTP_PORT || '587', 10) || 587);
+  const user = (smtpOverride?.user ?? env?.SMTP_USER ?? '').trim();
+  const pass = (smtpOverride?.pass ?? env?.SMTP_PASS ?? '').trim();
+  const useTls = smtpOverride ? smtpOverride.useTls : env?.SMTP_USE_TLS !== 'false' && env?.SMTP_USE_TLS !== '0';
 
-  // Dynamic import of cloudflare:sockets so Node/Vite builds do not fail when not running in workerd.
-  let connectFn: ((addr: { hostname: string; port: number }) => {
-    readable: ReadableStream<Uint8Array>;
-    writable: WritableStream<Uint8Array>;
-    close: () => Promise<void>;
-  }) | null = null;
+  if (!useTls) {
+    return {
+      status: 'FAILED',
+      providerMessageId: null,
+      errorCode: 'SMTP_TLS_REQUIRED',
+      errorMessage: 'Refusing SMTP authentication over plaintext: TLS is required.',
+    };
+  }
 
-  try {
-    // @ts-expect-error cloudflare:sockets is only resolved in Cloudflare Workers runtime
-    const mod = await import('cloudflare:sockets');
-    if (typeof mod?.connect === 'function') {
-      connectFn = mod.connect;
+  let connectFn: SmtpConnectFn | null = connectOverride ?? null;
+
+  if (!connectFn) {
+    try {
+      // @ts-expect-error cloudflare:sockets is only resolved in Cloudflare Workers runtime
+      const mod = await import('cloudflare:sockets');
+      if (typeof mod?.connect === 'function') {
+        connectFn = mod.connect as SmtpConnectFn;
+      }
+    } catch {
+      connectFn = null;
     }
-  } catch {
-    connectFn = null;
   }
 
   if (!connectFn) {
@@ -415,9 +621,14 @@ async function dispatchViaSmtpTcp(
     };
   }
 
-  const socket = connectFn({ hostname: host, port });
-  const writer = socket.writable.getWriter();
-  const reader = socket.readable.getReader();
+  const useImplicitTls = port === 465;
+  const socket = connectFn(
+    { hostname: host, port },
+    { secureTransport: useImplicitTls ? 'on' : 'starttls', allowHalfOpen: false }
+  );
+  let activeSocket: SmtpSocketLike = socket;
+  let writer = activeSocket.writable.getWriter();
+  let reader = activeSocket.readable.getReader();
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -445,10 +656,40 @@ async function dispatchViaSmtpTcp(
     if (!greeting.startsWith('220')) {
       return { status: 'FAILED', providerMessageId: null, errorCode: 'SMTP_GREETING_ERROR', errorMessage: redactEmailText(greeting) };
     }
-    const ehlo = await sendCmd(`EHLO cabms.workers.local`);
+    let ehlo = await sendCmd('EHLO cabms.workers.local');
     if (!ehlo.startsWith('250')) {
       return { status: 'FAILED', providerMessageId: null, errorCode: 'SMTP_EHLO_ERROR', errorMessage: redactEmailText(ehlo) };
     }
+
+    if (!useImplicitTls) {
+      if (!/STARTTLS/i.test(ehlo)) {
+        return {
+          status: 'FAILED',
+          providerMessageId: null,
+          errorCode: 'SMTP_TLS_REQUIRED',
+          errorMessage: 'SMTP server does not advertise STARTTLS; refusing plaintext authentication.',
+        };
+      }
+      const startTlsRes = await sendCmd('STARTTLS');
+      if (!startTlsRes.startsWith('220') || typeof activeSocket.startTls !== 'function') {
+        return {
+          status: 'FAILED',
+          providerMessageId: null,
+          errorCode: 'SMTP_TLS_REQUIRED',
+          errorMessage: 'SMTP STARTTLS upgrade failed; refusing plaintext authentication.',
+        };
+      }
+      writer.releaseLock();
+      reader.releaseLock();
+      activeSocket = activeSocket.startTls();
+      writer = activeSocket.writable.getWriter();
+      reader = activeSocket.readable.getReader();
+      ehlo = await sendCmd('EHLO cabms.workers.local');
+      if (!ehlo.startsWith('250')) {
+        return { status: 'FAILED', providerMessageId: null, errorCode: 'SMTP_EHLO_ERROR', errorMessage: redactEmailText(ehlo) };
+      }
+    }
+
     const authInit = await sendCmd('AUTH LOGIN');
     if (!authInit.startsWith('334')) {
       return { status: 'FAILED', providerMessageId: null, errorCode: 'SMTP_AUTH_ERROR', errorMessage: redactEmailText(authInit) };
@@ -498,7 +739,7 @@ async function dispatchViaSmtpTcp(
   } finally {
     try { writer.releaseLock(); } catch { /* ignore */ }
     try { reader.releaseLock(); } catch { /* ignore */ }
-    try { await socket.close(); } catch { /* ignore */ }
+    try { await activeSocket.close(); } catch { /* ignore */ }
   }
 }
 
@@ -584,7 +825,8 @@ export async function sendEmail(
     throw new Error('Email body is required');
   }
 
-  const transport = getTransportStatus(env);
+  const resolvedTransport = await resolveWorkspaceTransport(db, input.workspaceId, env);
+  const transport = resolvedTransport.status;
   const sender = await resolveSenderIdentity(db, input.workspaceId, {
     fromEmail: input.fromEmailOverride,
     fromName: input.fromNameOverride,
@@ -638,14 +880,18 @@ export async function sendEmail(
       bodyHtml: input.bodyHtml ?? null,
       requestId: input.requestId,
     });
-  } else if (transport.mode === 'SMTP_TCP' && env) {
-    outcome = await dispatchViaSmtpTcp(env, {
-      fromName: sender.sender_name,
-      fromEmail: sender.sender_email,
-      toEmail,
-      subject: input.subject.trim(),
-      bodyText: input.bodyText,
-    });
+  } else if (transport.mode === 'SMTP_TCP' && (resolvedTransport.smtpConfig || env)) {
+    outcome = await dispatchViaSmtpTcp(
+      env ?? {},
+      {
+        fromName: sender.sender_name,
+        fromEmail: sender.sender_email,
+        toEmail,
+        subject: input.subject.trim(),
+        bodyText: input.bodyText,
+      },
+      resolvedTransport.smtpConfig
+    );
   } else {
     outcome = dispatchViaSandboxSynthetic(input.simulateOutcome);
   }
@@ -727,7 +973,7 @@ export async function sendTestEmail(
   env: EmailEnv | undefined,
   input: SendTestEmailInput
 ): Promise<EmailDeliveryResult> {
-  const transport = getTransportStatus(env);
+  const transport = await getWorkspaceTransportStatus(db, input.workspaceId, env);
   const sender = await resolveSenderIdentity(db, input.workspaceId);
   const subject = input.subject?.trim() || `[${sender.sender_name}] CABMS Email Transport Verification (${transport.mode})`;
   const bodyText = [
@@ -778,7 +1024,8 @@ export async function retryEmailDelivery(
     };
   }
 
-  const transport = getTransportStatus(env);
+  const resolvedTransport = await resolveWorkspaceTransport(db, workspaceId, env);
+  const transport = resolvedTransport.status;
   const now = new Date().toISOString();
 
   await writeAuditEvent(db, {
@@ -805,14 +1052,18 @@ export async function retryEmailDelivery(
       bodyHtml: existing.body_html,
       requestId,
     });
-  } else if (transport.mode === 'SMTP_TCP' && env) {
-    outcome = await dispatchViaSmtpTcp(env, {
-      fromName: existing.sender_name,
-      fromEmail: existing.sender_email,
-      toEmail: existing.recipient_email,
-      subject: existing.subject,
-      bodyText: existing.body_text,
-    });
+  } else if (transport.mode === 'SMTP_TCP' && (resolvedTransport.smtpConfig || env)) {
+    outcome = await dispatchViaSmtpTcp(
+      env ?? {},
+      {
+        fromName: existing.sender_name,
+        fromEmail: existing.sender_email,
+        toEmail: existing.recipient_email,
+        subject: existing.subject,
+        bodyText: existing.body_text,
+      },
+      resolvedTransport.smtpConfig
+    );
   } else {
     outcome = dispatchViaSandboxSynthetic('SENT');
   }
@@ -946,7 +1197,7 @@ export async function dispatchReviewRequest(
   env: EmailEnv | undefined,
   input: DispatchReviewRequestInput
 ): Promise<DispatchReviewResult> {
-  const transport = getTransportStatus(env);
+  const transport = await getWorkspaceTransportStatus(db, input.workspaceId, env);
   const existing = await db
     .prepare(`SELECT * FROM review_requests WHERE workspace_id = ? AND job_id = ?`)
     .bind(input.workspaceId, input.jobId)
@@ -1216,7 +1467,7 @@ export async function reconcileReviewRequestStatus(
       .run();
   }
 
-  const transport = getTransportStatus(env);
+  const transport = await getWorkspaceTransportStatus(db, workspaceId, env);
   await writeAuditEvent(db, {
     workspaceId,
     deliveryId: existing.delivery_id,
@@ -1257,7 +1508,9 @@ export async function listReviewRequests(
 
 export const emailService = {
   getTransportStatus,
+  getWorkspaceTransportStatus,
   resolveSenderIdentity,
+  dispatchViaSmtpTcp,
   sendEmail,
   sendTestEmail,
   retryEmailDelivery,

@@ -868,6 +868,12 @@ export async function handleQuotations(
       const rawToken = `qtok_${crypto.randomUUID().replace(/-/g, '')}`;
       const tokenHash = await sha256Hex(rawToken);
 
+      const recipientEmailRaw = body.recipient_email;
+      const recipientEmail = typeof recipientEmailRaw === 'string' ? recipientEmailRaw.trim() : '';
+      if (recipientEmailRaw !== undefined && (!recipientEmail || !EMAIL_REGEX.test(recipientEmail))) {
+        return validationErrorResponse('Invalid recipient_email', [{ pointer: '/recipient_email', code: 'INVALID', message: 'Invalid email address' }], requestId);
+      }
+
       if (!(await authorizeQuoteRole(env.DB, workspaceId, auth))) {
         return accessDeniedResponse('Permission changed', requestId);
       }
@@ -926,16 +932,19 @@ export async function handleQuotations(
       ]);
 
       let emailDispatch: QuoteEmailDispatchResult | null = null;
-      const recipientEmail = typeof body.recipient_email === 'string' ? body.recipient_email.trim() : '';
       if (recipientEmail) {
-        if (!EMAIL_REGEX.test(recipientEmail)) {
-          return validationErrorResponse('Invalid recipient_email', [{ pointer: '/recipient_email', code: 'INVALID', message: 'Invalid email address' }], requestId);
-        }
+        const reqOrigin = new URL(request.url).origin;
+        const portalUrl = `${reqOrigin}/?quote_token=${encodeURIComponent(rawToken)}`;
+        const apiUrl = `${reqOrigin}/api/v1/public/quotations/${encodeURIComponent(rawToken)}`;
         emailDispatch = await emailDispatcher({
           workspaceId,
           to: recipientEmail,
           subject: `Quotation ${currentRow.external_myob_ref || quoteId}: ${currentRow.title}`,
-          textBody: `Please review and accept your quotation (${currentRow.title}) before ${expiresAt}.`,
+          textBody: [
+            `Please review and accept or refuse your quotation (${currentRow.title}) before ${expiresAt}.`,
+            `Customer Acceptance Link: ${portalUrl}`,
+            `Public Quotation API: ${apiUrl}`,
+          ].join('\n'),
           category: 'QUOTE_SENT',
           referenceId: quoteId,
           requestId,

@@ -104,9 +104,25 @@ export interface EnquiryEmailPayload {
 }
 
 export interface EnquiryEmailDispatchResult {
-  status: 'SENT' | 'SANDBOX_SIMULATED' | 'FAILED' | 'SKIPPED';
+  status: 'SENT' | 'SANDBOX_SIMULATED' | 'FAILED' | 'SKIPPED' | 'UNCERTAIN';
   messageId?: string;
   error?: string;
+}
+
+export interface PublicEnquiryReceipt {
+  id: string;
+  status: WebsiteEnquiryRow['status'];
+  created_at: string;
+  acknowledgement_status: WebsiteEnquiryRow['acknowledgement_status'];
+}
+
+function toPublicEnquiryReceipt(row: WebsiteEnquiryRow): PublicEnquiryReceipt {
+  return {
+    id: row.id,
+    status: row.status,
+    created_at: row.created_at,
+    acknowledgement_status: row.acknowledgement_status,
+  };
 }
 
 export type EnquiryEmailHook = (
@@ -381,7 +397,7 @@ async function dispatchAcknowledgementEmail(
   enquiry: WebsiteEnquiryRow,
   requestId: string,
   emailHook: EnquiryEmailHook
-): Promise<WebsiteEnquiryRow> {
+): Promise<{ enquiry: WebsiteEnquiryRow; outcome: EnquiryEmailDispatchResult['status'] }> {
   const payload: EnquiryEmailPayload = {
     workspaceId: enquiry.workspace_id,
     to: enquiry.email,
@@ -402,6 +418,31 @@ async function dispatchAcknowledgementEmail(
     };
   }
 
+  let persistedStatus: WebsiteEnquiryRow['acknowledgement_status'];
+  let persistedError: string | null;
+  let eventType: 'ACK_EMAIL_DISPATCHED' | 'ACK_EMAIL_FAILED';
+
+  if (result.status === 'UNCERTAIN') {
+    // 0023 schema CHECK allows PENDING/SENT/SANDBOX_SIMULATED/FAILED/SKIPPED; keep PENDING (never coerce to SENT)
+    persistedStatus = 'PENDING';
+    persistedError = result.error
+      ? (result.error.toUpperCase().includes('UNCERTAIN') ? result.error : `Delivery outcome UNCERTAIN: ${result.error}`)
+      : 'Delivery outcome UNCERTAIN; reconcile in email_deliveries';
+    eventType = 'ACK_EMAIL_FAILED';
+  } else if (result.status === 'FAILED') {
+    persistedStatus = 'FAILED';
+    persistedError = result.error ?? 'Acknowledgement email dispatch failed';
+    eventType = 'ACK_EMAIL_FAILED';
+  } else if (result.status === 'SENT' || result.status === 'SANDBOX_SIMULATED' || result.status === 'SKIPPED') {
+    persistedStatus = result.status;
+    persistedError = result.error ?? null;
+    eventType = 'ACK_EMAIL_DISPATCHED';
+  } else {
+    persistedStatus = 'PENDING';
+    persistedError = 'Delivery outcome UNCERTAIN; reconcile in email_deliveries';
+    eventType = 'ACK_EMAIL_FAILED';
+  }
+
   const now = new Date().toISOString();
   await db
     .prepare(
@@ -413,9 +454,9 @@ async function dispatchAcknowledgementEmail(
        WHERE workspace_id = ? AND id = ?`
     )
     .bind(
-      result.status,
+      persistedStatus,
       result.messageId ?? null,
-      result.error ?? null,
+      persistedError,
       now,
       enquiry.workspace_id,
       enquiry.id
@@ -425,21 +466,26 @@ async function dispatchAcknowledgementEmail(
   await recordAuditEvent(db, {
     workspaceId: enquiry.workspace_id,
     enquiryId: enquiry.id,
-    eventType: result.status === 'FAILED' ? 'ACK_EMAIL_FAILED' : 'ACK_EMAIL_DISPATCHED',
+    eventType,
     actorUserId: enquiry.created_by_user_id,
     requestId,
     details: {
-      acknowledgement_status: result.status,
+      acknowledgement_status: persistedStatus,
+      outcome: result.status,
       message_id: result.messageId ?? null,
+      ...(persistedError ? { error: persistedError } : {}),
     },
   });
 
   return {
-    ...enquiry,
-    acknowledgement_status: result.status,
-    acknowledgement_message_id: result.messageId ?? null,
-    acknowledgement_error: result.error ?? null,
-    updated_at: now,
+    enquiry: {
+      ...enquiry,
+      acknowledgement_status: persistedStatus,
+      acknowledgement_message_id: result.messageId ?? null,
+      acknowledgement_error: persistedError,
+      updated_at: now,
+    },
+    outcome: result.status,
   };
 }
 
@@ -487,6 +533,11 @@ async function createEnquiryInternal(
     data.customerName.toLowerCase(),
   ]);
 
+  const duplicatePayload = (row: WebsiteEnquiryRow) => ({
+    enquiry: options.intakeChannel === 'PUBLIC_FORM' ? toPublicEnquiryReceipt(row) : row,
+    deduplicated: true,
+  });
+
   if (data.idempotencyKey) {
     const existingByKey = await env.DB
       .prepare('SELECT * FROM website_enquiries WHERE workspace_id = ? AND idempotency_key = ?')
@@ -512,7 +563,7 @@ async function createEnquiryInternal(
         requestId,
         details: { reason: 'idempotency_key' },
       });
-      return jsonReply({ enquiry: existingByKey, deduplicated: true }, requestId, 200);
+      return jsonReply(duplicatePayload(existingByKey), requestId, 200);
     }
   }
 
@@ -535,41 +586,72 @@ async function createEnquiryInternal(
       requestId,
       details: { reason: 'recent_fingerprint' },
     });
-    return jsonReply({ enquiry: recentDuplicate, deduplicated: true }, requestId, 200);
+    return jsonReply(duplicatePayload(recentDuplicate), requestId, 200);
   }
 
   const matchedCustomerId = await findMatchingCustomerId(env.DB, workspaceId, data.email, data.phone);
   const id = `ENQ-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
   const now = new Date().toISOString();
 
-  await env.DB
-    .prepare(
-      `INSERT INTO website_enquiries (
-        id, workspace_id, source_website, customer_name, email, phone,
-        site_address, service_requested, notes, status, intake_channel,
-        idempotency_key, dedup_fingerprint, matched_customer_id,
-        acknowledgement_status, created_by_user_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, 'PENDING', ?, ?, ?)`
-    )
-    .bind(
-      id,
-      workspaceId,
-      data.sourceWebsite,
-      data.customerName,
-      data.email,
-      data.phone,
-      data.siteAddress,
-      data.serviceRequested,
-      data.notes,
-      options.intakeChannel,
-      data.idempotencyKey,
-      dedupFingerprint,
-      matchedCustomerId,
-      options.actorUserId,
-      now,
-      now
-    )
-    .run();
+  try {
+    await env.DB
+      .prepare(
+        `INSERT INTO website_enquiries (
+          id, workspace_id, source_website, customer_name, email, phone,
+          site_address, service_requested, notes, status, intake_channel,
+          idempotency_key, dedup_fingerprint, matched_customer_id,
+          acknowledgement_status, created_by_user_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_REVIEW', ?, ?, ?, ?, 'PENDING', ?, ?, ?)`
+      )
+      .bind(
+        id,
+        workspaceId,
+        data.sourceWebsite,
+        data.customerName,
+        data.email,
+        data.phone,
+        data.siteAddress,
+        data.serviceRequested,
+        data.notes,
+        options.intakeChannel,
+        data.idempotencyKey,
+        dedupFingerprint,
+        matchedCustomerId,
+        options.actorUserId,
+        now,
+        now
+      )
+      .run();
+  } catch (err) {
+    if (data.idempotencyKey && err instanceof Error && /UNIQUE constraint failed/i.test(err.message)) {
+      const raced = await env.DB
+        .prepare('SELECT * FROM website_enquiries WHERE workspace_id = ? AND idempotency_key = ?')
+        .bind(workspaceId, data.idempotencyKey)
+        .first<WebsiteEnquiryRow>();
+      if (raced) {
+        if (raced.dedup_fingerprint !== dedupFingerprint) {
+          return createProblemResponse(
+            409,
+            'IDEMPOTENCY_KEY_REUSED',
+            'idempotency-key-reused',
+            'Conflict',
+            'Idempotency key was already used for a different enquiry payload.',
+            requestId
+          );
+        }
+        await recordAuditEvent(env.DB, {
+          workspaceId,
+          enquiryId: raced.id,
+          eventType: 'INTAKE_DUPLICATE_REPLAYED',
+          actorUserId: options.actorUserId,
+          requestId,
+          details: { reason: 'idempotency_key_race' },
+        });
+        return jsonReply(duplicatePayload(raced), requestId, 200);
+      }
+    }
+    throw err;
+  }
 
   await recordAuditEvent(env.DB, {
     workspaceId,
@@ -585,11 +667,19 @@ async function createEnquiryInternal(
     .bind(workspaceId, id)
     .first<WebsiteEnquiryRow>();
 
-  const finalEnquiry = created
+  const ackResult = created
     ? await dispatchAcknowledgementEmail(env.DB, env, created, requestId, options.emailHook)
     : null;
 
-  return jsonReply({ enquiry: finalEnquiry, deduplicated: false }, requestId, 201);
+  return jsonReply(
+    {
+      enquiry: ackResult?.enquiry ?? null,
+      ...(ackResult ? { acknowledgement_outcome: ackResult.outcome } : {}),
+      deduplicated: false,
+    },
+    requestId,
+    201
+  );
 }
 
 /**
@@ -772,6 +862,14 @@ async function handleConvertEnquiry(
   const requestedJobTypeId = typeof body.job_type_id === 'string' && body.job_type_id.trim() ? body.job_type_id.trim() : null;
   const requestedJobTitle = typeof body.job_title === 'string' && body.job_title.trim() ? body.job_title.trim().slice(0, 500) : null;
 
+  if (!requestedJobTypeId) {
+    return validationErrorResponse(
+      'An active published job_type_id is required to convert an enquiry to a job.',
+      [{ pointer: '/job_type_id', code: 'REQUIRED', message: 'Active published job_type_id is required' }],
+      requestId
+    );
+  }
+
   const existing = await db
     .prepare(`SELECT * FROM website_enquiries WHERE workspace_id = ? AND id = ? AND ${ALLOWED_STAFF_SQL}`)
     .bind(workspaceId, enquiryId, ...staffBindings(workspaceId, auth))
@@ -791,6 +889,54 @@ async function handleConvertEnquiry(
     );
   }
 
+  const storageChecks = await Promise.all([
+    tableExists(db, 'customers'),
+    tableExists(db, 'customer_brand_affiliations'),
+    tableExists(db, 'compliance_jobs'),
+    tableExists(db, 'compliance_operations'),
+    tableExists(db, 'job_types'),
+    tableExists(db, 'job_type_compliance_policies'),
+  ]);
+  if (storageChecks.some(ready => !ready)) {
+    return createProblemResponse(
+      503,
+      'OPERATIONAL_STORAGE_NOT_READY',
+      'service-unavailable',
+      'Service Unavailable',
+      'Customer or compliance job storage is not ready for enquiry conversion.',
+      requestId
+    );
+  }
+
+  const jt = await db
+    .prepare(
+      `SELECT t.id, p.id AS policy_id,
+         (SELECT COUNT(*)
+          FROM job_type_required_forms l
+          LEFT JOIN compliance_legacy_mappings m ON m.legacy_rule_id = l.id AND m.workspace_id = t.workspace_id
+          WHERE l.policy_version_id = p.id AND l.required = 1 AND m.legacy_rule_id IS NULL) AS missing_count
+       FROM job_types t
+       JOIN job_type_compliance_policies p ON p.id = t.current_policy_version_id AND p.job_type_id = t.id
+       WHERE t.workspace_id = ? AND t.id = ? AND t.status = 'ACTIVE' AND p.status = 'PUBLISHED'`
+    )
+    .bind(workspaceId, requestedJobTypeId)
+    .first<{ id: string; policy_id: string; missing_count: number }>();
+
+  if (!jt) {
+    return validationErrorResponse(
+      'Selected job_type_id is not an active published job type in this workspace.',
+      [{ pointer: '/job_type_id', code: 'NOT_FOUND', message: 'Active published job_type_id required' }],
+      requestId
+    );
+  }
+  if (jt.missing_count > 0) {
+    return validationErrorResponse(
+      'Selected job type is missing required legacy form mappings and cannot be used to create a job yet.',
+      [{ pointer: '/job_type_id', code: 'LEGACY_MAPPING_REQUIRED', message: 'Job type has unmapped mandatory forms' }],
+      requestId
+    );
+  }
+
   const now = new Date().toISOString();
   const batchStatements: D1PreparedStatement[] = [];
 
@@ -800,143 +946,128 @@ async function handleConvertEnquiry(
     if (!candidateId) {
       return validationErrorResponse('A customer_id is required for existing customer linkage.', [], requestId);
     }
-    if (await tableExists(db, 'customers')) {
-      const cust = await db
-        .prepare('SELECT id FROM customers WHERE workspace_id = ? AND id = ?')
-        .bind(workspaceId, candidateId)
-        .first<{ id: string }>();
-      if (!cust) {
-        return validationErrorResponse('Selected customer does not exist in this workspace.', [], requestId);
-      }
+    const cust = await db
+      .prepare('SELECT id FROM customers WHERE workspace_id = ? AND id = ?')
+      .bind(workspaceId, candidateId)
+      .first<{ id: string }>();
+    if (!cust) {
+      return validationErrorResponse('Selected customer does not exist in this workspace.', [], requestId);
     }
     resolvedCustomerId = candidateId;
   } else {
     resolvedCustomerId = `CUST-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const myobCustomerId = `MYOB-SBX-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-    if (await tableExists(db, 'customers')) {
-      batchStatements.push(
-        db
-          .prepare(
-            `INSERT INTO customers (
-               id, workspace_id, myob_customer_id, name, contact_person,
-               email, phone, billing_address, sync_status, myob_sandbox_mode,
-               version, created_by, created_at, updated_at
-             )
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', 1, 1, ?, ?, ?
-             WHERE EXISTS (
-               SELECT 1 FROM website_enquiries
-               WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW'
-             )`
-          )
-          .bind(
-            resolvedCustomerId,
-            workspaceId,
-            myobCustomerId,
-            existing.customer_name,
-            existing.customer_name,
-            existing.email,
-            existing.phone,
-            existing.site_address ?? '',
-            auth.userId,
-            now,
-            now,
-            workspaceId,
-            enquiryId
-          )
-      );
-    }
-    if (await tableExists(db, 'customer_brand_affiliations')) {
-      batchStatements.push(
-        db
-          .prepare(
-            `INSERT OR IGNORE INTO customer_brand_affiliations (customer_id, workspace_id, brand_id, created_at)
-             SELECT ?, ?, ?, ?
-             WHERE EXISTS (
-               SELECT 1 FROM website_enquiries
-               WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW'
-             )`
-          )
-          .bind(resolvedCustomerId, workspaceId, workspaceId, now, workspaceId, enquiryId)
-      );
-    }
-  }
-
-  let convertedJobId: string | null = null;
-  const jobTitle = requestedJobTitle ?? `${existing.service_requested} — ${existing.customer_name}`.slice(0, 500);
-  const siteAddress = (existing.site_address ?? 'Site address pending').trim() || 'Site address pending';
-
-  if (requestedJobTypeId) {
-    if (!(await tableExists(db, 'compliance_jobs')) || !(await tableExists(db, 'job_types'))) {
-      return createProblemResponse(
-        503,
-        'OPERATIONAL_STORAGE_NOT_READY',
-        'service-unavailable',
-        'Service Unavailable',
-        'Compliance job storage is not ready for enquiry conversion.',
-        requestId
-      );
-    }
-    const jt = await db
-      .prepare(
-        `SELECT t.id, p.id AS policy_id
-         FROM job_types t
-         JOIN job_type_compliance_policies p ON p.id = t.current_policy_version_id AND p.job_type_id = t.id
-         WHERE t.workspace_id = ? AND t.id = ? AND t.status = 'ACTIVE' AND p.status = 'PUBLISHED'`
-      )
-      .bind(workspaceId, requestedJobTypeId)
-      .first<{ id: string; policy_id: string }>();
-
-    if (!jt) {
-      return validationErrorResponse(
-        'Selected job_type_id is not an active published job type in this workspace.',
-        [{ pointer: '/job_type_id', code: 'NOT_FOUND', message: 'Active published job_type_id required' }],
-        requestId
-      );
-    }
-
-    convertedJobId = `JOB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-    const opId = await sha256Hex(['ENQUIRY_CONVERT', workspaceId, enquiryId, auth.userId, convertedJobId]);
-    const opFingerprint = await sha256Hex([enquiryId, jt.id, jt.policy_id, jobTitle, existing.customer_name, siteAddress]);
-    const hasSnapshot = Boolean(
-      await db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='compliance_job_site_snapshot_create'").first()
-    );
-
     batchStatements.push(
       db
         .prepare(
-          `INSERT INTO compliance_operations (id, workspace_id, actor_id, action, target_id, expected_version, fingerprint)
-           SELECT ?, ?, ?, 'CREATE', ?, 0, ?
+          `INSERT INTO customers (
+             id, workspace_id, myob_customer_id, name, contact_person,
+             email, phone, billing_address, sync_status, myob_sandbox_mode,
+             version, created_by, created_at, updated_at
+           )
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', 1, 1, ?, ?, ?
            WHERE EXISTS (
              SELECT 1 FROM website_enquiries
-             WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW'
-           )`
-        )
-        .bind(opId, workspaceId, auth.userId, convertedJobId, opFingerprint, workspaceId, enquiryId),
-      db
-        .prepare(
-          `INSERT INTO compliance_jobs (
-             id, workspace_id, job_type_id, policy_id, title, assignee_id, operation_id${hasSnapshot ? ', customer_name, site_address' : ''}
-           )
-           SELECT ?, ?, ?, ?, ?, NULL, ?${hasSnapshot ? ', ?, ?' : ''}
-           WHERE EXISTS (
-             SELECT 1 FROM compliance_operations WHERE id = ? AND workspace_id = ?
+             WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}
            )`
         )
         .bind(
-          convertedJobId,
+          resolvedCustomerId,
           workspaceId,
-          jt.id,
-          jt.policy_id,
-          jobTitle,
-          opId,
-          ...(hasSnapshot ? [existing.customer_name, siteAddress] : []),
-          opId,
-          workspaceId
+          myobCustomerId,
+          existing.customer_name,
+          existing.customer_name,
+          existing.email,
+          existing.phone,
+          existing.site_address ?? '',
+          auth.userId,
+          now,
+          now,
+          workspaceId,
+          enquiryId,
+          ...staffBindings(workspaceId, auth)
+        ),
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO customer_brand_affiliations (customer_id, workspace_id, brand_id, created_at)
+           SELECT ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM website_enquiries
+             WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}
+           )
+           AND EXISTS (
+             SELECT 1 FROM customers WHERE workspace_id = ? AND id = ?
+           )`
+        )
+        .bind(
+          resolvedCustomerId,
+          workspaceId,
+          workspaceId,
+          now,
+          workspaceId,
+          enquiryId,
+          ...staffBindings(workspaceId, auth),
+          workspaceId,
+          resolvedCustomerId
         )
     );
   }
 
+  const jobTitle = requestedJobTitle ?? `${existing.service_requested} — ${existing.customer_name}`.slice(0, 500);
+  const siteAddress = (existing.site_address ?? 'Site address pending').trim() || 'Site address pending';
+  const convertedJobId = `JOB-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const opId = await sha256Hex(['ENQUIRY_CONVERT', workspaceId, enquiryId, auth.userId, convertedJobId]);
+  const opFingerprint = await sha256Hex([enquiryId, jt.id, jt.policy_id, jobTitle, existing.customer_name, siteAddress]);
+  const hasSnapshot = Boolean(
+    await db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='compliance_job_site_snapshot_create'").first()
+  );
+
   batchStatements.push(
+    db
+      .prepare(
+        `INSERT INTO compliance_operations (id, workspace_id, actor_id, action, target_id, expected_version, fingerprint)
+         SELECT ?, ?, ?, 'CREATE', ?, 0, ?
+         WHERE EXISTS (
+           SELECT 1 FROM website_enquiries
+           WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}
+         )
+         AND EXISTS (
+           SELECT 1 FROM customers WHERE workspace_id = ? AND id = ?
+         )`
+      )
+      .bind(
+        opId,
+        workspaceId,
+        auth.userId,
+        convertedJobId,
+        opFingerprint,
+        workspaceId,
+        enquiryId,
+        ...staffBindings(workspaceId, auth),
+        workspaceId,
+        resolvedCustomerId
+      ),
+    db
+      .prepare(
+        `INSERT INTO compliance_jobs (
+           id, workspace_id, job_type_id, policy_id, title, assignee_id, operation_id${hasSnapshot ? ', customer_name, site_address' : ''}
+         )
+         SELECT ?, ?, ?, ?, ?, NULL, ?${hasSnapshot ? ', ?, ?' : ''}
+         WHERE EXISTS (
+           SELECT 1 FROM compliance_operations WHERE id = ? AND workspace_id = ?
+         )`
+      )
+      .bind(
+        convertedJobId,
+        workspaceId,
+        jt.id,
+        jt.policy_id,
+        jobTitle,
+        opId,
+        ...(hasSnapshot ? [existing.customer_name, siteAddress] : []),
+        opId,
+        workspaceId
+      ),
     db
       .prepare(
         `UPDATE website_enquiries
@@ -947,22 +1078,45 @@ async function handleConvertEnquiry(
              reviewed_by_user_id = ?,
              reviewed_at = ?,
              updated_at = ?
-         WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}`
+         WHERE workspace_id = ? AND id = ? AND status = 'PENDING_REVIEW' AND ${ALLOWED_STAFF_SQL}
+           AND EXISTS (SELECT 1 FROM customers WHERE workspace_id = ? AND id = ?)
+           AND EXISTS (SELECT 1 FROM compliance_jobs WHERE workspace_id = ? AND id = ?)`
       )
       .bind(
         resolvedCustomerId,
         convertedJobId,
-        requestedJobTypeId,
+        jt.id,
         auth.userId,
         now,
         now,
         workspaceId,
         enquiryId,
-        ...staffBindings(workspaceId, auth)
+        ...staffBindings(workspaceId, auth),
+        workspaceId,
+        resolvedCustomerId,
+        workspaceId,
+        convertedJobId
       )
   );
 
-  const batchResults = await db.batch(batchStatements);
+  let batchResults;
+  try {
+    batchResults = await db.batch(batchStatements);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('POLICY_UNAVAILABLE') || msg.includes('LEGACY_MAPPING_REQUIRED')) {
+      return validationErrorResponse(
+        'Selected job_type_id is unavailable or missing required form mappings.',
+        [{ pointer: '/job_type_id', code: 'POLICY_UNAVAILABLE', message: msg }],
+        requestId
+      );
+    }
+    if (msg.includes('ACTION_DENIED')) {
+      return accessDeniedResponse('Staff permission is not eligible to convert this enquiry.', requestId);
+    }
+    throw err;
+  }
+
   const updateMeta = batchResults[batchResults.length - 1]?.meta;
   const updated =
     updateMeta && updateMeta.changes > 0
@@ -993,7 +1147,7 @@ async function handleConvertEnquiry(
       customer_mode: customerMode,
       matched_customer_id: resolvedCustomerId,
       converted_job_id: convertedJobId,
-      converted_job_type_id: requestedJobTypeId,
+      converted_job_type_id: jt.id,
     },
   });
 

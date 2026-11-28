@@ -55,8 +55,9 @@ export interface QuoteEmailDispatchRequest {
 
 export interface QuoteEmailDispatchResult {
   deliveryId: string;
-  status: 'SENT' | 'QUEUED' | 'SANDBOX_LOGGED' | 'FAILED';
+  status: 'SENT' | 'QUEUED' | 'SANDBOX_LOGGED' | 'FAILED' | 'UNCERTAIN';
   transport: string;
+  error?: string;
 }
 
 export type QuoteEmailDispatcher = (req: QuoteEmailDispatchRequest) => Promise<QuoteEmailDispatchResult>;
@@ -348,6 +349,138 @@ async function recordQuotationEvent(
     .run();
 }
 
+function classifyDispatchFailure(err: unknown): { status: 'FAILED' | 'UNCERTAIN'; error: string } {
+  const error = err instanceof Error ? err.message : String(err);
+  const isUncertain = /timeout|timed out|abort|uncertain/i.test(error);
+  return { status: isUncertain ? 'UNCERTAIN' : 'FAILED', error };
+}
+
+async function dispatchQuoteEmail(params: {
+  db: D1Database;
+  emailDispatcher: QuoteEmailDispatcher;
+  workspaceId: string;
+  quoteId: string;
+  externalMyobRef: string | null;
+  title: string;
+  expiresAt: string;
+  recipientEmail: string;
+  rawToken: string;
+  reqOrigin: string;
+  actorUserId: string;
+  actorName: string;
+  requestId: string;
+  nowIso: string;
+}): Promise<QuoteEmailDispatchResult> {
+  const portalUrl = `${params.reqOrigin}/?quote_token=${encodeURIComponent(params.rawToken)}`;
+  const apiUrl = `${params.reqOrigin}/api/v1/public/quotations/${encodeURIComponent(params.rawToken)}`;
+
+  let dispatch: QuoteEmailDispatchResult;
+  try {
+    dispatch = await params.emailDispatcher({
+      workspaceId: params.workspaceId,
+      to: params.recipientEmail,
+      subject: `Quotation ${params.externalMyobRef || params.quoteId}: ${params.title}`,
+      textBody: [
+        `Please review and accept or refuse your quotation (${params.title}) before ${params.expiresAt}.`,
+        `Customer Acceptance Link: ${portalUrl}`,
+        `Public Quotation API: ${apiUrl}`,
+      ].join('\n'),
+      category: 'QUOTE_SENT',
+      referenceId: params.quoteId,
+      requestId: params.requestId,
+    });
+  } catch (err) {
+    const classified = classifyDispatchFailure(err);
+    dispatch = {
+      deliveryId: '',
+      status: classified.status,
+      transport: 'dispatcher_error',
+      error: classified.error,
+    };
+  }
+
+  const eventType =
+    dispatch.status === 'FAILED'
+      ? 'EMAIL_DISPATCH_FAILED'
+      : dispatch.status === 'UNCERTAIN'
+        ? 'EMAIL_DISPATCH_UNCERTAIN'
+        : 'EMAIL_DISPATCHED';
+
+  await recordQuotationEvent(
+    params.db,
+    params.workspaceId,
+    params.quoteId,
+    eventType,
+    params.actorUserId,
+    params.actorName,
+    params.requestId,
+    {
+      category: 'QUOTE_SENT',
+      delivery_id: dispatch.deliveryId || null,
+      status: dispatch.status,
+      transport: dispatch.transport,
+      recipient_email: params.recipientEmail,
+      ...(dispatch.error ? { error: dispatch.error } : {}),
+    },
+    params.nowIso
+  );
+
+  return dispatch;
+}
+
+async function inspectQuoteEmailHistory(
+  db: D1Database,
+  workspaceId: string,
+  quoteId: string
+): Promise<{
+  hasSucceededDispatch: boolean;
+  lastFailedOrUncertainRecipient: string | null;
+  hasFailedOrUncertain: boolean;
+}> {
+  const rows = await db
+    .prepare(
+      `SELECT event_type, details_json
+       FROM quotation_events
+       WHERE quote_id = ? AND workspace_id = ?
+         AND event_type IN ('EMAIL_DISPATCHED', 'EMAIL_DISPATCH_FAILED', 'EMAIL_DISPATCH_UNCERTAIN')
+       ORDER BY created_at DESC, rowid DESC`
+    )
+    .bind(quoteId, workspaceId)
+    .all<{ event_type: string; details_json: string | null }>();
+
+  let hasSucceededDispatch = false;
+  let hasFailedOrUncertain = false;
+  let lastFailedOrUncertainRecipient: string | null = null;
+
+  for (const row of rows.results) {
+    let details: Record<string, unknown> | null = null;
+    try {
+      details = row.details_json ? (JSON.parse(row.details_json) as Record<string, unknown>) : null;
+    } catch {
+      details = null;
+    }
+    const status = typeof details?.status === 'string' ? details.status : '';
+    if (
+      row.event_type === 'EMAIL_DISPATCHED' &&
+      (status === 'SENT' || status === 'SANDBOX_LOGGED' || status === 'QUEUED')
+    ) {
+      hasSucceededDispatch = true;
+    } else if (
+      row.event_type === 'EMAIL_DISPATCH_FAILED' ||
+      row.event_type === 'EMAIL_DISPATCH_UNCERTAIN' ||
+      status === 'FAILED' ||
+      status === 'UNCERTAIN'
+    ) {
+      hasFailedOrUncertain = true;
+      if (!lastFailedOrUncertainRecipient && typeof details?.recipient_email === 'string') {
+        lastFailedOrUncertainRecipient = details.recipient_email;
+      }
+    }
+  }
+
+  return { hasSucceededDispatch, hasFailedOrUncertain, lastFailedOrUncertainRecipient };
+}
+
 async function expireQuoteIfNeeded(
   db: D1Database,
   row: Record<string, unknown>,
@@ -359,13 +492,14 @@ async function expireQuoteIfNeeded(
     typeof row.expires_at === 'string' &&
     Date.parse(nowIso) >= Date.parse(row.expires_at)
   ) {
+    const expectedVersion = Number(row.version);
     const res = await db
       .prepare(
         `UPDATE quotations
          SET acceptance_status = 'EXPIRED', version = version + 1, updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT'`
+         WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT' AND version = ?`
       )
-      .bind(nowIso, row.id, row.workspace_id)
+      .bind(nowIso, row.id, row.workspace_id, expectedVersion)
       .run();
     if (res.meta.changes > 0) {
       await db
@@ -387,8 +521,13 @@ async function expireQuoteIfNeeded(
         { expires_at: row.expires_at },
         nowIso
       );
-      return { ...row, acceptance_status: 'EXPIRED', updated_at: nowIso, version: Number(row.version) + 1 };
+      return { ...row, acceptance_status: 'EXPIRED', updated_at: nowIso, version: expectedVersion + 1 };
     }
+    const latest = await db
+      .prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`)
+      .bind(row.id, row.workspace_id)
+      .first<Record<string, unknown>>();
+    if (latest) return latest;
   }
   return row;
 }
@@ -581,7 +720,7 @@ export async function handleQuotations(
           sql += ` AND acceptance_status = ?`;
           params.push(statusFilter);
         }
-        sql += ` ORDER BY created_at DESC`;
+        sql += ` ORDER BY created_at DESC, CASE WHEN acceptance_status = 'SUPERSEDED' THEN 1 ELSE 0 END ASC, rowid DESC`;
         const rows = await env.DB.prepare(sql).bind(...params).all<Record<string, unknown>>();
         const hydrated: QuotationResponse[] = [];
         for (const r of rows.results) {
@@ -805,169 +944,252 @@ export async function handleQuotations(
     const body = (await parseJsonObject(request)) ?? {};
 
     // Action: send (freezes immutable Terms snapshot + Issuer snapshot + schedules follow-ups + generates token)
-    if (action === 'send') {
-      if (currentRow.acceptance_status !== 'DRAFT') {
-        return createProblemResponse(409, 'QUOTE_ALREADY_SENT', 'conflict', 'Conflict', `Quotation in ${currentRow.acceptance_status} state cannot be sent`, requestId);
-      }
-
-      const requestedRevisionId = typeof body.terms_revision_id === 'string' && body.terms_revision_id.trim()
-        ? body.terms_revision_id.trim()
-        : null;
-
-      const termsRow = requestedRevisionId
-        ? await env.DB.prepare(
-            `SELECT dt.id AS template_id, tr.id AS revision_id, tr.version, tr.content
-             FROM template_revisions tr
-             JOIN document_templates dt ON dt.id = tr.template_id
-             WHERE dt.workspace_id = ? AND dt.template_type = 'QUOTE_TERMS' AND tr.id = ? AND tr.status = 'PUBLISHED'`
-          ).bind(workspaceId, requestedRevisionId).first<{ template_id: string; revision_id: string; version: string; content: string }>()
-        : await env.DB.prepare(
-            `SELECT dt.id AS template_id, tr.id AS revision_id, tr.version, tr.content
-             FROM document_templates dt
-             JOIN template_revisions tr ON tr.id = dt.current_revision_id OR (tr.template_id = dt.id AND tr.status = 'PUBLISHED')
-             WHERE dt.workspace_id = ? AND dt.template_type = 'QUOTE_TERMS' AND tr.status = 'PUBLISHED'
-             ORDER BY tr.approved_at DESC, tr.created_at DESC
-             LIMIT 1`
-          ).bind(workspaceId).first<{ template_id: string; revision_id: string; version: string; content: string }>();
-
-      if (!termsRow) {
-        return validationErrorResponse(
-          'A published QUOTE_TERMS template revision is required before sending a quotation',
-          [{ pointer: '/terms_revision_id', code: 'TERMS_REVISION_REQUIRED', message: 'No published QUOTE_TERMS revision found for workspace' }],
-          requestId
-        );
-      }
-
-      const issuerRow = await env.DB.prepare(
-        `SELECT li.legal_issuer_name, li.abn, li.electrical_licence, li.qbcc_licence, ws.holiday_region, ws.trading_name
-         FROM workspaces w
-         LEFT JOIN legal_issuers li ON li.workspace_id = w.id
-         LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
-         WHERE w.id = ?`
-      ).bind(workspaceId).first<{
-        legal_issuer_name: string | null;
-        abn: string | null;
-        electrical_licence: string | null;
-        qbcc_licence: string | null;
-        holiday_region: string | null;
-        trading_name: string | null;
-      }>();
-
-      const issuerParts = [
-        issuerRow?.legal_issuer_name || issuerRow?.trading_name || workspaceId,
-        issuerRow?.abn ? `ABN ${issuerRow.abn}` : null,
-        issuerRow?.electrical_licence ? `Elec Lic ${issuerRow.electrical_licence}` : null,
-        issuerRow?.qbcc_licence ? `QBCC ${issuerRow.qbcc_licence}` : null,
-      ].filter(Boolean);
-      const frozenIssuerSnapshot = issuerParts.join(' • ');
-      const holidayRegion = issuerRow?.holiday_region === 'gold_coast' ? 'gold_coast' : 'brisbane';
-
-      const expiresAt = addDaysInstant(nowIso, 14);
-      const { stage1Date, stage2Date } = calculateFollowUpDates(nowIso, expiresAt, holidayRegion);
-
-      const rawToken = `qtok_${crypto.randomUUID().replace(/-/g, '')}`;
-      const tokenHash = await sha256Hex(rawToken);
-
-      const recipientEmailRaw = body.recipient_email;
-      const recipientEmail = typeof recipientEmailRaw === 'string' ? recipientEmailRaw.trim() : '';
-      if (recipientEmailRaw !== undefined && (!recipientEmail || !EMAIL_REGEX.test(recipientEmail))) {
+    // and Action: resend (recoverable email re-dispatch for an already-SENT quote)
+    if (action === 'send' || action === 'resend') {
+      const hasRecipientField = Object.prototype.hasOwnProperty.call(body, 'recipient_email');
+      const recipientEmailInput = typeof body.recipient_email === 'string' ? body.recipient_email.trim() : '';
+      if (hasRecipientField && (!recipientEmailInput || !EMAIL_REGEX.test(recipientEmailInput))) {
         return validationErrorResponse('Invalid recipient_email', [{ pointer: '/recipient_email', code: 'INVALID', message: 'Invalid email address' }], requestId);
       }
 
-      if (!(await authorizeQuoteRole(env.DB, workspaceId, auth))) {
-        return accessDeniedResponse('Permission changed', requestId);
+      if (currentRow.acceptance_status === 'DRAFT') {
+        if (action === 'resend') {
+          return quoteTerminalConflict('DRAFT', requestId);
+        }
+
+        const requestedRevisionId = typeof body.terms_revision_id === 'string' && body.terms_revision_id.trim()
+          ? body.terms_revision_id.trim()
+          : null;
+
+        const termsRow = requestedRevisionId
+          ? await env.DB.prepare(
+              `SELECT dt.id AS template_id, tr.id AS revision_id, tr.version, tr.content
+               FROM template_revisions tr
+               JOIN document_templates dt ON dt.id = tr.template_id
+               WHERE dt.workspace_id = ? AND dt.template_type = 'QUOTE_TERMS' AND tr.id = ? AND tr.status = 'PUBLISHED'`
+            ).bind(workspaceId, requestedRevisionId).first<{ template_id: string; revision_id: string; version: string; content: string }>()
+          : await env.DB.prepare(
+              `SELECT dt.id AS template_id, tr.id AS revision_id, tr.version, tr.content
+               FROM document_templates dt
+               JOIN template_revisions tr ON tr.id = dt.current_revision_id OR (tr.template_id = dt.id AND tr.status = 'PUBLISHED')
+               WHERE dt.workspace_id = ? AND dt.template_type = 'QUOTE_TERMS' AND tr.status = 'PUBLISHED'
+               ORDER BY tr.approved_at DESC, tr.created_at DESC
+               LIMIT 1`
+            ).bind(workspaceId).first<{ template_id: string; revision_id: string; version: string; content: string }>();
+
+        if (!termsRow) {
+          return validationErrorResponse(
+            'A published QUOTE_TERMS template revision is required before sending a quotation',
+            [{ pointer: '/terms_revision_id', code: 'TERMS_REVISION_REQUIRED', message: 'No published QUOTE_TERMS revision found for workspace' }],
+            requestId
+          );
+        }
+
+        const issuerRow = await env.DB.prepare(
+          `SELECT li.legal_issuer_name, li.abn, li.electrical_licence, li.qbcc_licence, ws.holiday_region, ws.trading_name
+           FROM workspaces w
+           LEFT JOIN legal_issuers li ON li.workspace_id = w.id
+           LEFT JOIN workspace_settings ws ON ws.workspace_id = w.id
+           WHERE w.id = ?`
+        ).bind(workspaceId).first<{
+          legal_issuer_name: string | null;
+          abn: string | null;
+          electrical_licence: string | null;
+          qbcc_licence: string | null;
+          holiday_region: string | null;
+          trading_name: string | null;
+        }>();
+
+        const issuerParts = [
+          issuerRow?.legal_issuer_name || issuerRow?.trading_name || workspaceId,
+          issuerRow?.abn ? `ABN ${issuerRow.abn}` : null,
+          issuerRow?.electrical_licence ? `Elec Lic ${issuerRow.electrical_licence}` : null,
+          issuerRow?.qbcc_licence ? `QBCC ${issuerRow.qbcc_licence}` : null,
+        ].filter(Boolean);
+        const frozenIssuerSnapshot = issuerParts.join(' • ');
+        const holidayRegion = issuerRow?.holiday_region === 'gold_coast' ? 'gold_coast' : 'brisbane';
+
+        const expiresAt = addDaysInstant(nowIso, 14);
+        const { stage1Date, stage2Date } = calculateFollowUpDates(nowIso, expiresAt, holidayRegion);
+
+        const rawToken = `qtok_${crypto.randomUUID().replace(/-/g, '')}`;
+        const tokenHash = await sha256Hex(rawToken);
+
+        if (!(await authorizeQuoteRole(env.DB, workspaceId, auth))) {
+          return accessDeniedResponse('Permission changed', requestId);
+        }
+
+        const expectedVersion = Number(currentRow.version);
+        const nextVersion = expectedVersion + 1;
+
+        const batchRes = await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE quotations
+             SET acceptance_status = 'SENT',
+                 terms_template_id = ?,
+                 terms_revision_id = ?,
+                 terms_version = ?,
+                 terms_content_snapshot = ?,
+                 frozen_issuer_snapshot = ?,
+                 acceptance_token_hash = ?,
+                 issued_at = ?,
+                 expires_at = ?,
+                 version = version + 1,
+                 updated_by = ?,
+                 updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND acceptance_status = 'DRAFT' AND version = ?`
+          ).bind(
+            termsRow.template_id,
+            termsRow.revision_id,
+            termsRow.version,
+            termsRow.content,
+            frozenIssuerSnapshot,
+            tokenHash,
+            nowIso,
+            expiresAt,
+            auth.userId,
+            nowIso,
+            quoteId,
+            workspaceId,
+            expectedVersion
+          ),
+          env.DB.prepare(
+            `INSERT INTO quotation_follow_ups (id, workspace_id, quote_id, stage, scheduled_date, status, channel, created_at, updated_at)
+             SELECT ?, ?, ?, 'STAGE_1_COURTESY', ?, 'SCHEDULED', 'EMAIL_SIMULATED', ?, ?
+             WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SENT')
+               AND NOT EXISTS (SELECT 1 FROM quotation_follow_ups WHERE quote_id = ? AND stage = 'STAGE_1_COURTESY')`
+          ).bind(`qfu_${quoteId}_1`, workspaceId, quoteId, stage1Date, nowIso, nowIso, quoteId, workspaceId, nextVersion, quoteId),
+          env.DB.prepare(
+            `INSERT INTO quotation_follow_ups (id, workspace_id, quote_id, stage, scheduled_date, status, channel, created_at, updated_at)
+             SELECT ?, ?, ?, 'STAGE_2_EXPIRY', ?, 'SCHEDULED', 'EMAIL_SIMULATED', ?, ?
+             WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SENT')
+               AND NOT EXISTS (SELECT 1 FROM quotation_follow_ups WHERE quote_id = ? AND stage = 'STAGE_2_EXPIRY')`
+          ).bind(`qfu_${quoteId}_2`, workspaceId, quoteId, stage2Date, nowIso, nowIso, quoteId, workspaceId, nextVersion, quoteId),
+          env.DB.prepare(
+            `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
+             SELECT ?, ?, ?, 'SENT', ?, ?, ?, ?, ?
+             WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SENT')
+               AND NOT EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND event_type = 'SENT')`
+          ).bind(
+            `qevt_${crypto.randomUUID()}`,
+            workspaceId,
+            quoteId,
+            auth.userId,
+            actorName,
+            requestId,
+            JSON.stringify({ terms_version: termsRow.version, terms_revision_id: termsRow.revision_id, expires_at: expiresAt }),
+            nowIso,
+            quoteId,
+            workspaceId,
+            nextVersion,
+            quoteId
+          ),
+        ]);
+
+        if (batchRes[0].meta.changes !== 1) {
+          return createProblemResponse(409, 'QUOTE_ALREADY_SENT', 'conflict', 'Conflict', 'Quotation is no longer in DRAFT state', requestId);
+        }
+
+        let emailDispatch: QuoteEmailDispatchResult | null = null;
+        if (recipientEmailInput) {
+          emailDispatch = await dispatchQuoteEmail({
+            db: env.DB,
+            emailDispatcher,
+            workspaceId,
+            quoteId,
+            externalMyobRef: (currentRow.external_myob_ref as string | null) ?? null,
+            title: String(currentRow.title),
+            expiresAt,
+            recipientEmail: recipientEmailInput,
+            rawToken,
+            reqOrigin: new URL(request.url).origin,
+            actorUserId: auth.userId,
+            actorName,
+            requestId,
+            nowIso,
+          });
+        }
+
+        const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
+        return replyJson({
+          quotation: await hydrateQuotation(env.DB, refreshed!),
+          acceptance_token: rawToken,
+          email_dispatch: emailDispatch,
+        }, requestId);
       }
 
-      await env.DB.batch([
-        env.DB.prepare(
-          `UPDATE quotations
-           SET acceptance_status = 'SENT',
-               terms_template_id = ?,
-               terms_revision_id = ?,
-               terms_version = ?,
-               terms_content_snapshot = ?,
-               frozen_issuer_snapshot = ?,
-               acceptance_token_hash = ?,
-               issued_at = ?,
-               expires_at = ?,
-               version = version + 1,
-               updated_by = ?,
-               updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND acceptance_status = 'DRAFT'`
-        ).bind(
-          termsRow.template_id,
-          termsRow.revision_id,
-          termsRow.version,
-          termsRow.content,
-          frozenIssuerSnapshot,
-          tokenHash,
-          nowIso,
-          expiresAt,
-          auth.userId,
-          nowIso,
-          quoteId,
-          workspaceId
-        ),
-        env.DB.prepare(
-          `INSERT INTO quotation_follow_ups (id, workspace_id, quote_id, stage, scheduled_date, status, channel, created_at, updated_at)
-           VALUES (?, ?, ?, 'STAGE_1_COURTESY', ?, 'SCHEDULED', 'EMAIL_SIMULATED', ?, ?)`
-        ).bind(`qfu_${quoteId}_1`, workspaceId, quoteId, stage1Date, nowIso, nowIso),
-        env.DB.prepare(
-          `INSERT INTO quotation_follow_ups (id, workspace_id, quote_id, stage, scheduled_date, status, channel, created_at, updated_at)
-           VALUES (?, ?, ?, 'STAGE_2_EXPIRY', ?, 'SCHEDULED', 'EMAIL_SIMULATED', ?, ?)`
-        ).bind(`qfu_${quoteId}_2`, workspaceId, quoteId, stage2Date, nowIso, nowIso),
-        env.DB.prepare(
-          `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-           VALUES (?, ?, ?, 'SENT', ?, ?, ?, ?, ?)`
-        ).bind(
-          `qevt_${crypto.randomUUID()}`,
+      if (currentRow.acceptance_status === 'SENT') {
+        const emailHistory = await inspectQuoteEmailHistory(env.DB, workspaceId, quoteId);
+
+        if (action === 'send') {
+          if (emailHistory.hasSucceededDispatch) {
+            return createProblemResponse(409, 'QUOTE_ALREADY_SENT', 'conflict', 'Conflict', 'Quotation in SENT state has already been dispatched', requestId);
+          }
+          if (!emailHistory.hasFailedOrUncertain && !recipientEmailInput) {
+            return createProblemResponse(409, 'QUOTE_ALREADY_SENT', 'conflict', 'Conflict', 'Quotation in SENT state cannot be sent again', requestId);
+          }
+        }
+
+        const targetRecipient = recipientEmailInput || emailHistory.lastFailedOrUncertainRecipient || '';
+        if (!targetRecipient || !EMAIL_REGEX.test(targetRecipient)) {
+          return validationErrorResponse(
+            'A valid recipient_email is required to resend this quotation',
+            [{ pointer: '/recipient_email', code: 'INVALID', message: 'Valid recipient_email is required' }],
+            requestId
+          );
+        }
+
+        if (!(await authorizeQuoteRole(env.DB, workspaceId, auth))) {
+          return accessDeniedResponse('Permission changed', requestId);
+        }
+
+        const rawToken = `qtok_${crypto.randomUUID().replace(/-/g, '')}`;
+        const tokenHash = await sha256Hex(rawToken);
+        const expectedVersion = Number(currentRow.version);
+
+        const rotateRes = await env.DB
+          .prepare(
+            `UPDATE quotations
+             SET acceptance_token_hash = ?, version = version + 1, updated_by = ?, updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT' AND version = ?`
+          )
+          .bind(tokenHash, auth.userId, nowIso, quoteId, workspaceId, expectedVersion)
+          .run();
+
+        if (rotateRes.meta.changes !== 1) {
+          const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+          return quoteTerminalConflict(String(latest?.acceptance_status ?? 'CONFLICT'), requestId);
+        }
+
+        const emailDispatch = await dispatchQuoteEmail({
+          db: env.DB,
+          emailDispatcher,
           workspaceId,
           quoteId,
-          auth.userId,
+          externalMyobRef: (currentRow.external_myob_ref as string | null) ?? null,
+          title: String(currentRow.title),
+          expiresAt: String(currentRow.expires_at ?? ''),
+          recipientEmail: targetRecipient,
+          rawToken,
+          reqOrigin: new URL(request.url).origin,
+          actorUserId: auth.userId,
           actorName,
           requestId,
-          JSON.stringify({ terms_version: termsRow.version, terms_revision_id: termsRow.revision_id, expires_at: expiresAt }),
-          nowIso
-        ),
-      ]);
-
-      let emailDispatch: QuoteEmailDispatchResult | null = null;
-      if (recipientEmail) {
-        const reqOrigin = new URL(request.url).origin;
-        const portalUrl = `${reqOrigin}/?quote_token=${encodeURIComponent(rawToken)}`;
-        const apiUrl = `${reqOrigin}/api/v1/public/quotations/${encodeURIComponent(rawToken)}`;
-        emailDispatch = await emailDispatcher({
-          workspaceId,
-          to: recipientEmail,
-          subject: `Quotation ${currentRow.external_myob_ref || quoteId}: ${currentRow.title}`,
-          textBody: [
-            `Please review and accept or refuse your quotation (${currentRow.title}) before ${expiresAt}.`,
-            `Customer Acceptance Link: ${portalUrl}`,
-            `Public Quotation API: ${apiUrl}`,
-          ].join('\n'),
-          category: 'QUOTE_SENT',
-          referenceId: quoteId,
-          requestId,
+          nowIso,
         });
-        await recordQuotationEvent(
-          env.DB,
-          workspaceId,
-          quoteId,
-          'EMAIL_DISPATCHED',
-          auth.userId,
-          actorName,
-          requestId,
-          { category: 'QUOTE_SENT', delivery_id: emailDispatch.deliveryId, status: emailDispatch.status, transport: emailDispatch.transport },
-          nowIso
-        );
+
+        const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
+        return replyJson({
+          quotation: await hydrateQuotation(env.DB, refreshed!),
+          acceptance_token: rawToken,
+          email_dispatch: emailDispatch,
+        }, requestId);
       }
 
-      const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
-      return replyJson({
-        quotation: await hydrateQuotation(env.DB, refreshed!),
-        acceptance_token: rawToken,
-        email_dispatch: emailDispatch,
-      }, requestId);
+      if (action === 'send') {
+        return createProblemResponse(409, 'QUOTE_ALREADY_SENT', 'conflict', 'Conflict', `Quotation in ${currentRow.acceptance_status} state cannot be sent`, requestId);
+      }
+      return quoteTerminalConflict(String(currentRow.acceptance_status), requestId);
     }
 
     // Action: accept
@@ -983,14 +1205,16 @@ export async function handleQuotations(
         return accessDeniedResponse('Permission changed', requestId);
       }
 
+      const expectedVersion = Number(currentRow.version);
       const res = await env.DB.prepare(
         `UPDATE quotations
          SET acceptance_status = 'ACCEPTED', accepted_at = ?, accepted_by_name = ?, version = version + 1, updated_by = ?, updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT'`
-      ).bind(nowIso, acceptedByName, auth.userId, nowIso, quoteId, workspaceId).run();
+         WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT' AND version = ?`
+      ).bind(nowIso, acceptedByName, auth.userId, nowIso, quoteId, workspaceId, expectedVersion).run();
 
       if (res.meta.changes === 0) {
-        return quoteTerminalConflict('ACCEPTED', requestId);
+        const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+        return quoteTerminalConflict(String(latest?.acceptance_status ?? 'ACCEPTED'), requestId);
       }
 
       await env.DB.batch([
@@ -1022,21 +1246,31 @@ export async function handleQuotations(
         return accessDeniedResponse('Permission changed', requestId);
       }
 
-      await env.DB.batch([
+      const expectedVersion = Number(currentRow.version);
+      const nextVersion = expectedVersion + 1;
+      const batchRes = await env.DB.batch([
         env.DB.prepare(
           `UPDATE quotations
            SET acceptance_status = 'REFUSED', refused_at = ?, refusal_reason = ?, version = version + 1, updated_by = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT'`
-        ).bind(nowIso, reason, auth.userId, nowIso, quoteId, workspaceId),
+           WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT' AND version = ?`
+        ).bind(nowIso, reason, auth.userId, nowIso, quoteId, workspaceId, expectedVersion),
         env.DB.prepare(
           `UPDATE quotation_follow_ups SET status = 'CANCELLED', updated_at = ?
-           WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'`
-        ).bind(nowIso, quoteId, workspaceId),
+           WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'
+             AND EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'REFUSED')`
+        ).bind(nowIso, quoteId, workspaceId, quoteId, workspaceId, nextVersion),
         env.DB.prepare(
           `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-           VALUES (?, ?, ?, 'REFUSED', ?, ?, ?, ?, ?)`
-        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, auth.userId, actorName, requestId, JSON.stringify({ reason }), nowIso),
+           SELECT ?, ?, ?, 'REFUSED', ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'REFUSED')
+             AND NOT EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND event_type = 'REFUSED')`
+        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, auth.userId, actorName, requestId, JSON.stringify({ reason }), nowIso, quoteId, workspaceId, nextVersion, quoteId, workspaceId),
       ]);
+
+      if (batchRes[0].meta.changes !== 1) {
+        const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+        return quoteTerminalConflict(String(latest?.acceptance_status ?? 'CONFLICT'), requestId);
+      }
 
       const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
       return replyJson({ quotation: await hydrateQuotation(env.DB, refreshed!) }, requestId);
@@ -1055,21 +1289,31 @@ export async function handleQuotations(
         return accessDeniedResponse('Permission changed', requestId);
       }
 
-      await env.DB.batch([
+      const expectedVersion = Number(currentRow.version);
+      const nextVersion = expectedVersion + 1;
+      const batchRes = await env.DB.batch([
         env.DB.prepare(
           `UPDATE quotations
            SET acceptance_status = 'REVOKED', revoked_at = ?, revocation_reason = ?, version = version + 1, updated_by = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND acceptance_status IN ('DRAFT', 'SENT')`
-        ).bind(nowIso, reason, auth.userId, nowIso, quoteId, workspaceId),
+           WHERE id = ? AND workspace_id = ? AND acceptance_status IN ('DRAFT', 'SENT') AND version = ?`
+        ).bind(nowIso, reason, auth.userId, nowIso, quoteId, workspaceId, expectedVersion),
         env.DB.prepare(
           `UPDATE quotation_follow_ups SET status = 'CANCELLED', updated_at = ?
-           WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'`
-        ).bind(nowIso, quoteId, workspaceId),
+           WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'
+             AND EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'REVOKED')`
+        ).bind(nowIso, quoteId, workspaceId, quoteId, workspaceId, nextVersion),
         env.DB.prepare(
           `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-           VALUES (?, ?, ?, 'REVOKED', ?, ?, ?, ?, ?)`
-        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, auth.userId, actorName, requestId, JSON.stringify({ reason }), nowIso),
+           SELECT ?, ?, ?, 'REVOKED', ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'REVOKED')
+             AND NOT EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND event_type = 'REVOKED')`
+        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, auth.userId, actorName, requestId, JSON.stringify({ reason }), nowIso, quoteId, workspaceId, nextVersion, quoteId, workspaceId),
       ]);
+
+      if (batchRes[0].meta.changes !== 1) {
+        const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+        return quoteTerminalConflict(String(latest?.acceptance_status ?? 'CONFLICT'), requestId);
+      }
 
       const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
       return replyJson({ quotation: await hydrateQuotation(env.DB, refreshed!) }, requestId);
@@ -1106,26 +1350,50 @@ export async function handleQuotations(
         return accessDeniedResponse('Permission changed', requestId);
       }
 
+      const expectedVersion = Number(currentRow.version);
+      const nextVersion = expectedVersion + 1;
       const revisedQuoteId = `QUOTE-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
-      await env.DB.batch([
+
+      const batchRes = await env.DB.batch([
         env.DB.prepare(
-          `UPDATE quotations SET acceptance_status = 'SUPERSEDED', version = version + 1, updated_by = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ?`
-        ).bind(auth.userId, nowIso, quoteId, workspaceId),
-        env.DB.prepare(
-          `UPDATE quotation_follow_ups SET status = 'CANCELLED', updated_at = ?
-           WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'`
-        ).bind(nowIso, quoteId, workspaceId),
+          `UPDATE quotations
+           SET acceptance_status = 'SUPERSEDED', version = version + 1, updated_by = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status IN ('SENT', 'EXPIRED', 'REFUSED')`
+        ).bind(auth.userId, nowIso, quoteId, workspaceId, expectedVersion),
         env.DB.prepare(
           `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-           VALUES (?, ?, ?, 'SUPERSEDED', ?, ?, ?, ?, ?)`
-        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, auth.userId, actorName, requestId, JSON.stringify({ superseded_by: revisedQuoteId }), nowIso),
+           SELECT ?, ?, ?, 'SUPERSEDED', ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SUPERSEDED')
+             AND NOT EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND event_type = 'SUPERSEDED')`
+        ).bind(
+          `qevt_${crypto.randomUUID()}`,
+          workspaceId,
+          quoteId,
+          auth.userId,
+          actorName,
+          requestId,
+          JSON.stringify({ superseded_by: revisedQuoteId }),
+          nowIso,
+          quoteId,
+          workspaceId,
+          nextVersion,
+          quoteId,
+          workspaceId
+        ),
+        env.DB.prepare(
+          `UPDATE quotation_follow_ups SET status = 'CANCELLED', updated_at = ?
+           WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'
+             AND EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND request_id = ? AND event_type = 'SUPERSEDED')`
+        ).bind(nowIso, quoteId, workspaceId, quoteId, workspaceId, requestId),
         env.DB.prepare(
           `INSERT INTO quotations (
             id, workspace_id, job_id, customer_id, brand_id, external_myob_ref, title,
             subtotal_cents, gst_cents, total_cents, acceptance_status, supersedes_quote_id,
             version, created_by, updated_by, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 1, ?, ?, ?, ?)`
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, 1, ?, ?, ?, ?
+          WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SUPERSEDED')
+            AND EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND request_id = ? AND event_type = 'SUPERSEDED')`
         ).bind(
           revisedQuoteId,
           workspaceId,
@@ -1141,20 +1409,66 @@ export async function handleQuotations(
           auth.userId,
           auth.userId,
           nowIso,
-          nowIso
+          nowIso,
+          quoteId,
+          workspaceId,
+          nextVersion,
+          quoteId,
+          workspaceId,
+          requestId
         ),
         ...calc.items.map((item, idx) =>
           env.DB.prepare(
             `INSERT INTO quotation_line_items (
               id, workspace_id, quote_id, line_order, description, quantity, unit_price_cents, total_cents
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-          ).bind(`${revisedQuoteId}:${item.id}:${idx}`, workspaceId, revisedQuoteId, idx, item.description, item.quantity, item.unitPriceCents, item.totalCents)
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SUPERSEDED')
+              AND EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND request_id = ? AND event_type = 'SUPERSEDED')`
+          ).bind(
+            `${revisedQuoteId}:${item.id}:${idx}`,
+            workspaceId,
+            revisedQuoteId,
+            idx,
+            item.description,
+            item.quantity,
+            item.unitPriceCents,
+            item.totalCents,
+            quoteId,
+            workspaceId,
+            nextVersion,
+            quoteId,
+            workspaceId,
+            requestId
+          )
         ),
         env.DB.prepare(
           `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-           VALUES (?, ?, ?, 'CREATED', ?, ?, ?, ?, ?)`
-        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, revisedQuoteId, auth.userId, actorName, requestId, JSON.stringify({ supersedes_quote_id: quoteId }), nowIso),
+           SELECT ?, ?, ?, 'CREATED', ?, ?, ?, ?, ?
+           WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'SUPERSEDED')
+             AND EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND request_id = ? AND event_type = 'SUPERSEDED')`
+        ).bind(
+          `qevt_${crypto.randomUUID()}`,
+          workspaceId,
+          revisedQuoteId,
+          auth.userId,
+          actorName,
+          requestId,
+          JSON.stringify({ supersedes_quote_id: quoteId }),
+          nowIso,
+          quoteId,
+          workspaceId,
+          nextVersion,
+          quoteId,
+          workspaceId,
+          requestId
+        ),
       ]);
+
+      if (batchRes[0].meta.changes !== 1) {
+        const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+        return quoteTerminalConflict(String(latest?.acceptance_status ?? 'CONFLICT'), requestId);
+      }
 
       const revised = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(revisedQuoteId, workspaceId).first<Record<string, unknown>>();
       return replyJson({ quotation: await hydrateQuotation(env.DB, revised!) }, requestId, 201);
@@ -1171,6 +1485,10 @@ export async function handleQuotations(
         return validationErrorResponse('A valid recipient_email is required to dispatch a follow-up', [{ pointer: '/recipient_email', code: 'INVALID', message: 'Valid email required' }], requestId);
       }
 
+      if (!(await authorizeQuoteRole(env.DB, workspaceId, auth))) {
+        return accessDeniedResponse('Permission changed', requestId);
+      }
+
       const fu = await env.DB
         .prepare(`SELECT * FROM quotation_follow_ups WHERE quote_id = ? AND workspace_id = ? AND stage = ?`)
         .bind(quoteId, workspaceId, stage)
@@ -1181,30 +1499,140 @@ export async function handleQuotations(
         return createProblemResponse(409, 'FOLLOW_UP_NOT_SCHEDULED', 'conflict', 'Conflict', `Follow-up ${stage} is already ${fu.status}`, requestId);
       }
 
-      const dispatch = await emailDispatcher({
-        workspaceId,
-        to: recipientEmail,
-        subject:
-          stage === 'STAGE_1_COURTESY'
-            ? `Courtesy Follow-Up: Quotation ${currentRow.external_myob_ref || quoteId}`
-            : `Expiry Warning: Quotation ${currentRow.external_myob_ref || quoteId} expires ${currentRow.expires_at}`,
-        textBody: `Reminder regarding quotation "${currentRow.title}" (valid until ${currentRow.expires_at}).`,
-        category: stage === 'STAGE_1_COURTESY' ? 'QUOTE_FOLLOW_UP_STAGE_1' : 'QUOTE_FOLLOW_UP_STAGE_2',
-        referenceId: fu.id,
-        requestId,
-      });
-
-      await env.DB.batch([
-        env.DB.prepare(
+      const claimToken = `CLAIM:${requestId}`;
+      const claimRes = await env.DB
+        .prepare(
           `UPDATE quotation_follow_ups
-           SET status = 'SENT', sent_at = ?, email_delivery_id = ?, updated_at = ?
-           WHERE id = ? AND workspace_id = ? AND status = 'SCHEDULED'`
-        ).bind(nowIso, dispatch.deliveryId, nowIso, fu.id, workspaceId),
-        env.DB.prepare(
-          `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-           VALUES (?, ?, ?, 'FOLLOW_UP_SENT', ?, ?, ?, ?, ?)`
-        ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, auth.userId, actorName, requestId, JSON.stringify({ stage, delivery_id: dispatch.deliveryId, transport: dispatch.transport }), nowIso),
-      ]);
+           SET email_delivery_id = ?, updated_at = ?
+           WHERE id = ? AND workspace_id = ? AND status = 'SCHEDULED' AND email_delivery_id IS NULL`
+        )
+        .bind(claimToken, nowIso, fu.id, workspaceId)
+        .run();
+
+      if (claimRes.meta.changes !== 1) {
+        return createProblemResponse(
+          409,
+          'FOLLOW_UP_NOT_SCHEDULED',
+          'conflict',
+          'Conflict',
+          `Follow-up ${stage} is already claimed, awaiting reconciliation, or no longer SCHEDULED`,
+          requestId
+        );
+      }
+
+      let dispatch: QuoteEmailDispatchResult;
+      try {
+        dispatch = await emailDispatcher({
+          workspaceId,
+          to: recipientEmail,
+          subject:
+            stage === 'STAGE_1_COURTESY'
+              ? `Courtesy Follow-Up: Quotation ${currentRow.external_myob_ref || quoteId}`
+              : `Expiry Warning: Quotation ${currentRow.external_myob_ref || quoteId} expires ${currentRow.expires_at}`,
+          textBody: `Reminder regarding quotation "${currentRow.title}" (valid until ${currentRow.expires_at}).`,
+          category: stage === 'STAGE_1_COURTESY' ? 'QUOTE_FOLLOW_UP_STAGE_1' : 'QUOTE_FOLLOW_UP_STAGE_2',
+          referenceId: fu.id,
+          requestId,
+        });
+      } catch (err) {
+        const classified = classifyDispatchFailure(err);
+        dispatch = {
+          deliveryId: '',
+          status: classified.status,
+          transport: 'dispatcher_error',
+          error: classified.error,
+        };
+      }
+
+      if (dispatch.status === 'SENT' || dispatch.status === 'SANDBOX_LOGGED') {
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE quotation_follow_ups
+             SET status = 'SENT', sent_at = ?, email_delivery_id = ?, updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'SCHEDULED' AND email_delivery_id = ?`
+          ).bind(nowIso, dispatch.deliveryId, nowIso, fu.id, workspaceId, claimToken),
+          env.DB.prepare(
+            `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
+             SELECT ?, ?, ?, 'FOLLOW_UP_SENT', ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM quotation_follow_ups
+               WHERE id = ? AND workspace_id = ? AND status = 'SENT' AND email_delivery_id = ?
+             )`
+          ).bind(
+            `qevt_${crypto.randomUUID()}`,
+            workspaceId,
+            quoteId,
+            auth.userId,
+            actorName,
+            requestId,
+            JSON.stringify({ stage, delivery_id: dispatch.deliveryId, status: dispatch.status, transport: dispatch.transport, recipient_email: recipientEmail }),
+            nowIso,
+            fu.id,
+            workspaceId,
+            dispatch.deliveryId
+          ),
+        ]);
+      } else if (dispatch.status === 'FAILED') {
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE quotation_follow_ups
+             SET status = 'SCHEDULED', sent_at = NULL, email_delivery_id = NULL, updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'SCHEDULED' AND email_delivery_id = ?`
+          ).bind(nowIso, fu.id, workspaceId, claimToken),
+          env.DB.prepare(
+            `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
+             VALUES (?, ?, ?, 'FOLLOW_UP_FAILED', ?, ?, ?, ?, ?)`
+          ).bind(
+            `qevt_${crypto.randomUUID()}`,
+            workspaceId,
+            quoteId,
+            auth.userId,
+            actorName,
+            requestId,
+            JSON.stringify({
+              stage,
+              delivery_id: dispatch.deliveryId || null,
+              status: 'FAILED',
+              transport: dispatch.transport,
+              recipient_email: recipientEmail,
+              ...(dispatch.error ? { error: dispatch.error } : {}),
+            }),
+            nowIso
+          ),
+        ]);
+      } else {
+        // UNCERTAIN or QUEUED: keep status = 'SCHEDULED' and preserve deliveryId/lock so it cannot double-send
+        const nonNullRef = dispatch.deliveryId || `${dispatch.status}:${requestId}`;
+        const eventType = dispatch.status === 'UNCERTAIN' ? 'FOLLOW_UP_UNCERTAIN' : 'FOLLOW_UP_QUEUED';
+        await env.DB.batch([
+          env.DB.prepare(
+            `UPDATE quotation_follow_ups
+             SET status = 'SCHEDULED', sent_at = NULL, email_delivery_id = ?, updated_at = ?
+             WHERE id = ? AND workspace_id = ? AND status = 'SCHEDULED' AND email_delivery_id = ?`
+          ).bind(nonNullRef, nowIso, fu.id, workspaceId, claimToken),
+          env.DB.prepare(
+            `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(
+            `qevt_${crypto.randomUUID()}`,
+            workspaceId,
+            quoteId,
+            eventType,
+            auth.userId,
+            actorName,
+            requestId,
+            JSON.stringify({
+              stage,
+              delivery_id: dispatch.deliveryId || null,
+              status: dispatch.status,
+              transport: dispatch.transport,
+              recipient_email: recipientEmail,
+              ...(dispatch.error ? { error: dispatch.error } : {}),
+            }),
+            nowIso
+          ),
+        ]);
+      }
 
       const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
       return replyJson({ quotation: await hydrateQuotation(env.DB, refreshed!), email_dispatch: dispatch }, requestId);
@@ -1273,13 +1701,17 @@ export async function handlePublicQuotationToken(
       ? body.accepted_by_name.trim().slice(0, 120)
       : 'Customer (Recipient Portal)';
 
+    const expectedVersion = Number(current.version);
     const res = await env.DB.prepare(
       `UPDATE quotations
        SET acceptance_status = 'ACCEPTED', accepted_at = ?, accepted_by_name = ?, version = version + 1, updated_at = ?
-       WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT'`
-    ).bind(nowIso, acceptedByName, nowIso, quoteId, workspaceId).run();
+       WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT' AND version = ?`
+    ).bind(nowIso, acceptedByName, nowIso, quoteId, workspaceId, expectedVersion).run();
 
-    if (res.meta.changes === 0) return quoteTerminalConflict('ACCEPTED', requestId);
+    if (res.meta.changes === 0) {
+      const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+      return quoteTerminalConflict(String(latest?.acceptance_status ?? 'ACCEPTED'), requestId);
+    }
 
     await env.DB.batch([
       env.DB.prepare(
@@ -1302,21 +1734,31 @@ export async function handlePublicQuotationToken(
       return validationErrorResponse('Refusal reason is required (1..500 chars)', [{ pointer: '/reason', code: 'REQUIRED', message: 'reason is required' }], requestId);
     }
 
-    await env.DB.batch([
+    const expectedVersion = Number(current.version);
+    const nextVersion = expectedVersion + 1;
+    const batchRes = await env.DB.batch([
       env.DB.prepare(
         `UPDATE quotations
          SET acceptance_status = 'REFUSED', refused_at = ?, refusal_reason = ?, version = version + 1, updated_at = ?
-         WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT'`
-      ).bind(nowIso, reason, nowIso, quoteId, workspaceId),
+         WHERE id = ? AND workspace_id = ? AND acceptance_status = 'SENT' AND version = ?`
+      ).bind(nowIso, reason, nowIso, quoteId, workspaceId, expectedVersion),
       env.DB.prepare(
         `UPDATE quotation_follow_ups SET status = 'CANCELLED', updated_at = ?
-         WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'`
-      ).bind(nowIso, quoteId, workspaceId),
+         WHERE quote_id = ? AND workspace_id = ? AND status = 'SCHEDULED'
+           AND EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'REFUSED')`
+      ).bind(nowIso, quoteId, workspaceId, quoteId, workspaceId, nextVersion),
       env.DB.prepare(
         `INSERT INTO quotation_events (id, workspace_id, quote_id, event_type, actor_user_id, actor_name, request_id, details_json, created_at)
-         VALUES (?, ?, ?, 'REFUSED', NULL, 'Customer (Recipient Portal)', ?, ?, ?)`
-      ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, requestId, JSON.stringify({ via: 'public_token', reason }), nowIso),
+         SELECT ?, ?, ?, 'REFUSED', NULL, 'Customer (Recipient Portal)', ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM quotations WHERE id = ? AND workspace_id = ? AND version = ? AND acceptance_status = 'REFUSED')
+           AND NOT EXISTS (SELECT 1 FROM quotation_events WHERE quote_id = ? AND workspace_id = ? AND event_type = 'REFUSED')`
+      ).bind(`qevt_${crypto.randomUUID()}`, workspaceId, quoteId, requestId, JSON.stringify({ via: 'public_token', reason }), nowIso, quoteId, workspaceId, nextVersion, quoteId, workspaceId),
     ]);
+
+    if (batchRes[0].meta.changes !== 1) {
+      const latest = await env.DB.prepare(`SELECT acceptance_status FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<{ acceptance_status: string }>();
+      return quoteTerminalConflict(String(latest?.acceptance_status ?? 'CONFLICT'), requestId);
+    }
 
     const refreshed = await env.DB.prepare(`SELECT * FROM quotations WHERE id = ? AND workspace_id = ?`).bind(quoteId, workspaceId).first<Record<string, unknown>>();
     return replyJson({ quotation: await hydrateQuotation(env.DB, refreshed!) }, requestId);

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { JSDOM } from 'jsdom';
 import { createLocalD1Database, type LocalD1Database } from '../backend/db/d1.ts';
 import { G01_MIGRATION_MANIFEST, runLocalMigrations } from '../backend/db/migrate.ts';
 import { createAuthenticationService } from '../backend/workers/auth.ts';
@@ -10,8 +13,14 @@ import {
   handleQuotations,
   handlePublicQuotationToken,
   type QuoteEmailDispatchRequest,
+  type QuoteEmailDispatchResult,
   type QuotationsHandlerOptions,
 } from '../backend/workers/routes/quotations.ts';
+import App, { AppContent } from '../src/App.tsx';
+import { PublicQuotationPortal } from '../src/components/PublicQuotationPortal.tsx';
+import { QuotesAcceptanceView } from '../src/views/QuotesAcceptanceView.tsx';
+import { CabmsProvider } from '../src/context/CabmsContext.tsx';
+import { SessionContext, type Session } from '../src/context/G01Session.tsx';
 import { createFirebaseFixture } from './support/firebaseTokens.ts';
 import { G01_TEST_AUTH, installG01TestAuthFixtures } from './support/g01SyntheticFixtures.ts';
 
@@ -475,4 +484,655 @@ test('P1 #2 & #3 regression: validates recipient_email before freezing/sending a
   assert.equal(pubRefuse.status, 200);
   const refusedData = (await pubRefuse.json()) as { quotation: { acceptance_status: string } };
   assert.equal(refusedData.quotation.acceptance_status, 'REFUSED');
+});
+
+test('Thread #14: /send handles dispatch failure/uncertainty & thrown errors cleanly and supports recoverable resend', async t => {
+  const db = await setupQuotationDb(t);
+  const fixture = await createFirebaseFixture();
+  const authService = createAuthenticationService(fixture.transport);
+  const staffToken = await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email);
+  await seedPublishedQuoteTerms(db, 'solarcell', 'v4.0', 'Recovery Terms v4.0');
+
+  let mode: 'FAIL' | 'THROW_TIMEOUT' | 'UNCERTAIN' | 'SENT' = 'FAIL';
+  let dispatchCalls = 0;
+
+  const { callWorkspace, callPublic } = makeHarness(db, authService, {
+    now: () => new Date('2026-11-02T10:00:00+10:00'),
+    emailDispatcher: async (req): Promise<QuoteEmailDispatchResult> => {
+      dispatchCalls += 1;
+      if (mode === 'FAIL') {
+        return { deliveryId: `del_fail_${dispatchCalls}`, status: 'FAILED', transport: 'smtp_tcp', error: '550 Mailbox unavailable' };
+      }
+      if (mode === 'THROW_TIMEOUT') {
+        throw new Error('HTTPS relay timeout 504');
+      }
+      if (mode === 'UNCERTAIN') {
+        return { deliveryId: `del_unc_${dispatchCalls}`, status: 'UNCERTAIN', transport: 'smtp_tcp', error: 'Socket closed after DATA' };
+      }
+      return { deliveryId: `del_ok_${dispatchCalls}`, status: 'SENT', transport: 'smtp_tcp' };
+    },
+  });
+
+  // 1. /send when emailDispatcher returns FAILED: quote is frozen as SENT, event is EMAIL_DISPATCH_FAILED, /send retry recovers
+  const q1 = (await (await callWorkspace('solarcell', '', 'POST', {
+    job_id: 'JOB-SEND-FAIL',
+    title: 'Fail Recovery Quote',
+    line_items: [{ description: 'Item', quantity: 1, unit_price: 200 }],
+  }, staffToken)).json()) as { quotation: { id: string } };
+
+  const failSendRes = await callWorkspace('solarcell', `${q1.quotation.id}/send`, 'POST', { recipient_email: 'recover@example.invalid' }, staffToken);
+  assert.equal(failSendRes.status, 200);
+  const failSendBody = (await failSendRes.json()) as {
+    quotation: { acceptance_status: string; events: Array<{ event_type: string; details: Record<string, unknown> | null }> };
+    acceptance_token: string;
+    email_dispatch: { status: string };
+  };
+  assert.equal(failSendBody.quotation.acceptance_status, 'SENT');
+  assert.equal(failSendBody.email_dispatch.status, 'FAILED');
+  assert.ok(failSendBody.quotation.events.some(e => e.event_type === 'EMAIL_DISPATCH_FAILED' && e.details?.status === 'FAILED'));
+
+  // Retry via /send while no prior dispatch succeeded -> recovers cleanly
+  mode = 'SENT';
+  const retrySendRes = await callWorkspace('solarcell', `${q1.quotation.id}/send`, 'POST', { recipient_email: 'recover@example.invalid' }, staffToken);
+  assert.equal(retrySendRes.status, 200);
+  const retrySendBody = (await retrySendRes.json()) as {
+    quotation: { events: Array<{ event_type: string }> };
+    acceptance_token: string;
+    email_dispatch: { status: string };
+  };
+  assert.equal(retrySendBody.email_dispatch.status, 'SENT');
+  assert.ok(retrySendBody.quotation.events.some(e => e.event_type === 'EMAIL_DISPATCHED'));
+  assert.notEqual(retrySendBody.acceptance_token, failSendBody.acceptance_token);
+
+  // Subsequent /send after successful dispatch -> 409 QUOTE_ALREADY_SENT
+  const dupSendRes = await callWorkspace('solarcell', `${q1.quotation.id}/send`, 'POST', { recipient_email: 'recover@example.invalid' }, staffToken);
+  assert.equal(dupSendRes.status, 409);
+  assert.equal(((await dupSendRes.json()) as { code: string }).code, 'QUOTE_ALREADY_SENT');
+
+  // 2. /send when emailDispatcher throws timeout -> preserved as UNCERTAIN (not 500, not SENT), /resend recovers
+  mode = 'THROW_TIMEOUT';
+  const q2 = (await (await callWorkspace('solarcell', '', 'POST', {
+    job_id: 'JOB-SEND-THROW',
+    title: 'Throw Recovery Quote',
+    line_items: [{ description: 'Item', quantity: 1, unit_price: 300 }],
+  }, staffToken)).json()) as { quotation: { id: string } };
+
+  const throwSendRes = await callWorkspace('solarcell', `${q2.quotation.id}/send`, 'POST', { recipient_email: 'timeout@example.invalid' }, staffToken);
+  assert.equal(throwSendRes.status, 200);
+  const throwSendBody = (await throwSendRes.json()) as {
+    quotation: { events: Array<{ event_type: string; details: Record<string, unknown> | null }> };
+    acceptance_token: string;
+    email_dispatch: { status: string };
+  };
+  assert.equal(throwSendBody.email_dispatch.status, 'UNCERTAIN');
+  assert.ok(throwSendBody.quotation.events.some(e => e.event_type === 'EMAIL_DISPATCH_UNCERTAIN' && e.details?.status === 'UNCERTAIN'));
+
+  // 3. Direct UNCERTAIN status is also preserved accurately, then /resend succeeds and issues valid public token
+  mode = 'UNCERTAIN';
+  const uncResendRes = await callWorkspace('solarcell', `${q2.quotation.id}/resend`, 'POST', { recipient_email: 'timeout@example.invalid' }, staffToken);
+  assert.equal(uncResendRes.status, 200);
+  const uncResendBody = (await uncResendRes.json()) as { email_dispatch: { status: string } };
+  assert.equal(uncResendBody.email_dispatch.status, 'UNCERTAIN');
+
+  mode = 'SENT';
+  const okResendRes = await callWorkspace('solarcell', `${q2.quotation.id}/resend`, 'POST', { recipient_email: 'timeout@example.invalid' }, staffToken);
+  assert.equal(okResendRes.status, 200);
+  const okResendBody = (await okResendRes.json()) as { acceptance_token: string; email_dispatch: { status: string } };
+  assert.equal(okResendBody.email_dispatch.status, 'SENT');
+  assert.equal((await callPublic(okResendBody.acceptance_token)).status, 200);
+});
+
+test('Thread #15: follow-ups/dispatch claims atomically before dispatch and preserves FAILED/UNCERTAIN without lying as SENT', async t => {
+  const db = await setupQuotationDb(t);
+  const fixture = await createFirebaseFixture();
+  const authService = createAuthenticationService(fixture.transport);
+  const staffToken = await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email);
+  await seedPublishedQuoteTerms(db, 'solarcell', 'v4.1', 'Follow-Up Terms v4.1');
+
+  let nextFollowUpOutcome: 'SENT' | 'FAILED' | 'UNCERTAIN' = 'FAILED';
+  let followUpDispatchCount = 0;
+  let releaseSlowDispatch: () => void = () => {};
+  let slowMode = false;
+
+  const { callWorkspace } = makeHarness(db, authService, {
+    now: () => new Date('2026-11-02T09:00:00+10:00'),
+    emailDispatcher: async (req): Promise<QuoteEmailDispatchResult> => {
+      if (req.category === 'QUOTE_SENT') {
+        return { deliveryId: 'del_quote_sent', status: 'SENT', transport: 'smtp_tcp' };
+      }
+      followUpDispatchCount += 1;
+      if (slowMode) {
+        await new Promise<void>(resolve => { releaseSlowDispatch = resolve; });
+      }
+      if (nextFollowUpOutcome === 'FAILED') {
+        return { deliveryId: `del_fu_fail_${followUpDispatchCount}`, status: 'FAILED', transport: 'smtp_tcp', error: '550 Rejected' };
+      }
+      if (nextFollowUpOutcome === 'UNCERTAIN') {
+        return { deliveryId: `del_fu_unc_${followUpDispatchCount}`, status: 'UNCERTAIN', transport: 'smtp_tcp', error: 'Read timeout' };
+      }
+      return { deliveryId: `del_fu_ok_${followUpDispatchCount}`, status: 'SENT', transport: 'smtp_tcp' };
+    },
+  });
+
+  const q = (await (await callWorkspace('solarcell', '', 'POST', {
+    job_id: 'JOB-FU-ATOMIC',
+    title: 'Follow-Up Atomic Quote',
+    line_items: [{ description: 'Service', quantity: 1, unit_price: 400 }],
+  }, staffToken)).json()) as { quotation: { id: string } };
+  await callWorkspace('solarcell', `${q.quotation.id}/send`, 'POST', { recipient_email: 'fu@example.invalid' }, staffToken);
+
+  // 1. FAILED outcome must NOT mark follow-up SENT; stays SCHEDULED & retryable
+  nextFollowUpOutcome = 'FAILED';
+  const failFuRes = await callWorkspace('solarcell', `${q.quotation.id}/follow-ups/dispatch`, 'POST', {
+    stage: 'STAGE_1_COURTESY',
+    recipient_email: 'fu@example.invalid',
+  }, staffToken);
+  assert.equal(failFuRes.status, 200);
+  const failFuBody = (await failFuRes.json()) as {
+    quotation: { follow_ups: Array<{ stage: string; status: string; sent_at: string | null; email_delivery_id: string | null }>; events: Array<{ event_type: string }> };
+    email_dispatch: { status: string };
+  };
+  assert.equal(failFuBody.email_dispatch.status, 'FAILED');
+  const stage1AfterFail = failFuBody.quotation.follow_ups.find(f => f.stage === 'STAGE_1_COURTESY')!;
+  assert.equal(stage1AfterFail.status, 'SCHEDULED');
+  assert.equal(stage1AfterFail.sent_at, null);
+  assert.equal(stage1AfterFail.email_delivery_id, null);
+  assert.ok(failFuBody.quotation.events.some(e => e.event_type === 'FOLLOW_UP_FAILED'));
+
+  // 2. Concurrent retry of STAGE_1_COURTESY claims atomically -> only ONE calls emailDispatcher
+  nextFollowUpOutcome = 'SENT';
+  slowMode = true;
+  const callsBeforeRace = followUpDispatchCount;
+  const p1 = callWorkspace('solarcell', `${q.quotation.id}/follow-ups/dispatch`, 'POST', {
+    stage: 'STAGE_1_COURTESY',
+    recipient_email: 'fu@example.invalid',
+  }, staffToken);
+  // Wait a tick for p1 to claim lock and pause in emailDispatcher
+  await new Promise(resolve => setTimeout(resolve, 15));
+  const p2 = callWorkspace('solarcell', `${q.quotation.id}/follow-ups/dispatch`, 'POST', {
+    stage: 'STAGE_1_COURTESY',
+    recipient_email: 'fu@example.invalid',
+  }, staffToken);
+  const res2 = await p2;
+  assert.equal(res2.status, 409);
+  releaseSlowDispatch();
+  const res1 = await p1;
+  assert.equal(res1.status, 200);
+  assert.equal(followUpDispatchCount - callsBeforeRace, 1, 'Concurrent follow-up dispatch must invoke emailDispatcher at most once');
+  const stage1AfterSent = ((await res1.json()) as { quotation: { follow_ups: Array<{ stage: string; status: string; sent_at: string | null }> } })
+    .quotation.follow_ups.find(f => f.stage === 'STAGE_1_COURTESY')!;
+  assert.equal(stage1AfterSent.status, 'SENT');
+  assert.ok(stage1AfterSent.sent_at);
+
+  // 3. UNCERTAIN outcome on STAGE_2_EXPIRY stays SCHEDULED with deliveryId recorded & blocks duplicate auto-send
+  slowMode = false;
+  nextFollowUpOutcome = 'UNCERTAIN';
+  const uncFuRes = await callWorkspace('solarcell', `${q.quotation.id}/follow-ups/dispatch`, 'POST', {
+    stage: 'STAGE_2_EXPIRY',
+    recipient_email: 'fu@example.invalid',
+  }, staffToken);
+  assert.equal(uncFuRes.status, 200);
+  const uncFuBody = (await uncFuRes.json()) as {
+    quotation: { follow_ups: Array<{ stage: string; status: string; sent_at: string | null; email_delivery_id: string | null }>; events: Array<{ event_type: string }> };
+    email_dispatch: { status: string };
+  };
+  assert.equal(uncFuBody.email_dispatch.status, 'UNCERTAIN');
+  const stage2AfterUnc = uncFuBody.quotation.follow_ups.find(f => f.stage === 'STAGE_2_EXPIRY')!;
+  assert.equal(stage2AfterUnc.status, 'SCHEDULED');
+  assert.equal(stage2AfterUnc.sent_at, null);
+  assert.ok(stage2AfterUnc.email_delivery_id);
+  assert.ok(uncFuBody.quotation.events.some(e => e.event_type === 'FOLLOW_UP_UNCERTAIN'));
+
+  const dupUncRes = await callWorkspace('solarcell', `${q.quotation.id}/follow-ups/dispatch`, 'POST', {
+    stage: 'STAGE_2_EXPIRY',
+    recipient_email: 'fu@example.invalid',
+  }, staffToken);
+  assert.equal(dupUncRes.status, 409);
+});
+
+test('Thread #16: revise version/status guards never overwrite customer ACCEPTED or leave orphaned drafts', async t => {
+  const db = await setupQuotationDb(t);
+  const fixture = await createFirebaseFixture();
+  const authService = createAuthenticationService(fixture.transport);
+  const staffToken = await fixture.token(G01_TEST_AUTH.officeStaff.uid, G01_TEST_AUTH.officeStaff.email);
+  await seedPublishedQuoteTerms(db, 'solarcell', 'v4.2', 'Concurrency Terms v4.2');
+  const { callWorkspace, callPublic } = makeHarness(db, authService, {
+    now: () => new Date('2026-11-02T11:00:00+10:00'),
+  });
+
+  // 1. Race customer /accept vs staff /revise
+  const q1 = (await (await callWorkspace('solarcell', '', 'POST', {
+    job_id: 'JOB-RACE-1',
+    title: 'Race Quote 1',
+    line_items: [{ description: 'Item', quantity: 1, unit_price: 500 }],
+  }, staffToken)).json()) as { quotation: { id: string } };
+  const sent1 = (await (await callWorkspace('solarcell', `${q1.quotation.id}/send`, 'POST', {}, staffToken)).json()) as { acceptance_token: string };
+
+  const [acceptRes, reviseRes] = await Promise.all([
+    callPublic(sent1.acceptance_token, 'accept', 'POST', { confirmed: true, accepted_by_name: 'Fast Customer' }),
+    callWorkspace('solarcell', `${q1.quotation.id}/revise`, 'POST', { title: 'Conflicting Revision' }, staffToken),
+  ]);
+
+  assert.equal(acceptRes.status, 200);
+  assert.equal(reviseRes.status, 409);
+  assert.equal(((await reviseRes.json()) as { code: string }).code, 'ALREADY_ACCEPTED');
+
+  const finalOriginal = await db.prepare(`SELECT acceptance_status FROM quotations WHERE id = ?`).bind(q1.quotation.id).first<{ acceptance_status: string }>();
+  assert.equal(finalOriginal?.acceptance_status, 'ACCEPTED');
+  const orphans = await db.prepare(`SELECT id FROM quotations WHERE supersedes_quote_id = ?`).bind(q1.quotation.id).all();
+  assert.equal(orphans.results.length, 0, 'Must not create orphaned revised DRAFT when customer accept wins');
+
+  // 2. Concurrent /revise vs /revise creates at most ONE revised draft
+  const q2 = (await (await callWorkspace('solarcell', '', 'POST', {
+    job_id: 'JOB-RACE-2',
+    title: 'Race Quote 2',
+    line_items: [{ description: 'Item', quantity: 1, unit_price: 600 }],
+  }, staffToken)).json()) as { quotation: { id: string } };
+  await callWorkspace('solarcell', `${q2.quotation.id}/send`, 'POST', {}, staffToken);
+
+  const [revA, revB] = await Promise.all([
+    callWorkspace('solarcell', `${q2.quotation.id}/revise`, 'POST', { title: 'Rev A' }, staffToken),
+    callWorkspace('solarcell', `${q2.quotation.id}/revise`, 'POST', { title: 'Rev B' }, staffToken),
+  ]);
+  const statuses = [revA.status, revB.status].sort((a, b) => a - b);
+  assert.deepEqual(statuses, [201, 409]);
+  const drafts = await db.prepare(`SELECT id FROM quotations WHERE supersedes_quote_id = ?`).bind(q2.quotation.id).all();
+  assert.equal(drafts.results.length, 1);
+});
+
+function setDomInputValue(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string, win: JSDOM['window']) {
+  const proto =
+    el instanceof win.HTMLTextAreaElement
+      ? win.HTMLTextAreaElement.prototype
+      : el instanceof win.HTMLSelectElement
+        ? win.HTMLSelectElement.prototype
+        : win.HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, value);
+  else (el as HTMLInputElement).value = value;
+  if (el instanceof win.HTMLSelectElement) {
+    el.dispatchEvent(new win.Event('change', { bubbles: true }));
+    return;
+  }
+  el.dispatchEvent(new win.Event('input', { bubbles: true }));
+  el.dispatchEvent(new win.Event('change', { bubbles: true }));
+  const propsKey = Object.keys(el).find(k => k.startsWith('__reactProps$'));
+  if (propsKey) {
+    const handler = (el as unknown as Record<string, { onChange?: (e: unknown) => void }>)[propsKey]?.onChange;
+    handler?.({ target: { value } });
+  }
+}
+
+async function withJsdom(
+  url: string,
+  run: (ctx: { dom: JSDOM; container: HTMLElement; settle: (ms?: number) => Promise<void> }) => Promise<void>
+) {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url });
+  const keys = [
+    'window',
+    'document',
+    'navigator',
+    'HTMLElement',
+    'HTMLInputElement',
+    'HTMLTextAreaElement',
+    'HTMLSelectElement',
+    'IS_REACT_ACT_ENVIRONMENT',
+  ];
+  const saved = new Map(keys.map(k => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
+  const originalFetch = globalThis.fetch;
+  for (const k of keys) {
+    Object.defineProperty(globalThis, k, {
+      configurable: true,
+      writable: true,
+      value: k === 'IS_REACT_ACT_ENVIRONMENT' ? true : (dom.window as unknown as Record<string, unknown>)[k],
+    });
+  }
+  const container = dom.window.document.getElementById('root')!;
+  const settle = async (ms = 25) => {
+    await act(async () => {
+      await new Promise(r => setTimeout(r, ms));
+    });
+  };
+  try {
+    await run({ dom, container, settle });
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const k of keys) {
+      const desc = saved.get(k);
+      if (desc) Object.defineProperty(globalThis, k, desc);
+      else delete (globalThis as unknown as Record<string, unknown>)[k];
+    }
+    dom.window.close();
+  }
+}
+
+test('Thread #3 & #13 UI: ?quote_token= routes unauthenticated customer to PublicQuotationPortal with accept, refuse, and error states', async () => {
+  await withJsdom('http://localhost/?quote_token=qtok_portal_valid', async ({ dom, container, settle }) => {
+    const baseQuote = {
+      id: 'QUOTE-PORTAL-1',
+      workspace_id: 'solarcell',
+      job_id: 'JOB-D1-101',
+      brand_id: 'solarcell',
+      external_myob_ref: 'MYOB-Q-PORTAL',
+      title: 'Solar Switchboard Upgrade',
+      subtotal: 1000,
+      gst: 100,
+      total: 1100,
+      terms_version: 'v5.0',
+      terms_content_snapshot: 'Frozen Terms v5.0: 14-day validity.',
+      frozen_issuer_snapshot: 'Solarcell Pty Ltd • ABN 12 345 678 901',
+      acceptance_status: 'SENT' as const,
+      issued_at: '2026-11-02T09:00:00+10:00',
+      expires_at: '2026-11-16T09:00:00+10:00',
+      accepted_at: null,
+      accepted_by_name: null,
+      refused_at: null,
+      refusal_reason: null,
+      revoked_at: null,
+      revocation_reason: null,
+      line_items: [{ id: 'LI-1', line_order: 0, description: 'Switchboard Upgrade', quantity: 1, unit_price: 1000, total: 1000 }],
+      follow_ups: [{ id: 'FU-1', stage: 'STAGE_1_COURTESY', scheduled_date: '2026-11-05', status: 'SCHEDULED', channel: 'EMAIL_SIMULATED' }],
+      events: [{ id: 'EV-1', event_type: 'EMAIL_DISPATCHED', details: { transport: 'SANDBOX_SYNTHETIC' }, created_at: '2026-11-02T09:00:00+10:00' }],
+    };
+
+    const requests: Array<{ url: string; method: string; body?: Record<string, unknown> }> = [];
+    let currentStatus: 'SENT' | 'ACCEPTED' | 'EXPIRED' | 'REVOKED' | 'SUPERSEDED' | 'REFUSED' = 'SENT';
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method || 'GET';
+      const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : undefined;
+      requests.push({ url, method, body });
+
+      if (url.includes('/qtok_invalid_404')) {
+        return Response.json(
+          { code: 'NOT_FOUND', title: 'Not Found', detail: 'Invalid or unknown acceptance token' },
+          { status: 404, headers: { 'Content-Type': 'application/problem+json' } }
+        );
+      }
+      if (url.endsWith('/accept') && method === 'POST') {
+        currentStatus = 'ACCEPTED';
+        return Response.json({
+          quotation: { ...baseQuote, acceptance_status: 'ACCEPTED', accepted_by_name: body?.accepted_by_name || 'Customer', accepted_at: '2026-11-02T10:00:00+10:00' },
+        });
+      }
+      if (url.endsWith('/refuse') && method === 'POST') {
+        currentStatus = 'REFUSED';
+        return Response.json({
+          quotation: { ...baseQuote, acceptance_status: 'REFUSED', refusal_reason: body?.reason || 'Declined' },
+        });
+      }
+      return Response.json({
+        quotation: {
+          ...baseQuote,
+          acceptance_status: currentStatus,
+          ...(currentStatus === 'ACCEPTED' ? { accepted_by_name: 'Alice Customer', accepted_at: '2026-11-02T10:00:00+10:00' } : {}),
+          ...(currentStatus === 'REVOKED' ? { revocation_reason: 'Superseded by office cancellation' } : {}),
+        },
+      });
+    }) as typeof fetch;
+
+    // 1. Unauthenticated <App /> renders PublicQuotationPortal (NOT SignInScreen) when ?quote_token= is in URL
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(App));
+    });
+    await settle();
+
+    assert.ok(container.querySelector('[data-testid="public-quotation-portal"]'), 'PublicQuotationPortal renders on ?quote_token=');
+    assert.equal(container.textContent?.includes('CABMS Session Access'), false, 'Auth sign-in screen must not block public token route');
+    assert.match(container.textContent || '', /Simulated \/ Sandbox Notice/);
+    assert.match(container.textContent || '', /Frozen Terms v5\.0/);
+    assert.match(container.textContent || '', /\$1100\.00/);
+    assert.match(container.textContent || '', /\$100\.00/);
+
+    // Also verify <AppContent /> directly inside CabmsProvider renders PublicQuotationPortal before auth gate
+    await act(async () => {
+      root.render(React.createElement(CabmsProvider, null, React.createElement(AppContent)));
+    });
+    await settle();
+    assert.ok(container.querySelector('[data-testid="public-quotation-portal"]'));
+
+    // Submit acceptance with confirmed: true and accepted_by_name
+    const nameInput = container.querySelector<HTMLInputElement>('#public-accept-name')!;
+    const confirmCheckbox = container.querySelector<HTMLInputElement>('#public-accept-confirm')!;
+    await act(async () => {
+      setDomInputValue(nameInput, 'Alice Customer', dom.window);
+      confirmCheckbox.click();
+    });
+    const acceptBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Accept & Authorize Quotation'))!;
+    await act(async () => {
+      acceptBtn.click();
+    });
+    await settle();
+    const acceptReq = requests.find(r => r.url.endsWith('/accept'));
+    assert.ok(acceptReq);
+    assert.deepEqual(acceptReq.body, { confirmed: true, accepted_by_name: 'Alice Customer' });
+    assert.match(container.textContent || '', /Quotation Already Accepted/);
+
+    // Reset to SENT and test Refuse
+    currentStatus = 'SENT';
+    await act(async () => {
+      root.render(React.createElement(PublicQuotationPortal, { token: 'qtok_portal_refuse' }));
+    });
+    await settle();
+    const refuseBox = container.querySelector<HTMLTextAreaElement>('#public-refuse-reason')!;
+    await act(async () => {
+      setDomInputValue(refuseBox, 'Need different installation date', dom.window);
+    });
+    const refuseBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Refuse Quotation'))!;
+    await act(async () => {
+      refuseBtn.click();
+    });
+    await settle();
+    const refuseReq = requests.find(r => r.url.endsWith('/refuse'));
+    assert.ok(refuseReq);
+    assert.deepEqual(refuseReq.body, { reason: 'Need different installation date' });
+    assert.match(container.textContent || '', /Quotation Refused/);
+
+    // Verify clean error states: invalid 404, EXPIRED, REVOKED, SUPERSEDED, ACCEPTED
+    await act(async () => {
+      root.render(React.createElement(PublicQuotationPortal, { token: 'qtok_invalid_404' }));
+    });
+    await settle();
+    assert.match(container.textContent || '', /Invalid or Unknown Quotation Link/);
+
+    for (const [status, expectedHeading] of [
+      ['EXPIRED', /Quotation Expired/],
+      ['REVOKED', /Quotation Link Revoked/],
+      ['SUPERSEDED', /Quotation Superseded/],
+      ['ACCEPTED', /Quotation Already Accepted/],
+    ] as const) {
+      currentStatus = status;
+      await act(async () => {
+        root.render(React.createElement(PublicQuotationPortal, { token: `qtok_state_${status}` }));
+      });
+      await settle();
+      assert.match(container.textContent || '', expectedHeading);
+      assert.equal(container.querySelector('#public-accept-confirm'), null, `${status} state must not show active accept button`);
+    }
+
+    await act(async () => root.unmount());
+  });
+});
+
+test('Thread #19 & #20 UI: QuotesAcceptanceView uses persisted compliance-jobs, discards stale fetches, guards actions, and recovers failed /send', async () => {
+  await withJsdom('http://localhost/', async ({ dom, container, settle }) => {
+    let releaseSlowQuote1: () => void = () => {};
+    let delayQuote1Once = false;
+    let sendAttempt = 0;
+    const actionRequests: string[] = [];
+
+    const solarJobs = [
+      { id: 'JOB-D1-1', workspace_id: 'solarcell', job_type_id: 'JT-1', policy_id: 'POL-1', title: 'Persisted Solar Job 1', status: 'OPEN', version: 1, assignee_id: null, customer_name: 'Bob Solar', site_address: '1 Sun Rd' },
+      { id: 'JOB-D1-2', workspace_id: 'solarcell', job_type_id: 'JT-1', policy_id: 'POL-1', title: 'Persisted Solar Job 2', status: 'OPEN', version: 1, assignee_id: null, customer_name: 'Cara Solar', site_address: '2 Sun Rd' },
+    ];
+    const cctvJobs = [
+      { id: 'JOB-CCTV-9', workspace_id: 'cctv', job_type_id: 'JT-2', policy_id: 'POL-2', title: 'Persisted CCTV Job 9', status: 'OPEN', version: 1, assignee_id: null, customer_name: 'Dan CCTV', site_address: '9 Cam St' },
+    ];
+
+    const makeQuote = (id: string, ws: string, jobId: string, title: string, status: 'DRAFT' | 'SENT' = 'DRAFT') => ({
+      id,
+      workspace_id: ws,
+      job_id: jobId,
+      customer_id: null,
+      brand_id: ws,
+      external_myob_ref: `MYOB-${id}`,
+      title,
+      subtotal: 500,
+      gst: 50,
+      total: 550,
+      terms_version: status === 'SENT' ? 'v1.0' : null,
+      terms_content_snapshot: status === 'SENT' ? 'Frozen Terms v1.0' : null,
+      frozen_issuer_snapshot: 'Issuer',
+      acceptance_status: status,
+      issued_at: status === 'SENT' ? '2026-11-02T09:00:00+10:00' : null,
+      expires_at: status === 'SENT' ? '2026-11-16T09:00:00+10:00' : null,
+      accepted_at: null,
+      accepted_by_name: null,
+      refusal_reason: null,
+      revocation_reason: null,
+      line_items: [{ id: 'LI-1', description: title, quantity: 1, unit_price: 500, total: 500 }],
+      follow_ups: [],
+      events: [],
+    });
+
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method || 'GET';
+
+      if (url.includes('/workspaces/solarcell/compliance-jobs')) {
+        return Response.json({ jobs: solarJobs, after: null });
+      }
+      if (url.includes('/workspaces/cctv/compliance-jobs')) {
+        return Response.json({ jobs: cctvJobs, after: null });
+      }
+      if (url.includes('/workspaces/solarcell/quotations?job_id=JOB-D1-1')) {
+        if (delayQuote1Once) {
+          delayQuote1Once = false;
+          await new Promise<void>(resolve => { releaseSlowQuote1 = resolve; });
+        }
+        return Response.json({ quotations: [makeQuote('Q-D1-1', 'solarcell', 'JOB-D1-1', 'Quote For Job 1')] });
+      }
+      if (url.includes('/workspaces/solarcell/quotations?job_id=JOB-D1-2')) {
+        return Response.json({ quotations: [makeQuote('Q-D1-2', 'solarcell', 'JOB-D1-2', 'Quote For Job 2')] });
+      }
+      if (url.includes('/workspaces/cctv/quotations?job_id=JOB-CCTV-9')) {
+        return Response.json({ quotations: [makeQuote('Q-CCTV-9', 'cctv', 'JOB-CCTV-9', 'Quote For CCTV 9')] });
+      }
+      if (url.endsWith('/send') && method === 'POST') {
+        sendAttempt += 1;
+        actionRequests.push(url);
+        if (sendAttempt === 1) {
+          return Response.json({
+            quotation: {
+              ...makeQuote('Q-D1-2', 'solarcell', 'JOB-D1-2', 'Quote For Job 2', 'SENT'),
+              events: [{ id: 'E1', quote_id: 'Q-D1-2', event_type: 'EMAIL_DISPATCH_FAILED', actor_name: 'Staff', details: { status: 'FAILED', recipient_email: 'bob@example.invalid', error: '550 Rejected' }, created_at: '2026-11-02T09:00:00+10:00' }],
+            },
+            acceptance_token: 'qtok_failed_first_1234',
+            email_dispatch: { deliveryId: 'del_fail_1', status: 'FAILED', transport: 'smtp', error: '550 Rejected' },
+          });
+        }
+        return Response.json({
+          quotation: {
+            ...makeQuote('Q-D1-2', 'solarcell', 'JOB-D1-2', 'Quote For Job 2', 'SENT'),
+            events: [{ id: 'E2', quote_id: 'Q-D1-2', event_type: 'EMAIL_DISPATCHED', actor_name: 'Staff', details: { status: 'SENT', recipient_email: 'bob@example.invalid' }, created_at: '2026-11-02T09:01:00+10:00' }],
+          },
+          acceptance_token: 'qtok_recovered_portal_5678',
+          email_dispatch: { deliveryId: 'del_ok_2', status: 'SENT', transport: 'smtp' },
+        });
+      }
+      return Response.json({ quotations: [] });
+    }) as typeof fetch;
+
+    let setWorkspace!: (ws: 'solarcell' | 'cctv' | 'smart_home') => void;
+    function Harness() {
+      const [workspaceId, selectWorkspace] = React.useState<'solarcell' | 'cctv' | 'smart_home'>('solarcell');
+      setWorkspace = selectWorkspace;
+      const session: Session = {
+        profile: {
+          user: { id: 'u1', email: 'staff@example.invalid', display_name: 'Staff' },
+          memberships: [
+            { workspace_id: 'solarcell', name: 'Solarcell', role: 'office_staff' },
+            { workspace_id: 'cctv', name: 'Gold Coast CCTV', role: 'office_staff' },
+          ],
+        },
+        workspaceId,
+        selectWorkspace,
+        token: async () => 'staff_token',
+        login: async () => {},
+        logout: async () => {},
+        invalidate: () => {},
+        loading: false,
+        error: '',
+      };
+      return React.createElement(
+        SessionContext.Provider,
+        { value: session },
+        React.createElement(CabmsProvider, null, React.createElement(QuotesAcceptanceView))
+      );
+    }
+
+    const root = createRoot(container);
+    delayQuote1Once = true;
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await settle();
+
+    // Persisted compliance jobs replaced demo CabmsContext.jobs
+    const jobSelect = container.querySelector<HTMLSelectElement>('#quote-work-order')!;
+    const optionValues = Array.from(jobSelect.options).map(o => o.value);
+    assert.deepEqual(optionValues, ['JOB-D1-1', 'JOB-D1-2']);
+    assert.equal(optionValues.includes('JOB-2026-101'), false, 'Demo CabmsContext.jobs must not appear in authenticated mode');
+
+    // While JOB-D1-1 quote fetch is still pending, switch to JOB-D1-2 (fast response)
+    await act(async () => {
+      setDomInputValue(jobSelect, 'JOB-D1-2', dom.window);
+    });
+    await settle();
+    assert.match(container.textContent || '', /Quote For Job 2/);
+
+    // Now resolve the slow stale JOB-D1-1 response (even ignoring AbortSignal!) -> MUST be discarded!
+    await act(async () => {
+      releaseSlowQuote1?.();
+      await new Promise(r => setTimeout(r, 20));
+    });
+    assert.match(container.textContent || '', /Quote For Job 2/);
+    assert.equal(container.textContent?.includes('Quote For Job 1'), false, 'Stale out-of-order fetch response must be discarded');
+
+    // Failed /send surfaces recovery panel, and retry succeeds + surfaces ?quote_token= URL
+    const emailInput = container.querySelector<HTMLInputElement>('input[type="email"]')!;
+    await act(async () => {
+      setDomInputValue(emailInput, 'bob@example.invalid', dom.window);
+    });
+    const sendBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Send & Freeze Terms Snapshot'))!;
+    await act(async () => {
+      sendBtn.click();
+    });
+    await settle();
+
+    assert.ok(container.querySelector('[data-testid="d1-send-recovery-panel"]'), 'Failed send must expose recovery panel');
+    const retryBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Retry / Resend Quote Email'))!;
+    await act(async () => {
+      retryBtn.click();
+    });
+    await settle();
+
+    const portalBox = container.querySelector('[data-testid="office-portal-link-box"]');
+    assert.ok(portalBox, 'Successful send must surface ?quote_token= portal link box');
+    assert.ok(portalBox.textContent?.includes('?quote_token=qtok_recovered_portal_5678'));
+
+    // Switching workspaceId immediately clears d1Quote and loads cctv compliance jobs
+    await act(async () => {
+      setWorkspace('cctv');
+    });
+    await settle();
+    const cctvOptions = Array.from(container.querySelector<HTMLSelectElement>('#quote-work-order')!.options).map(o => o.value);
+    assert.deepEqual(cctvOptions, ['JOB-CCTV-9']);
+    assert.match(container.textContent || '', /Quote For CCTV 9/);
+    assert.equal(container.textContent?.includes('Quote For Job 2'), false);
+
+    await act(async () => root.unmount());
+  });
 });

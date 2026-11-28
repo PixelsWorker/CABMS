@@ -6,7 +6,7 @@
  * and explicitly DEFERRED detailed electronic signature notice.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
 import { useG01Session } from '../context/G01Session.tsx';
 import { buildApiUrl } from '../services/g01Client.ts';
@@ -18,6 +18,7 @@ import {
   faCircleCheck,
   faCircleQuestion,
   faClock,
+  faCopy,
   faDollarSign,
   faFileLines,
   faPaperPlane,
@@ -27,7 +28,7 @@ import {
   faTriangleExclamation,
   faUserCheck,
 } from '@fortawesome/free-solid-svg-icons';
-import { Quote } from '../types/cabms.ts';
+import { BrandId, Quote } from '../types/cabms.ts';
 
 interface ApiQuotationLineItem {
   id: string;
@@ -45,6 +46,23 @@ interface ApiQuotationFollowUp {
   status: 'SCHEDULED' | 'SENT' | 'CANCELLED';
   sent_at: string | null;
   channel: string;
+  email_delivery_id?: string | null;
+}
+
+interface ApiQuotationEvent {
+  id: string;
+  quote_id: string;
+  event_type: string;
+  actor_name: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+interface ApiEmailDispatch {
+  deliveryId: string;
+  status: 'SENT' | 'QUEUED' | 'SANDBOX_LOGGED' | 'FAILED' | 'UNCERTAIN';
+  transport: string;
+  error?: string;
 }
 
 interface ApiQuotationRecord {
@@ -70,6 +88,30 @@ interface ApiQuotationRecord {
   revocation_reason: string | null;
   line_items: ApiQuotationLineItem[];
   follow_ups: ApiQuotationFollowUp[];
+  events?: ApiQuotationEvent[];
+}
+
+interface PersistedComplianceJob {
+  id: string;
+  workspace_id: string;
+  job_type_id: string;
+  policy_id: string;
+  title: string;
+  status: string;
+  version: number;
+  assignee_id: string | null;
+  customer_name?: string | null;
+  site_address?: string | null;
+}
+
+interface TargetJobSummary {
+  id: string;
+  brandId: BrandId;
+  customerId: string;
+  title: string;
+  siteContact: string;
+  siteAddress: string;
+  quote?: Quote;
 }
 
 export const QuotesAcceptanceView: React.FC = () => {
@@ -82,11 +124,14 @@ export const QuotesAcceptanceView: React.FC = () => {
     persona,
     simulateQuoteAcceptance,
     prepareQuoteForJob,
-    demoClock,
   } = useCabms();
 
   const session = useG01Session();
   const isAuthenticatedWorkspace = Boolean(session?.profile && session?.workspaceId);
+  const activeWorkspaceId = session?.workspaceId ?? null;
+  const sessionRole = activeWorkspaceId
+    ? session?.profile?.memberships.find(m => m.workspace_id === activeWorkspaceId)?.role ?? null
+    : null;
 
   const [viewMode, setViewMode] = useState<'office' | 'recipient'>('office');
   const [activeLinkScenario, setActiveLinkScenario] = useState<
@@ -97,6 +142,12 @@ export const QuotesAcceptanceView: React.FC = () => {
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [isPrepareModalOpen, setIsPrepareModalOpen] = useState(false);
 
+  // Persisted D1 compliance jobs (replaces demo CabmsContext.jobs when authenticated)
+  const [d1Jobs, setD1Jobs] = useState<PersistedComplianceJob[]>([]);
+  const [d1JobsLoading, setD1JobsLoading] = useState(false);
+  const [d1JobsError, setD1JobsError] = useState<string | null>(null);
+  const [d1SelectedJobId, setD1SelectedJobId] = useState<string>('');
+
   // D1-backed quotation state (active when authenticated G01 session is present)
   const [d1Quote, setD1Quote] = useState<ApiQuotationRecord | null>(null);
   const [d1Loading, setD1Loading] = useState(false);
@@ -104,95 +155,298 @@ export const QuotesAcceptanceView: React.FC = () => {
   const [d1ActionNotice, setD1ActionNotice] = useState<string | null>(null);
   const [recipientEmail, setRecipientEmail] = useState('');
   const [actionReason, setActionReason] = useState('');
+  const [tokensByQuoteId, setTokensByQuoteId] = useState<Record<string, string>>({});
+  const [dispatchByQuoteId, setDispatchByQuoteId] = useState<Record<string, ApiEmailDispatch>>({});
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
 
   // New Quote Form State for unquoted jobs (G00-016)
   const [quoteTitle, setQuoteTitle] = useState('Standard Service Quotation');
   const [quoteAmount, setQuoteAmount] = useState('1450');
 
-  // Find selected job or default
-  const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
+  const jobsRequestSeqRef = useRef(0);
+  const jobsAbortRef = useRef<AbortController | null>(null);
+  const quoteRequestSeqRef = useRef(0);
+  const quoteAbortRef = useRef<AbortController | null>(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const d1SelectedJobIdRef = useRef(d1SelectedJobId);
+  d1SelectedJobIdRef.current = d1SelectedJobId;
 
-  const loadD1Quotation = useCallback(async () => {
-    if (!session?.profile || !session?.workspaceId || !currentJob?.id) return;
+  const selectableJobs: TargetJobSummary[] = isAuthenticatedWorkspace
+    ? d1Jobs.map(j => ({
+        id: j.id,
+        brandId: (j.workspace_id as BrandId) || (activeWorkspaceId as BrandId),
+        customerId: '',
+        title: j.title,
+        siteContact: j.customer_name || 'Customer',
+        siteAddress: j.site_address || 'Site address on file',
+      }))
+    : jobs.map(j => ({
+        id: j.id,
+        brandId: j.brandId,
+        customerId: j.customerId,
+        title: j.title,
+        siteContact: j.siteContact,
+        siteAddress: j.siteAddress,
+        quote: j.quote,
+      }));
+
+  const effectiveSelectedId = isAuthenticatedWorkspace ? d1SelectedJobId : selectedJobId;
+  // In authenticated mode, select strictly from D1 compliance jobs (never CabmsContext.jobs)
+  const currentJob: TargetJobSummary | undefined = selectableJobs.find(j => j.id === effectiveSelectedId) || selectableJobs[0];
+
+  const latestSelectionRef = useRef<{ workspaceId: string | null; jobId: string | null }>({
+    workspaceId: activeWorkspaceId,
+    jobId: currentJob?.id ?? null,
+  });
+  latestSelectionRef.current = {
+    workspaceId: activeWorkspaceId,
+    jobId: currentJob?.id ?? null,
+  };
+
+  const loadPersistedJobs = useCallback(async () => {
+    const activeSession = sessionRef.current;
+    const targetWorkspaceId = activeSession?.workspaceId ?? null;
+    if (!activeSession?.profile || !targetWorkspaceId) return;
+    jobsAbortRef.current?.abort();
+    const controller = new AbortController();
+    jobsAbortRef.current = controller;
+    const reqSeq = ++jobsRequestSeqRef.current;
+
+    setD1JobsLoading(true);
+    setD1JobsError(null);
+    try {
+      const token = await activeSession.token();
+      if (controller.signal.aborted || reqSeq !== jobsRequestSeqRef.current || latestSelectionRef.current.workspaceId !== targetWorkspaceId) {
+        return;
+      }
+
+      const loaded: PersistedComplianceJob[] = [];
+      let after: string | null = null;
+      do {
+        const query = after ? `?after=${encodeURIComponent(after)}` : '';
+        const res = await fetch(
+          buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(targetWorkspaceId)}/compliance-jobs${query}`),
+          {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          }
+        );
+        if (controller.signal.aborted || reqSeq !== jobsRequestSeqRef.current || latestSelectionRef.current.workspaceId !== targetWorkspaceId) {
+          return;
+        }
+        if (!res.ok) {
+          const problem = (await res.json().catch(() => ({}))) as { detail?: string };
+          if (controller.signal.aborted || reqSeq !== jobsRequestSeqRef.current) return;
+          setD1Jobs([]);
+          setD1JobsError(problem.detail || `Failed to load compliance jobs (${res.status})`);
+          return;
+        }
+        const page = (await res.json()) as { jobs?: PersistedComplianceJob[]; after?: string | null };
+        if (controller.signal.aborted || reqSeq !== jobsRequestSeqRef.current || latestSelectionRef.current.workspaceId !== targetWorkspaceId) {
+          return;
+        }
+        loaded.push(...(page.jobs ?? []));
+        after = page.after ?? null;
+      } while (after);
+
+      setD1Jobs(loaded);
+      setD1SelectedJobId(prev => {
+        if (prev && loaded.some(j => j.id === prev)) return prev;
+        return loaded[0]?.id ?? '';
+      });
+    } catch (err) {
+      if (controller.signal.aborted || reqSeq !== jobsRequestSeqRef.current) return;
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setD1Jobs([]);
+      setD1JobsError(err instanceof Error ? err.message : 'Unable to reach compliance jobs API');
+    } finally {
+      if (!controller.signal.aborted && reqSeq === jobsRequestSeqRef.current) {
+        setD1JobsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    jobsAbortRef.current?.abort();
+    quoteAbortRef.current?.abort();
+    jobsRequestSeqRef.current += 1;
+    quoteRequestSeqRef.current += 1;
+
+    setD1Jobs([]);
+    setD1SelectedJobId('');
+    setD1JobsError(null);
+    setD1Quote(null);
+    setD1Error(null);
+    setD1ActionNotice(null);
+    setCopyNotice(null);
+
+    if (isAuthenticatedWorkspace && activeWorkspaceId) {
+      void loadPersistedJobs();
+    } else {
+      setD1JobsLoading(false);
+    }
+
+    return () => {
+      jobsAbortRef.current?.abort();
+    };
+  }, [isAuthenticatedWorkspace, activeWorkspaceId, loadPersistedJobs]);
+
+  const loadD1Quotation = useCallback(async (targetWorkspaceId: string, targetJobId: string) => {
+    const activeSession = sessionRef.current;
+    if (!activeSession?.profile) return;
+    quoteAbortRef.current?.abort();
+    const controller = new AbortController();
+    quoteAbortRef.current = controller;
+    const reqSeq = ++quoteRequestSeqRef.current;
+
     setD1Loading(true);
     setD1Error(null);
     try {
-      const token = await session.token();
+      const token = await activeSession.token();
+      if (
+        controller.signal.aborted ||
+        reqSeq !== quoteRequestSeqRef.current ||
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
       const res = await fetch(
-        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(session.workspaceId)}/quotations?job_id=${encodeURIComponent(currentJob.id)}`),
-        { headers: { Authorization: `Bearer ${token}` } }
+        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(targetWorkspaceId)}/quotations?job_id=${encodeURIComponent(targetJobId)}`),
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        }
       );
+      if (
+        controller.signal.aborted ||
+        reqSeq !== quoteRequestSeqRef.current ||
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
       if (!res.ok) {
-        const problem = await res.json().catch(() => ({})) as { detail?: string };
+        const problem = (await res.json().catch(() => ({}))) as { detail?: string };
+        if (controller.signal.aborted || reqSeq !== quoteRequestSeqRef.current) return;
+        setD1Quote(null);
         setD1Error(problem.detail || `Failed to load quotation (${res.status})`);
         return;
       }
-      const data = await res.json() as { quotations?: ApiQuotationRecord[] };
-      setD1Quote(data.quotations?.[0] ?? null);
+      const data = (await res.json()) as { quotations?: ApiQuotationRecord[] };
+      if (
+        controller.signal.aborted ||
+        reqSeq !== quoteRequestSeqRef.current ||
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
+      const list = (data.quotations ?? []).filter(
+        q => q.job_id === targetJobId && q.workspace_id === targetWorkspaceId
+      );
+      const activeQuote = list.find(q => q.acceptance_status !== 'SUPERSEDED') ?? list[0] ?? null;
+      setD1Quote(activeQuote);
     } catch (err) {
+      if (controller.signal.aborted || reqSeq !== quoteRequestSeqRef.current) return;
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      setD1Quote(null);
       setD1Error(err instanceof Error ? err.message : 'Unable to reach quotation API');
     } finally {
-      setD1Loading(false);
+      if (!controller.signal.aborted && reqSeq === quoteRequestSeqRef.current) {
+        setD1Loading(false);
+      }
     }
-  }, [session, currentJob?.id]);
+  }, []);
 
   useEffect(() => {
-    if (isAuthenticatedWorkspace) {
-      void loadD1Quotation();
-    } else {
-      setD1Quote(null);
-    }
-  }, [isAuthenticatedWorkspace, loadD1Quotation]);
+    // Immediately clear stale quote state whenever selectedJobId or workspace changes
+    quoteAbortRef.current?.abort();
+    quoteRequestSeqRef.current += 1;
+    setD1Quote(null);
+    setD1Error(null);
+    setD1ActionNotice(null);
+    setCopyNotice(null);
 
-  const quote: Quote | undefined = isAuthenticatedWorkspace && d1Quote
-    ? {
-        id: d1Quote.id,
-        jobId: d1Quote.job_id,
-        customerId: d1Quote.customer_id || currentJob?.customerId || '',
-        brandId: (d1Quote.brand_id as Quote['brandId']) || currentJob?.brandId || 'solarcell',
-        externalMyobRef: d1Quote.external_myob_ref || d1Quote.id,
-        title: d1Quote.title,
-        subtotal: d1Quote.subtotal,
-        gst: d1Quote.gst,
-        total: d1Quote.total,
-        lineItems: d1Quote.line_items.map(li => ({
-          id: li.id,
-          description: li.description,
-          quantity: li.quantity,
-          unitPrice: li.unit_price,
-          total: li.total,
-        })),
-        termsVersion: d1Quote.terms_version || 'DRAFT (Pending Send)',
-        termsContentSnapshot: d1Quote.terms_content_snapshot || 'Terms snapshot will be frozen from the published QUOTE_TERMS template when sent.',
-        frozenIssuerSnapshot: d1Quote.frozen_issuer_snapshot || 'Issuer details frozen on send',
-        acceptanceStatus: d1Quote.acceptance_status === 'REFUSED' ? 'REVOKED' : d1Quote.acceptance_status,
-        linkScenario: 'valid',
-        issuedAt: d1Quote.issued_at || undefined,
-        expiresAt: d1Quote.expires_at || undefined,
-        acceptedAt: d1Quote.accepted_at || undefined,
-        acceptedByName: d1Quote.accepted_by_name || undefined,
-        refusalReason: d1Quote.refusal_reason || d1Quote.revocation_reason || undefined,
-        followUps: d1Quote.follow_ups.map(fu => ({
-          id: fu.id,
-          quoteId: fu.quote_id,
-          stage: fu.stage,
-          scheduledDate: fu.scheduled_date,
-          status: fu.status,
-          sentAt: fu.sent_at || undefined,
-          channel: 'EMAIL_SIMULATED',
-        })),
-        acceptanceHistory: [],
-      }
+    if (
+      isAuthenticatedWorkspace &&
+      activeWorkspaceId &&
+      currentJob?.id &&
+      currentJob.brandId === activeWorkspaceId
+    ) {
+      void loadD1Quotation(activeWorkspaceId, currentJob.id);
+    } else {
+      setD1Loading(false);
+    }
+
+    return () => {
+      quoteAbortRef.current?.abort();
+    };
+  }, [isAuthenticatedWorkspace, activeWorkspaceId, currentJob?.id, currentJob?.brandId, loadD1Quotation]);
+
+  const isActiveD1QuoteValid = Boolean(
+    isAuthenticatedWorkspace &&
+    activeWorkspaceId &&
+    currentJob?.id &&
+    d1Quote &&
+    d1Quote.job_id === currentJob.id &&
+    d1Quote.workspace_id === activeWorkspaceId
+  );
+
+  const quote: Quote | undefined = isAuthenticatedWorkspace
+    ? isActiveD1QuoteValid && d1Quote
+      ? {
+          id: d1Quote.id,
+          jobId: d1Quote.job_id,
+          customerId: d1Quote.customer_id || currentJob?.customerId || '',
+          brandId: (d1Quote.brand_id as Quote['brandId']) || currentJob?.brandId || 'solarcell',
+          externalMyobRef: d1Quote.external_myob_ref || d1Quote.id,
+          title: d1Quote.title,
+          subtotal: d1Quote.subtotal,
+          gst: d1Quote.gst,
+          total: d1Quote.total,
+          lineItems: d1Quote.line_items.map(li => ({
+            id: li.id,
+            description: li.description,
+            quantity: li.quantity,
+            unitPrice: li.unit_price,
+            total: li.total,
+          })),
+          termsVersion: d1Quote.terms_version || 'DRAFT (Pending Send)',
+          termsContentSnapshot:
+            d1Quote.terms_content_snapshot ||
+            'Terms snapshot will be frozen from the published QUOTE_TERMS template when sent.',
+          frozenIssuerSnapshot: d1Quote.frozen_issuer_snapshot || 'Issuer details frozen on send',
+          acceptanceStatus: d1Quote.acceptance_status === 'REFUSED' ? 'REVOKED' : d1Quote.acceptance_status,
+          linkScenario: 'valid',
+          issuedAt: d1Quote.issued_at || undefined,
+          expiresAt: d1Quote.expires_at || undefined,
+          acceptedAt: d1Quote.accepted_at || undefined,
+          acceptedByName: d1Quote.accepted_by_name || undefined,
+          refusalReason: d1Quote.refusal_reason || d1Quote.revocation_reason || undefined,
+          followUps: d1Quote.follow_ups.map(fu => ({
+            id: fu.id,
+            quoteId: fu.quote_id,
+            stage: fu.stage,
+            scheduledDate: fu.scheduled_date,
+            status: fu.status,
+            sentAt: fu.sent_at || undefined,
+            channel: 'EMAIL_SIMULATED',
+          })),
+          acceptanceHistory: [],
+        }
+      : undefined
     : currentJob?.quote; // Truthful: no fallback to jobs[0].quote! (G00-006)
 
-  // Reset simulator state when job or quote changes (G00-017)
+  // Reset simulator state when job or workspace changes (G00-017)
   useEffect(() => {
     setCustomerAcceptedCheck(false);
     setAcceptanceFeedback(null);
-  }, [currentJob?.id]);
+  }, [currentJob?.id, activeWorkspaceId]);
 
   // Persona boundary: Technician is read-only or restricted
-  if (persona === 'technician') {
+  if (persona === 'technician' || sessionRole === 'technician') {
     return (
       <AccessDeniedView
         resourceName="MYOB Quotations & Customer Acceptance Portal"
@@ -208,14 +462,24 @@ export const QuotesAcceptanceView: React.FC = () => {
     payload?: Record<string, unknown>,
     successMessage?: string
   ) => {
-    if (!session?.workspaceId || !d1Quote) return;
+    if (!isActiveD1QuoteValid || !activeWorkspaceId || !d1Quote || !currentJob) return;
+    const targetWorkspaceId = d1Quote.workspace_id;
+    const targetJobId = d1Quote.job_id;
+    const targetQuoteId = d1Quote.id;
+
     setD1Loading(true);
     setD1Error(null);
     setD1ActionNotice(null);
     try {
-      const token = await session.token();
+      const token = await session!.token();
+      if (
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
       const res = await fetch(
-        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(session.workspaceId)}/quotations/${encodeURIComponent(d1Quote.id)}${pathSuffix}`),
+        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(targetWorkspaceId)}/quotations/${encodeURIComponent(targetQuoteId)}${pathSuffix}`),
         {
           method,
           headers: {
@@ -225,22 +489,78 @@ export const QuotesAcceptanceView: React.FC = () => {
           body: payload ? JSON.stringify(payload) : undefined,
         }
       );
-      const data = await res.json().catch(() => ({})) as { quotation?: ApiQuotationRecord; detail?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        quotation?: ApiQuotationRecord;
+        acceptance_token?: string;
+        email_dispatch?: ApiEmailDispatch | null;
+        detail?: string;
+      };
+      if (
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
       if (!res.ok) {
         setD1Error(data.detail || `Quotation action failed (${res.status})`);
         return;
       }
-      if (data.quotation) setD1Quote(data.quotation);
-      if (successMessage) setD1ActionNotice(successMessage);
+      if (data.quotation && data.quotation.job_id === targetJobId && data.quotation.workspace_id === targetWorkspaceId) {
+        setD1Quote(data.quotation);
+        if (data.acceptance_token) {
+          const quoteKey = data.quotation.id;
+          const nextToken = data.acceptance_token;
+          setTokensByQuoteId(prev => ({ ...prev, [quoteKey]: nextToken }));
+        }
+        if (data.email_dispatch) {
+          const quoteKey = data.quotation.id;
+          const dispatch = data.email_dispatch;
+          setDispatchByQuoteId(prev => ({ ...prev, [quoteKey]: dispatch }));
+        }
+      }
+      if (data.email_dispatch?.status === 'FAILED') {
+        setD1Error(
+          `Email dispatch FAILED${data.email_dispatch.error ? `: ${data.email_dispatch.error}` : ''}. Use Retry / Resend Quote Email below to recover.`
+        );
+      } else if (data.email_dispatch?.status === 'UNCERTAIN') {
+        setD1Error(
+          `Email dispatch outcome is UNCERTAIN${data.email_dispatch.error ? `: ${data.email_dispatch.error}` : ''}. Verify delivery or retry dispatch below.`
+        );
+      } else if (successMessage) {
+        setD1ActionNotice(successMessage);
+      }
     } catch (err) {
-      setD1Error(err instanceof Error ? err.message : 'Quotation action failed');
+      if (
+        latestSelectionRef.current.workspaceId === targetWorkspaceId &&
+        latestSelectionRef.current.jobId === targetJobId
+      ) {
+        setD1Error(err instanceof Error ? err.message : 'Quotation action failed');
+      }
     } finally {
-      setD1Loading(false);
+      if (
+        latestSelectionRef.current.workspaceId === targetWorkspaceId &&
+        latestSelectionRef.current.jobId === targetJobId
+      ) {
+        setD1Loading(false);
+      }
     }
   };
 
   const handleSimulateAcceptance = () => {
-    if (!quote) return;
+    if (!quote || !currentJob) return;
+    if (isAuthenticatedWorkspace) {
+      if (!isActiveD1QuoteValid || !d1Quote) return;
+      if (!customerAcceptedCheck) {
+        setAcceptanceFeedback({
+          success: false,
+          message: 'Customer must check the acceptance confirmation box before submitting.',
+        });
+        return;
+      }
+      void runD1Action('/accept', 'POST', { accepted_by_name: currentJob.siteContact }, 'Quotation accepted and persisted to D1.');
+      return;
+    }
+
     if (!customerAcceptedCheck && activeLinkScenario === 'valid') {
       setAcceptanceFeedback({
         success: false,
@@ -249,23 +569,26 @@ export const QuotesAcceptanceView: React.FC = () => {
       return;
     }
 
-    if (isAuthenticatedWorkspace && d1Quote) {
-      void runD1Action('/accept', 'POST', { accepted_by_name: currentJob?.siteContact }, 'Quotation accepted and persisted to D1.');
-      return;
-    }
-
     const outcome = simulateQuoteAcceptance(currentJob.id, activeLinkScenario);
     setAcceptanceFeedback(outcome);
   };
 
   const createD1Quote = async (exSubtotal: number) => {
-    if (!session?.workspaceId || !currentJob) return;
+    if (!isAuthenticatedWorkspace || !activeWorkspaceId || !currentJob || currentJob.brandId !== activeWorkspaceId) return;
+    const targetWorkspaceId = activeWorkspaceId;
+    const targetJobId = currentJob.id;
     setD1Loading(true);
     setD1Error(null);
     try {
-      const token = await session.token();
+      const token = await session!.token();
+      if (
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
       const res = await fetch(
-        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(session.workspaceId)}/quotations`),
+        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(targetWorkspaceId)}/quotations`),
         {
           method: 'POST',
           headers: {
@@ -273,8 +596,8 @@ export const QuotesAcceptanceView: React.FC = () => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            job_id: currentJob.id,
-            customer_id: currentJob.customerId,
+            job_id: targetJobId,
+            customer_id: currentJob.customerId || undefined,
             brand_id: currentJob.brandId,
             title: quoteTitle,
             line_items: [
@@ -288,12 +611,20 @@ export const QuotesAcceptanceView: React.FC = () => {
           }),
         }
       );
-      const data = await res.json().catch(() => ({})) as { quotation?: ApiQuotationRecord; detail?: string };
+      const data = (await res.json().catch(() => ({}))) as { quotation?: ApiQuotationRecord; detail?: string };
+      if (
+        latestSelectionRef.current.workspaceId !== targetWorkspaceId ||
+        latestSelectionRef.current.jobId !== targetJobId
+      ) {
+        return;
+      }
       if (!res.ok) {
         setD1Error(data.detail || `Failed to create quotation (${res.status})`);
         return;
       }
-      if (data.quotation) setD1Quote(data.quotation);
+      if (data.quotation && data.quotation.job_id === targetJobId && data.quotation.workspace_id === targetWorkspaceId) {
+        setD1Quote(data.quotation);
+      }
       setD1ActionNotice('Draft quotation saved to D1.');
       setIsPrepareModalOpen(false);
     } catch (err) {
@@ -305,11 +636,12 @@ export const QuotesAcceptanceView: React.FC = () => {
 
   const handlePrepareQuoteSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!currentJob) return;
     const grossTotal = parseFloat(quoteAmount) || 1450;
     // GST convention: Gross total / 1.1 = Subtotal ex-GST
     const exSubtotal = Math.round((grossTotal / 1.1) * 100) / 100;
 
-    if (isAuthenticatedWorkspace && session?.workspaceId && currentJob) {
+    if (isAuthenticatedWorkspace) {
       void createD1Quote(exSubtotal);
       return;
     }
@@ -334,6 +666,53 @@ export const QuotesAcceptanceView: React.FC = () => {
 
   const jobBrand = currentJob ? brands[currentJob.brandId] : undefined;
 
+  if (isAuthenticatedWorkspace && d1JobsLoading) {
+    return (
+      <div className="cabms-card p-8 text-center space-y-2" data-testid="d1-jobs-loading">
+        <FontAwesomeIcon icon={faClock} className="w-6 h-6 text-sky-400 animate-pulse" />
+        <p className="text-sm font-semibold text-(--cabms-text-primary)">Loading persisted compliance jobs...</p>
+      </div>
+    );
+  }
+
+  if (isAuthenticatedWorkspace && d1JobsError) {
+    return (
+      <div className="cabms-card p-8 text-center space-y-4 border border-red-800/80" data-testid="d1-jobs-error">
+        <FontAwesomeIcon icon={faTriangleExclamation} className="w-6 h-6 text-red-400" />
+        <div className="space-y-1">
+          <h2 className="text-base font-bold text-(--cabms-text-primary)">Unable to Load Workspace Compliance Jobs</h2>
+          <p className="text-xs text-red-300">{d1JobsError}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadPersistedJobs()}
+          className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition cursor-pointer"
+        >
+          Retry Loading Jobs
+        </button>
+      </div>
+    );
+  }
+
+  if (isAuthenticatedWorkspace && !currentJob) {
+    return (
+      <div className="cabms-card p-8 text-center space-y-3" data-testid="d1-jobs-empty">
+        <FontAwesomeIcon icon={faFileLines} className="w-6 h-6 text-(--cabms-text-secondary)" />
+        <h2 className="text-base font-bold text-(--cabms-text-primary)">No Persisted Compliance Jobs Found</h2>
+        <p className="text-xs text-(--cabms-text-secondary) max-w-md mx-auto">
+          Create or convert a compliance job in Jobs &amp; Operations for this workspace before preparing a quotation.
+        </p>
+        <button
+          type="button"
+          onClick={() => void loadPersistedJobs()}
+          className="px-4 py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) text-xs font-bold rounded-lg transition cursor-pointer"
+        >
+          Refresh Workspace Jobs
+        </button>
+      </div>
+    );
+  }
+
   if (!currentJob || !jobBrand) {
     return (
       <AccessDeniedView
@@ -343,6 +722,48 @@ export const QuotesAcceptanceView: React.FC = () => {
       />
     );
   }
+
+  const latestDispatchEvent = (() => {
+    const events = isActiveD1QuoteValid && d1Quote?.events ? d1Quote.events : [];
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i];
+      if (['EMAIL_DISPATCHED', 'EMAIL_DISPATCH_FAILED', 'EMAIL_DISPATCH_UNCERTAIN'].includes(ev.event_type)) {
+        return {
+          eventType: ev.event_type,
+          status: typeof ev.details?.status === 'string' ? ev.details.status : '',
+          recipientEmail: typeof ev.details?.recipient_email === 'string' ? ev.details.recipient_email : '',
+          error: typeof ev.details?.error === 'string' ? ev.details.error : '',
+        };
+      }
+    }
+    return null;
+  })();
+
+  const recordedDispatch = isActiveD1QuoteValid && d1Quote ? dispatchByQuoteId[d1Quote.id] : undefined;
+  const effectiveDispatchStatus = recordedDispatch?.status || latestDispatchEvent?.status || null;
+  const needsDispatchRecovery = Boolean(
+    isActiveD1QuoteValid &&
+      d1Quote?.acceptance_status === 'SENT' &&
+      (effectiveDispatchStatus === 'FAILED' ||
+        effectiveDispatchStatus === 'UNCERTAIN' ||
+        latestDispatchEvent?.eventType === 'EMAIL_DISPATCH_FAILED' ||
+        latestDispatchEvent?.eventType === 'EMAIL_DISPATCH_UNCERTAIN')
+  );
+  const recoveryRecipient = (recipientEmail || latestDispatchEvent?.recipientEmail || '').trim();
+  const activePortalToken = isActiveD1QuoteValid && d1Quote ? tokensByQuoteId[d1Quote.id] || null : null;
+  const activePortalUrl = activePortalToken
+    ? `${typeof window !== 'undefined' && window.location?.origin ? window.location.origin : ''}/?quote_token=${encodeURIComponent(activePortalToken)}`
+    : null;
+
+  const copyPortalUrl = async () => {
+    if (!activePortalUrl) return;
+    try {
+      await navigator.clipboard?.writeText(activePortalUrl);
+      setCopyNotice('Customer portal URL copied to clipboard.');
+    } catch {
+      setCopyNotice(`Customer portal URL: ${activePortalUrl}`);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -357,7 +778,9 @@ export const QuotesAcceptanceView: React.FC = () => {
               </h1>
             </div>
             <p className="text-xs text-(--cabms-text-secondary) mt-1">
-              MYOB quote preparation, frozen Terms snapshots, and customer online acceptance testing (Preview Mode).
+              {isAuthenticatedWorkspace
+                ? 'Persistent D1 quotation preparation, frozen Terms snapshots, and customer portal acceptance links.'
+                : 'MYOB quote preparation, frozen Terms snapshots, and customer online acceptance testing (Preview Mode).'}
             </p>
           </div>
 
@@ -391,13 +814,28 @@ export const QuotesAcceptanceView: React.FC = () => {
               <select
                 id="quote-work-order"
                 title={`${currentJob.id} — ${currentJob.title}`}
-                value={selectedJobId || ''}
-                onChange={e => setSelectedJobId(e.target.value)}
+                value={currentJob.id}
+                onChange={e => {
+                  const nextId = e.target.value;
+                  if (nextId === currentJob.id) return;
+                  quoteAbortRef.current?.abort();
+                  quoteRequestSeqRef.current += 1;
+                  latestSelectionRef.current = { workspaceId: activeWorkspaceId, jobId: nextId || null };
+                  setD1Quote(null);
+                  setD1Error(null);
+                  setD1ActionNotice(null);
+                  setCopyNotice(null);
+                  if (isAuthenticatedWorkspace) {
+                    setD1SelectedJobId(nextId);
+                  } else {
+                    setSelectedJobId(nextId);
+                  }
+                }}
                 className="w-full min-w-0 max-w-full cabms-card-subtle rounded px-2.5 py-1 text-(--cabms-text-primary) font-mono text-xs font-bold cursor-pointer"
               >
-                {jobs.map(j => (
+                {selectableJobs.map(j => (
                   <option key={j.id} value={j.id}>
-                    {j.id} — {j.title} {j.quote ? `($${j.quote.total.toLocaleString()})` : '(Unquoted)'}
+                    {j.id} — {j.title} {!isAuthenticatedWorkspace ? (j.quote ? `($${j.quote.total.toLocaleString()})` : '(Unquoted)') : ''}
                   </option>
                 ))}
               </select>
@@ -429,7 +867,12 @@ export const QuotesAcceptanceView: React.FC = () => {
       </div>
 
       {/* Main View: Quote Details OR Empty State */}
-      {!quote ? (
+      {isAuthenticatedWorkspace && d1Loading && !quote ? (
+        <div className="cabms-card p-8 text-center space-y-2" data-testid="d1-quote-loading">
+          <FontAwesomeIcon icon={faClock} className="w-6 h-6 text-sky-400 animate-pulse" />
+          <p className="text-sm font-semibold text-(--cabms-text-primary)">Loading quotation for {currentJob.id}...</p>
+        </div>
+      ) : !quote ? (
         /* Empty State with Prepare Quote Action */
         <div className="cabms-card p-8 text-center space-y-4">
           <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mx-auto text-(--cabms-text-secondary)">
@@ -441,9 +884,16 @@ export const QuotesAcceptanceView: React.FC = () => {
               This work order has not yet had a quotation prepared or synchronized from the shared MYOB company file.
             </p>
           </div>
+          {isAuthenticatedWorkspace && d1Error && (
+            <div className="max-w-md mx-auto p-2.5 rounded bg-red-950/70 border border-red-800 text-red-200 text-xs">
+              {d1Error}
+            </div>
+          )}
           <button
+            type="button"
+            disabled={isAuthenticatedWorkspace && (d1Loading || d1JobsLoading)}
             onClick={() => setIsPrepareModalOpen(true)}
-            className="inline-flex items-center space-x-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer"
+            className="inline-flex items-center space-x-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold rounded-lg transition shadow-md cursor-pointer disabled:opacity-50"
           >
             <FontAwesomeIcon icon={faPlus} className="w-4 h-4" />
             <span>Prepare / Link MYOB Quote</span>
@@ -454,26 +904,63 @@ export const QuotesAcceptanceView: React.FC = () => {
         <div className="space-y-6">
           {/* Simulated Link Control Toolbar */}
           <div className="cabms-card p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-            <div className="flex items-center space-x-2 text-(--cabms-text-secondary)">
-              <span className="font-mono text-[11px] text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded border border-emerald-800">
-                https://portal.cabms.example.invalid/quotes/accept?token=tok_{currentJob.id.toLowerCase()}
-              </span>
+            <div className="flex flex-wrap items-center gap-2 text-(--cabms-text-secondary)">
+              {isAuthenticatedWorkspace ? (
+                activePortalUrl ? (
+                  <>
+                    <span className="font-mono text-[11px] text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded border border-emerald-800 break-all" data-testid="recipient-portal-url">
+                      {activePortalUrl}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void copyPortalUrl()}
+                      className="px-2.5 py-1 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) rounded font-semibold transition cursor-pointer inline-flex items-center gap-1"
+                    >
+                      <FontAwesomeIcon icon={faCopy} className="w-3 h-3" />
+                      <span>Copy Link</span>
+                    </button>
+                    <a
+                      href={activePortalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-slate-950 rounded font-bold transition inline-flex items-center gap-1"
+                    >
+                      <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3 h-3" />
+                      <span>Open Customer Portal</span>
+                    </a>
+                  </>
+                ) : (
+                  <span className="text-[11px] text-(--cabms-text-secondary)">
+                    {quote.acceptanceStatus === 'DRAFT'
+                      ? 'Send & freeze this quotation in Office Administration to issue a customer ?quote_token= portal link.'
+                      : 'Acceptance token is hashed at rest. Send or resend the quotation to generate a fresh ?quote_token= portal link.'}
+                  </span>
+                )
+              ) : (
+                <span className="font-mono text-[11px] text-emerald-400 bg-emerald-950/80 px-2.5 py-1 rounded border border-emerald-800">
+                  https://portal.cabms.example.invalid/quotes/accept?token=tok_{currentJob.id.toLowerCase()}
+                </span>
+              )}
             </div>
 
             <div className="flex items-center space-x-2">
-              <span className="text-(--cabms-text-secondary) font-semibold">Customer Acceptance Link Preview:</span>
-              <select
-                value={activeLinkScenario}
-                onChange={e => setActiveLinkScenario(e.target.value as any)}
-                className="cabms-input rounded px-2.5 py-1 text-(--cabms-text-primary) font-medium cursor-pointer"
-              >
-                <option value="valid">Valid Acceptance Token (Normal)</option>
-                <option value="invalid">Invalid / Corrupted Token</option>
-                <option value="expired">Expired Token (&gt; 14 Days Old)</option>
-                <option value="revoked">Revoked Link (Cancelled by Office)</option>
-                <option value="superseded">Superseded by Revised Quote</option>
-                <option value="already_accepted">Already Accepted Token</option>
-              </select>
+              {!isAuthenticatedWorkspace && (
+                <>
+                  <span className="text-(--cabms-text-secondary) font-semibold">Customer Acceptance Link Preview:</span>
+                  <select
+                    value={activeLinkScenario}
+                    onChange={e => setActiveLinkScenario(e.target.value as any)}
+                    className="cabms-input rounded px-2.5 py-1 text-(--cabms-text-primary) font-medium cursor-pointer"
+                  >
+                    <option value="valid">Valid Acceptance Token (Normal)</option>
+                    <option value="invalid">Invalid / Corrupted Token</option>
+                    <option value="expired">Expired Token (&gt; 14 Days Old)</option>
+                    <option value="revoked">Revoked Link (Cancelled by Office)</option>
+                    <option value="superseded">Superseded by Revised Quote</option>
+                    <option value="already_accepted">Already Accepted Token</option>
+                  </select>
+                </>
+              )}
               <button
                 onClick={() => setViewMode('office')}
                 className="px-3 py-1 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) rounded font-semibold transition cursor-pointer"
@@ -482,6 +969,11 @@ export const QuotesAcceptanceView: React.FC = () => {
               </button>
             </div>
           </div>
+          {copyNotice && (
+            <div className="p-2.5 rounded bg-sky-950/70 border border-sky-800 text-sky-200 text-xs">
+              {copyNotice}
+            </div>
+          )}
 
           {/* Minimal Standalone Customer Card */}
           <div className="max-w-3xl mx-auto cabms-card rounded-2xl p-6 sm:p-8 space-y-6 shadow-2xl">
@@ -623,6 +1115,12 @@ export const QuotesAcceptanceView: React.FC = () => {
 
             {/* Acceptance Confirmation & Submit Action */}
             <div className="space-y-4 pt-2 border-t border-slate-800">
+              {isAuthenticatedWorkspace && d1Error && (
+                <div className="p-3 rounded-lg bg-red-950/70 border border-red-800 text-red-200 text-xs">{d1Error}</div>
+              )}
+              {isAuthenticatedWorkspace && d1ActionNotice && (
+                <div className="p-3 rounded-lg bg-emerald-950/70 border border-emerald-800 text-emerald-200 text-xs">{d1ActionNotice}</div>
+              )}
               <label className="flex items-start space-x-3 cursor-pointer text-(--cabms-text-secondary) text-xs">
                 <input
                   type="checkbox"
@@ -636,8 +1134,10 @@ export const QuotesAcceptanceView: React.FC = () => {
               </label>
 
               <button
+                type="button"
+                disabled={isAuthenticatedWorkspace && (d1Loading || !isActiveD1QuoteValid || quote.acceptanceStatus !== 'SENT')}
                 onClick={handleSimulateAcceptance}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-sm rounded-xl transition shadow-lg cursor-pointer flex items-center justify-center space-x-2"
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-extrabold text-sm rounded-xl transition shadow-lg cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-2"
               >
                 <FontAwesomeIcon icon={faCircleCheck} className="w-5 h-5" />
                 <span>Accept & Authorize Quotation</span>
@@ -787,8 +1287,37 @@ export const QuotesAcceptanceView: React.FC = () => {
 
               <div className="space-y-3 text-xs">
                 <p className="text-(--cabms-text-secondary) leading-relaxed">
-                  Test the standalone customer acceptance portal link generated for {currentJob.siteContact}.
+                  {isAuthenticatedWorkspace
+                    ? `Manage customer acceptance portal links and D1 quotation lifecycle for ${currentJob.siteContact}.`
+                    : `Test the standalone customer acceptance portal link generated for ${currentJob.siteContact}.`}
                 </p>
+
+                {isAuthenticatedWorkspace && activePortalUrl && (
+                  <div className="cabms-card-subtle p-3 space-y-2 border border-emerald-800/60" data-testid="office-portal-link-box">
+                    <div className="text-[11px] font-bold text-emerald-300">Customer Portal Link (?quote_token=)</div>
+                    <div className="font-mono text-[10px] text-emerald-400 break-all">{activePortalUrl}</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void copyPortalUrl()}
+                        className="px-2.5 py-1 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-semibold rounded transition cursor-pointer inline-flex items-center gap-1"
+                      >
+                        <FontAwesomeIcon icon={faCopy} className="w-3 h-3" />
+                        <span>Copy Customer Link</span>
+                      </button>
+                      <a
+                        href={activePortalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded transition inline-flex items-center gap-1"
+                      >
+                        <FontAwesomeIcon icon={faArrowUpRightFromSquare} className="w-3 h-3" />
+                        <span>Open Portal</span>
+                      </a>
+                    </div>
+                    {copyNotice && <div className="text-[11px] text-sky-300">{copyNotice}</div>}
+                  </div>
+                )}
 
                 <button
                   onClick={() => setViewMode('recipient')}
@@ -798,23 +1327,25 @@ export const QuotesAcceptanceView: React.FC = () => {
                   <span>Open Standalone Recipient Portal</span>
                 </button>
 
-                <div className="pt-3 border-t border-slate-800">
-                  <label className="text-(--cabms-text-secondary) block font-semibold mb-1">
-                    Test Link Condition (Preview)
-                  </label>
-                  <select
-                    value={activeLinkScenario}
-                    onChange={e => setActiveLinkScenario(e.target.value as any)}
-                    className="w-full cabms-input rounded px-2.5 py-1.5 text-(--cabms-text-primary) font-medium cursor-pointer"
-                  >
-                    <option value="valid">Valid Acceptance Token (Normal)</option>
-                    <option value="invalid">Invalid / Corrupted Token</option>
-                    <option value="expired">Expired Token (&gt; 14 Days Old)</option>
-                    <option value="revoked">Revoked Link (Cancelled by Office)</option>
-                    <option value="superseded">Superseded by Revised Quote</option>
-                    <option value="already_accepted">Already Accepted Token</option>
-                  </select>
-                </div>
+                {!isAuthenticatedWorkspace && (
+                  <div className="pt-3 border-t border-slate-800">
+                    <label className="text-(--cabms-text-secondary) block font-semibold mb-1">
+                      Test Link Condition (Preview)
+                    </label>
+                    <select
+                      value={activeLinkScenario}
+                      onChange={e => setActiveLinkScenario(e.target.value as any)}
+                      className="w-full cabms-input rounded px-2.5 py-1.5 text-(--cabms-text-primary) font-medium cursor-pointer"
+                    >
+                      <option value="valid">Valid Acceptance Token (Normal)</option>
+                      <option value="invalid">Invalid / Corrupted Token</option>
+                      <option value="expired">Expired Token (&gt; 14 Days Old)</option>
+                      <option value="revoked">Revoked Link (Cancelled by Office)</option>
+                      <option value="superseded">Superseded by Revised Quote</option>
+                      <option value="already_accepted">Already Accepted Token</option>
+                    </select>
+                  </div>
+                )}
 
                 <div className="cabms-card-subtle p-3 space-y-2">
                   <label className="flex items-start space-x-2 cursor-pointer text-(--cabms-text-secondary)">
@@ -831,8 +1362,10 @@ export const QuotesAcceptanceView: React.FC = () => {
                 </div>
 
                 <button
+                  type="button"
+                  disabled={isAuthenticatedWorkspace && (d1Loading || !isActiveD1QuoteValid || quote.acceptanceStatus !== 'SENT')}
                   onClick={handleSimulateAcceptance}
-                  className="w-full py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-bold text-xs rounded-lg transition cursor-pointer flex items-center justify-center space-x-1.5"
+                  className="w-full py-2 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-bold text-xs rounded-lg transition cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-1.5"
                 >
                   <FontAwesomeIcon icon={faPaperPlane} className="w-4 h-4" />
                   <span>Execute Acceptance in Office</span>
@@ -859,7 +1392,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                   </div>
                 )}
 
-                {isAuthenticatedWorkspace && d1Quote && (
+                {isAuthenticatedWorkspace && isActiveD1QuoteValid && d1Quote && (
                   <div className="pt-3 border-t border-slate-800 space-y-2" data-testid="d1-quote-lifecycle-controls">
                     <div className="text-[11px] font-bold uppercase tracking-wider text-sky-400">
                       D1 Quotation Lifecycle ({d1Quote.acceptance_status})
@@ -885,11 +1418,43 @@ export const QuotesAcceptanceView: React.FC = () => {
                         />
                         <button
                           type="button"
-                          disabled={d1Loading}
+                          disabled={d1Loading || !isActiveD1QuoteValid}
                           onClick={() => void runD1Action('/send', 'POST', recipientEmail ? { recipient_email: recipientEmail } : {}, 'Quotation sent and Terms snapshot frozen.')}
                           className="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-lg transition cursor-pointer disabled:opacity-50"
                         >
                           Send &amp; Freeze Terms Snapshot
+                        </button>
+                      </div>
+                    )}
+                    {d1Quote.acceptance_status === 'SENT' && needsDispatchRecovery && (
+                      <div className="p-3 rounded-lg bg-amber-950/50 border border-amber-800/80 space-y-2" data-testid="d1-send-recovery-panel">
+                        <div className="text-[11px] font-bold text-amber-300">
+                          Email Dispatch Recovery ({effectiveDispatchStatus || 'FAILED'})
+                        </div>
+                        {latestDispatchEvent?.error && (
+                          <div className="text-[11px] text-amber-200">{latestDispatchEvent.error}</div>
+                        )}
+                        <input
+                          type="email"
+                          placeholder="Recipient email for retry dispatch"
+                          value={recipientEmail || latestDispatchEvent?.recipientEmail || ''}
+                          onChange={e => setRecipientEmail(e.target.value)}
+                          className="w-full cabms-input rounded px-2.5 py-1.5 text-(--cabms-text-primary) text-xs"
+                        />
+                        <button
+                          type="button"
+                          disabled={d1Loading || !isActiveD1QuoteValid || !recoveryRecipient}
+                          onClick={() =>
+                            void runD1Action(
+                              '/send',
+                              'POST',
+                              { recipient_email: recoveryRecipient },
+                              'Quotation email re-dispatched.'
+                            )
+                          }
+                          className="w-full py-1.5 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
+                        >
+                          Retry / Resend Quote Email
                         </button>
                       </div>
                     )}
@@ -906,7 +1471,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                           {d1Quote.acceptance_status === 'SENT' && (
                             <button
                               type="button"
-                              disabled={d1Loading || !actionReason.trim()}
+                              disabled={d1Loading || !isActiveD1QuoteValid || !actionReason.trim()}
                               onClick={() => void runD1Action('/refuse', 'POST', { reason: actionReason.trim() }, 'Quotation marked as refused.')}
                               className="py-1.5 bg-amber-700 hover:bg-amber-600 text-white font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
                             >
@@ -915,7 +1480,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                           )}
                           <button
                             type="button"
-                            disabled={d1Loading}
+                            disabled={d1Loading || !isActiveD1QuoteValid}
                             onClick={() => void runD1Action('/revoke', 'POST', { reason: actionReason.trim() || 'Revoked by office' }, 'Quotation revoked.')}
                             className="py-1.5 bg-red-700 hover:bg-red-600 text-white font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
                           >
@@ -927,7 +1492,7 @@ export const QuotesAcceptanceView: React.FC = () => {
                     {['SENT', 'EXPIRED', 'REFUSED'].includes(d1Quote.acceptance_status) && (
                       <button
                         type="button"
-                        disabled={d1Loading}
+                        disabled={d1Loading || !isActiveD1QuoteValid}
                         onClick={() => void runD1Action('/revise', 'POST', {}, 'Superseded quote and created new draft revision.')}
                         className="w-full py-1.5 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
                       >

@@ -15,7 +15,7 @@ import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faBuilding, faGear, faLock } from '@fortawesome/free-solid-svg-icons';
 
-export const SystemWorkspaceSettingsView: React.FC = () => {
+export const SystemWorkspaceSettingsView: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const session = useG01Session();
   const { persona } = useCabms();
   const [activeSubTab, setActiveSubTab] = useState<'workspace' | 'system'>('workspace');
@@ -78,7 +78,7 @@ export const SystemWorkspaceSettingsView: React.FC = () => {
       {/* Tab Viewport */}
       <div>
         <div hidden={activeSubTab !== 'workspace'}>
-          <WorkspaceSettingsView />
+          <WorkspaceSettingsView isActive={isActive} />
         </div>
         {session && isSuperAdmin ? (
           <div hidden={activeSubTab !== 'system'}>

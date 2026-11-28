@@ -412,3 +412,411 @@ test('P1 #4 & #5 regression: workspace provider settings wire into emailService 
   assert.equal(noStartTlsRes.errorCode, 'SMTP_TLS_REQUIRED');
   assert.ok(!sentCommands.some(c => c.includes('AUTH LOGIN') || c.includes(btoa('secret-never-sent'))));
 });
+
+test('Thread #11 regression: concurrent dispatchReviewRequest sends at most 1 email', async () => {
+  const db = await setupCommunicationsDb();
+  let sendCalls = 0;
+  let relayStatus = 200;
+
+  const env: EmailEnv = {
+    DB: db,
+    EMAIL_RELAY_URL: 'https://relay.example.invalid/v1/emails',
+    EMAIL_RELAY_API_KEY: 'relay_secret_key',
+    EMAIL_FETCH_OVERRIDE: (async () => {
+      sendCalls += 1;
+      await new Promise(resolve => setTimeout(resolve, 15));
+      if (relayStatus !== 200) {
+        return new Response('relay error', { status: relayStatus });
+      }
+      return new Response(JSON.stringify({ id: `relay_msg_${sendCalls}` }), { status: 200 });
+    }) as typeof fetch,
+  };
+
+  // 1. Overlapping initial dispatches for same job send exactly once
+  const results = await Promise.all([
+    emailService.dispatchReviewRequest(db, env, {
+      workspaceId: 'solarcell',
+      jobId: 'JOB-CONC-1',
+      recipientEmail: 'cust1@example.invalid',
+      actorUserId: 'usr_staff',
+      requestId: 'req_conc_1',
+    }),
+    emailService.dispatchReviewRequest(db, env, {
+      workspaceId: 'solarcell',
+      jobId: 'JOB-CONC-1',
+      recipientEmail: 'cust1@example.invalid',
+      actorUserId: 'usr_staff',
+      requestId: 'req_conc_2',
+    }),
+    emailService.dispatchReviewRequest(db, env, {
+      workspaceId: 'solarcell',
+      jobId: 'JOB-CONC-1',
+      recipientEmail: 'cust1@example.invalid',
+      actorUserId: 'usr_staff',
+      requestId: 'req_conc_3',
+    }),
+  ]);
+
+  assert.equal(sendCalls, 1);
+  assert.equal(results.filter(r => !r.deduplicated).length, 1);
+  assert.equal(results.filter(r => r.deduplicated && r.delivery === null).length, 2);
+
+  const deliveries = await emailService.listEmailDeliveries(db, 'solarcell', { jobId: 'JOB-CONC-1' });
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].status, 'SENT');
+
+  const reviews = await emailService.listReviewRequests(db, 'solarcell', 'JOB-CONC-1');
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0].status, 'SENT');
+  assert.equal(reviews[0].attempt_count, 1);
+
+  // 2. Overlapping dispatches on a FAILED review request also send at most once
+  relayStatus = 500;
+  const failedFirst = await emailService.dispatchReviewRequest(db, env, {
+    workspaceId: 'solarcell',
+    jobId: 'JOB-CONC-2',
+    recipientEmail: 'cust2@example.invalid',
+    actorUserId: 'usr_staff',
+    requestId: 'req_conc_fail_1',
+  });
+  assert.equal(failedFirst.review_request.status, 'FAILED');
+  assert.equal(sendCalls, 2);
+
+  relayStatus = 200;
+  const retryRace = await Promise.all([
+    emailService.dispatchReviewRequest(db, env, {
+      workspaceId: 'solarcell',
+      jobId: 'JOB-CONC-2',
+      recipientEmail: 'cust2@example.invalid',
+      actorUserId: 'usr_staff',
+      requestId: 'req_conc_retry_1',
+    }),
+    emailService.dispatchReviewRequest(db, env, {
+      workspaceId: 'solarcell',
+      jobId: 'JOB-CONC-2',
+      recipientEmail: 'cust2@example.invalid',
+      actorUserId: 'usr_staff',
+      requestId: 'req_conc_retry_2',
+    }),
+  ]);
+
+  assert.equal(sendCalls, 3);
+  assert.equal(retryRace.filter(r => !r.deduplicated).length, 1);
+  assert.equal(retryRace.filter(r => r.deduplicated).length, 1);
+  const reviews2 = await emailService.listReviewRequests(db, 'solarcell', 'JOB-CONC-2');
+  assert.equal(reviews2[0].status, 'SENT');
+  assert.equal(reviews2[0].attempt_count, 2);
+});
+
+test('Thread #11 & #12 regression: concurrent retryEmailDelivery and /reviews/:jobId/retry send once', async () => {
+  const db = await setupCommunicationsDb();
+  let transportCalls = 0;
+  let relayStatus = 500;
+
+  const env: EmailEnv = {
+    DB: db,
+    EMAIL_RELAY_URL: 'https://relay.example.invalid/v1/emails',
+    EMAIL_RELAY_API_KEY: 'relay_secret_key',
+    EMAIL_FETCH_OVERRIDE: (async () => {
+      transportCalls += 1;
+      await new Promise(resolve => setTimeout(resolve, 15));
+      if (relayStatus !== 200) {
+        return new Response('relay fail', { status: relayStatus });
+      }
+      return new Response(JSON.stringify({ id: `relay_retry_${transportCalls}` }), { status: 200 });
+    }) as typeof fetch,
+  };
+
+  // 1. Concurrent retryEmailDelivery on a FAILED test email sends once
+  const failedEmail = await emailService.sendTestEmail(db, env, {
+    workspaceId: 'solarcell',
+    toEmail: 'retry-race@example.invalid',
+    actorUserId: 'usr_admin',
+    requestId: 'req_test_fail',
+  });
+  assert.equal(failedEmail.delivery.status, 'FAILED');
+  assert.equal(transportCalls, 1);
+
+  relayStatus = 200;
+  const concurrentRetries = await Promise.all([
+    emailService.retryEmailDelivery(db, env, 'solarcell', failedEmail.delivery.id, 'usr_admin', 'req_r1'),
+    emailService.retryEmailDelivery(db, env, 'solarcell', failedEmail.delivery.id, 'usr_admin', 'req_r2'),
+  ]);
+  assert.equal(transportCalls, 2);
+  assert.equal(concurrentRetries.filter(r => r.ok).length, 1);
+  const loser = concurrentRetries.find(r => !r.ok);
+  assert.ok(loser && !loser.ok);
+  assert.equal(loser.code, 'INVALID_STATE');
+
+  // 2. Concurrent /deliveries/:deliveryId/retry vs /reviews/:jobId/retry on a FAILED review request sends once
+  relayStatus = 500;
+  const failedReview = await emailService.dispatchReviewRequest(db, env, {
+    workspaceId: 'solarcell',
+    jobId: 'JOB-RACE-RETRY',
+    recipientEmail: 'owner@example.invalid',
+    actorUserId: 'usr_staff',
+    requestId: 'req_rev_fail',
+  });
+  assert.equal(failedReview.review_request.status, 'FAILED');
+  assert.ok(failedReview.delivery);
+  const deliveryId = failedReview.delivery!.id;
+  assert.equal(transportCalls, 3);
+
+  relayStatus = 200;
+  const [delivRouteRes, reviewRouteRes] = await Promise.all([
+    handleCommunications(
+      new Request(`http://localhost/api/v1/workspaces/solarcell/communications/deliveries/${deliveryId}/retry`, {
+        method: 'POST',
+      }),
+      env,
+      'solarcell',
+      `deliveries/${deliveryId}/retry`,
+      'req_route_deliv_retry',
+      makeAuth(STAFF_AUTH)
+    ),
+    handleCommunications(
+      new Request('http://localhost/api/v1/workspaces/solarcell/communications/reviews/JOB-RACE-RETRY/retry', {
+        method: 'POST',
+      }),
+      env,
+      'solarcell',
+      'reviews/JOB-RACE-RETRY/retry',
+      'req_route_rev_retry',
+      makeAuth(STAFF_AUTH)
+    ),
+  ]);
+
+  assert.equal(transportCalls, 4);
+  const statuses = [delivRouteRes.status, reviewRouteRes.status].sort((a, b) => a - b);
+  assert.deepEqual(statuses, [200, 409]);
+
+  const [syncedReview] = await emailService.listReviewRequests(db, 'solarcell', 'JOB-RACE-RETRY');
+  assert.equal(syncedReview.status, 'SENT');
+  assert.equal(syncedReview.attempt_count, 2);
+  assert.ok(syncedReview.sent_at);
+});
+
+test('Thread #12 regression: retrying REVIEW_REQUEST via /deliveries/:deliveryId/retry syncs review_requests for FAILED, UNCERTAIN, and SENT', async () => {
+  const db = await setupCommunicationsDb();
+  const env: Env = { DB: db };
+
+  const initial = await emailService.dispatchReviewRequest(db, env, {
+    workspaceId: 'solarcell',
+    jobId: 'JOB-SYNC-1',
+    recipientEmail: 'sync@example.invalid',
+    actorUserId: 'usr_staff',
+    requestId: 'req_sync_init',
+    simulateOutcome: 'FAILED',
+  });
+  assert.equal(initial.review_request.status, 'FAILED');
+  assert.ok(initial.delivery);
+  const deliveryId = initial.delivery!.id;
+
+  // 1. Retry resulting in FAILED keeps review_requests FAILED and updates last_error & attempt_count
+  const retryFailRes = await handleCommunications(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/communications/deliveries/${deliveryId}/retry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ simulate_outcome: 'FAILED' }),
+    }),
+    env,
+    'solarcell',
+    `deliveries/${deliveryId}/retry`,
+    'req_sync_fail',
+    makeAuth(STAFF_AUTH)
+  );
+  assert.equal(retryFailRes.status, 200);
+  const [afterFail] = await emailService.listReviewRequests(db, 'solarcell', 'JOB-SYNC-1');
+  assert.equal(afterFail.status, 'FAILED');
+  assert.equal(afterFail.attempt_count, 2);
+  assert.equal(afterFail.sent_at, null);
+  assert.match(afterFail.last_error || '', /550/);
+
+  // 2. Retry resulting in UNCERTAIN sets review_requests to UNCERTAIN + uncertain_reconciliation_needed = 1
+  const retryUncertainRes = await handleCommunications(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/communications/deliveries/${deliveryId}/retry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ simulate_outcome: 'UNCERTAIN' }),
+    }),
+    env,
+    'solarcell',
+    `deliveries/${deliveryId}/retry`,
+    'req_sync_uncertain',
+    makeAuth(STAFF_AUTH)
+  );
+  assert.equal(retryUncertainRes.status, 200);
+  const [afterUncertain] = await emailService.listReviewRequests(db, 'solarcell', 'JOB-SYNC-1');
+  assert.equal(afterUncertain.status, 'UNCERTAIN');
+  assert.equal(afterUncertain.uncertain_reconciliation_needed, 1);
+  assert.equal(afterUncertain.attempt_count, 3);
+  assert.equal(afterUncertain.sent_at, null);
+  assert.match(afterUncertain.last_error || '', /504/);
+
+  // Cannot retry while UNCERTAIN
+  const blockedRetry = await handleCommunications(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/communications/deliveries/${deliveryId}/retry`, {
+      method: 'POST',
+    }),
+    env,
+    'solarcell',
+    `deliveries/${deliveryId}/retry`,
+    'req_sync_blocked',
+    makeAuth(STAFF_AUTH)
+  );
+  assert.equal(blockedRetry.status, 409);
+
+  // Reconcile UNCERTAIN -> FAILED, then retry via /deliveries/:deliveryId/retry -> SENT
+  const reconciled = await emailService.reconcileReviewRequestStatus(
+    db,
+    env,
+    'solarcell',
+    'JOB-SYNC-1',
+    'FAILED',
+    'usr_admin',
+    'req_sync_reconcile'
+  );
+  assert.equal(reconciled.ok, true);
+
+  const retrySentRes = await handleCommunications(
+    new Request(`http://localhost/api/v1/workspaces/solarcell/communications/deliveries/${deliveryId}/retry`, {
+      method: 'POST',
+    }),
+    env,
+    'solarcell',
+    `deliveries/${deliveryId}/retry`,
+    'req_sync_sent',
+    makeAuth(STAFF_AUTH)
+  );
+  assert.equal(retrySentRes.status, 200);
+  const [afterSent] = await emailService.listReviewRequests(db, 'solarcell', 'JOB-SYNC-1');
+  assert.equal(afterSent.status, 'SENT');
+  assert.equal(afterSent.uncertain_reconciliation_needed, 0);
+  assert.equal(afterSent.last_error, null);
+  assert.equal(afterSent.attempt_count, 4);
+  assert.ok(afterSent.sent_at);
+
+  const [afterSentDelivery] = await emailService.listEmailDeliveries(db, 'solarcell', { jobId: 'JOB-SYNC-1' });
+  assert.equal(afterSentDelivery.status, 'SENT');
+  assert.equal(afterSentDelivery.attempt_count, 4);
+});
+
+test('Thread #4/#5/#6/#10 audit: resolveSenderIdentity preserves explicit sender_name without sender_email, and SMTP enforces TLS before AUTH', async () => {
+  const db = await setupCommunicationsDb();
+  const now = new Date().toISOString();
+  await db.exec(`INSERT OR IGNORE INTO workspaces (id, name, slug, created_at, updated_at) VALUES ('cctv', 'CCTV', 'cctv', '${now}', '${now}');`);
+  await db.exec(readFileSync(resolve('migrations/0019_settings_providers.sql'), 'utf8'));
+
+  // Simulate admin explicitly saving sender_name = 'CABMS Operations' while clearing sender_email
+  await db
+    .prepare(
+      `UPDATE workspace_provider_configs
+       SET sender_name = 'CABMS Operations', sender_email = NULL, version = 2, updated_by_user_id = 'usr_admin', updated_at = ?
+       WHERE workspace_id = 'solarcell'`
+    )
+    .bind(now)
+    .run();
+
+  const sender = await emailService.resolveSenderIdentity(db, 'solarcell');
+  assert.equal(sender.sender_name, 'CABMS Operations');
+  assert.equal(sender.sender_email, 'hello@solarcell-qld.example.invalid');
+
+  // Verify STARTTLS upgrade + re-EHLO happens BEFORE AUTH LOGIN on port 587
+  const sentBeforeTls: string[] = [];
+  const sentAfterTls: string[] = [];
+  let tlsActive = false;
+  let capturedConnectOpts: { secureTransport?: string; allowHalfOpen?: boolean } | undefined;
+
+  const makeSocket = (responses: string[], sink: string[]) => {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    let idx = 0;
+    return {
+      readable: new ReadableStream<Uint8Array>({
+        pull(ctrl) {
+          if (idx < responses.length) ctrl.enqueue(encoder.encode(responses[idx++]));
+          else ctrl.close();
+        },
+      }),
+      writable: new WritableStream<Uint8Array>({
+        write(chunk) {
+          sink.push(decoder.decode(chunk).trim());
+        },
+      }),
+      close: async () => undefined,
+    };
+  };
+
+  const startTlsConnect = (_addr: { hostname: string; port: number }, opts?: { secureTransport?: string; allowHalfOpen?: boolean }) => {
+    capturedConnectOpts = opts;
+    const preTls = makeSocket(
+      [
+        '220 smtp.example.invalid ESMTP\r\n',
+        '250-smtp.example.invalid\r\n250 STARTTLS\r\n',
+        '220 Ready to start TLS\r\n',
+      ],
+      sentBeforeTls
+    );
+    return {
+      ...preTls,
+      startTls: () => {
+        tlsActive = true;
+        return makeSocket(
+          [
+            '250-smtp.example.invalid\r\n250 AUTH LOGIN\r\n',
+            '334 VXNlcm5hbWU6\r\n',
+            '334 UGFzc3dvcmQ6\r\n',
+            '235 Authentication successful\r\n',
+            '250 OK\r\n',
+            '250 OK\r\n',
+            '354 End data\r\n',
+            '250 Queued\r\n',
+            '221 Bye\r\n',
+          ],
+          sentAfterTls
+        );
+      },
+    };
+  };
+
+  const startTlsRes = await emailService.dispatchViaSmtpTcp(
+    {},
+    { fromName: 'Sender', fromEmail: 'from@example.invalid', toEmail: 'to@example.invalid', subject: 'TLS Test', bodyText: 'Body' },
+    { host: 'smtp.example.invalid', port: 587, user: 'smtp-user', pass: 'smtp-secret-pass', useTls: true },
+    startTlsConnect
+  );
+  assert.equal(startTlsRes.status, 'SENT');
+  assert.equal(tlsActive, true);
+  assert.equal(capturedConnectOpts?.secureTransport, 'starttls');
+  assert.deepEqual(sentBeforeTls, ['EHLO cabms.workers.local', 'STARTTLS']);
+  assert.equal(sentAfterTls[0], 'EHLO cabms.workers.local');
+  assert.equal(sentAfterTls[1], 'AUTH LOGIN');
+
+  // Verify implicit TLS on port 465 uses secureTransport: 'on'
+  let implicitOpts: { secureTransport?: string } | undefined;
+  const implicitRes = await emailService.dispatchViaSmtpTcp(
+    {},
+    { fromName: 'Sender', fromEmail: 'from@example.invalid', toEmail: 'to@example.invalid', subject: 'Implicit TLS', bodyText: 'Body' },
+    { host: 'smtp.example.invalid', port: 465, user: 'smtp-user', pass: 'smtp-secret-pass', useTls: true },
+    (_addr, opts) => {
+      implicitOpts = opts;
+      return makeSocket(
+        [
+          '220 smtp.example.invalid ESMTP\r\n',
+          '250-smtp.example.invalid\r\n250 AUTH LOGIN\r\n',
+          '334 VXNlcm5hbWU6\r\n',
+          '334 UGFzc3dvcmQ6\r\n',
+          '235 Authentication successful\r\n',
+          '250 OK\r\n',
+          '250 OK\r\n',
+          '354 End data\r\n',
+          '250 Queued\r\n',
+          '221 Bye\r\n',
+        ],
+        []
+      );
+    }
+  );
+  assert.equal(implicitRes.status, 'SENT');
+  assert.equal(implicitOpts?.secureTransport, 'on');
+});

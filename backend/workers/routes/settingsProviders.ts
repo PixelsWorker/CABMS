@@ -14,13 +14,13 @@
  * - Simulated/sandbox provider tests are explicitly labeled as simulated.
  */
 
-import { D1Database } from '../../db/d1.ts';
+import type { D1Database, D1PreparedStatement } from '../../db/d1.ts';
 import { Env } from '../../types.ts';
 import { authorizeWorkspaceAccess, productionAuthenticationService, type AuthenticationService } from '../auth.ts';
 import { parseIfMatchHeader, generateStrongETag } from '../http.ts';
 import { StructuredLogger } from '../logger.ts';
 import { approvedMembership } from '../privilegedApproval.ts';
-import { getWorkspaceTransportStatus, resolveSenderIdentity } from '../../services/emailService.ts';
+import { getWorkspaceTransportStatus, resolveSenderIdentity, type EmailEnv } from '../../services/emailService.ts';
 import {
   authenticationRequiredResponse,
   accessDeniedResponse,
@@ -348,7 +348,7 @@ export async function handleSettingsProviders(
 
   // POST /provider-settings/test
   if (request.method === 'POST' && subAction === 'test') {
-    return handleTestProviderConnection(request, db, workspaceId, auth.userId, auth.providerSubjectId, requestId, logger);
+    return handleTestProviderConnection(request, db, env, workspaceId, auth.userId, auth.providerSubjectId, requestId, logger);
   }
 
   if (subAction) {
@@ -380,6 +380,46 @@ export async function handleSettingsProviders(
   }
 
   return new Response('Method Not Allowed', { status: 405, headers: { 'X-Request-Id': requestId } });
+}
+
+function buildSecretMutationStatement(
+  db: D1Database,
+  workspaceId: string,
+  secretKey: 'smtp_secret' | 'myob_client_secret',
+  action: { op: 'set'; value: string } | { op: 'clear' },
+  nextVersion: number,
+  reqNonce: string,
+  now: string,
+  actorUserId: string
+): D1PreparedStatement {
+  // Guard secret writes by the winning config row's incremented version and transition_nonce
+  // so a 412 race leaves existing secrets untouched inside the same D1 batch.
+  if (action.op === 'set') {
+    return db
+      .prepare(
+        `INSERT INTO workspace_provider_secrets (workspace_id, secret_key, secret_value, updated_at, updated_by_user_id)
+         SELECT ?, ?, ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM workspace_provider_configs
+           WHERE workspace_id = ? AND version = ? AND transition_nonce = ?
+         )
+         ON CONFLICT(workspace_id, secret_key) DO UPDATE SET
+           secret_value = excluded.secret_value,
+           updated_at = excluded.updated_at,
+           updated_by_user_id = excluded.updated_by_user_id`
+      )
+      .bind(workspaceId, secretKey, action.value, now, actorUserId, workspaceId, nextVersion, reqNonce);
+  }
+  return db
+    .prepare(
+      `DELETE FROM workspace_provider_secrets
+       WHERE workspace_id = ? AND secret_key = ?
+         AND EXISTS (
+           SELECT 1 FROM workspace_provider_configs
+           WHERE workspace_id = ? AND version = ? AND transition_nonce = ?
+         )`
+    )
+    .bind(workspaceId, secretKey, workspaceId, nextVersion, reqNonce);
 }
 
 async function handlePatchProviderSettings(
@@ -619,41 +659,17 @@ async function handlePatchProviderSettings(
       ),
   ];
 
-  if (smtpSecretAction?.op === 'set') {
+  const nextVersion = expectedVersion + 1;
+
+  if (smtpSecretAction) {
     stmts.push(
-      db
-        .prepare(
-          `INSERT INTO workspace_provider_secrets (workspace_id, secret_key, secret_value, updated_at, updated_by_user_id)
-           VALUES (?, 'smtp_secret', ?, ?, ?)
-           ON CONFLICT(workspace_id, secret_key) DO UPDATE SET
-             secret_value = excluded.secret_value,
-             updated_at = excluded.updated_at,
-             updated_by_user_id = excluded.updated_by_user_id`
-        )
-        .bind(workspaceId, smtpSecretAction.value, now, actorUserId)
-    );
-  } else if (smtpSecretAction?.op === 'clear') {
-    stmts.push(
-      db.prepare(`DELETE FROM workspace_provider_secrets WHERE workspace_id = ? AND secret_key = 'smtp_secret'`).bind(workspaceId)
+      buildSecretMutationStatement(db, workspaceId, 'smtp_secret', smtpSecretAction, nextVersion, reqNonce, now, actorUserId)
     );
   }
 
-  if (myobSecretAction?.op === 'set') {
+  if (myobSecretAction) {
     stmts.push(
-      db
-        .prepare(
-          `INSERT INTO workspace_provider_secrets (workspace_id, secret_key, secret_value, updated_at, updated_by_user_id)
-           VALUES (?, 'myob_client_secret', ?, ?, ?)
-           ON CONFLICT(workspace_id, secret_key) DO UPDATE SET
-             secret_value = excluded.secret_value,
-             updated_at = excluded.updated_at,
-             updated_by_user_id = excluded.updated_by_user_id`
-        )
-        .bind(workspaceId, myobSecretAction.value, now, actorUserId)
-    );
-  } else if (myobSecretAction?.op === 'clear') {
-    stmts.push(
-      db.prepare(`DELETE FROM workspace_provider_secrets WHERE workspace_id = ? AND secret_key = 'myob_client_secret'`).bind(workspaceId)
+      buildSecretMutationStatement(db, workspaceId, 'myob_client_secret', myobSecretAction, nextVersion, reqNonce, now, actorUserId)
     );
   }
 
@@ -666,7 +682,7 @@ async function handlePatchProviderSettings(
          )
          SELECT ?, workspace_id, 'all', 'PROVIDER_CONFIG_UPDATED', ?, version, ?, ?, ?, ?, transition_nonce, ?
          FROM workspace_provider_configs
-         WHERE workspace_id = ? AND transition_nonce = ?`
+         WHERE workspace_id = ? AND version = ? AND transition_nonce = ?`
       )
       .bind(
         auditId,
@@ -677,6 +693,7 @@ async function handlePatchProviderSettings(
         requestId,
         now,
         workspaceId,
+        nextVersion,
         reqNonce
       )
   );
@@ -716,6 +733,7 @@ async function handlePatchProviderSettings(
 async function handleTestProviderConnection(
   request: Request,
   db: D1Database,
+  env: Env,
   workspaceId: string,
   actorUserId: string,
   actorUid: string,
@@ -753,7 +771,7 @@ async function handleTestProviderConnection(
   let updateParams: unknown[] = [];
 
   if (provider === 'smtp') {
-    const resolvedTransport = await getWorkspaceTransportStatus(db, workspaceId);
+    const resolvedTransport = await getWorkspaceTransportStatus(db, workspaceId, env as EmailEnv);
     const resolvedSender = await resolveSenderIdentity(db, workspaceId);
     if (!current.sender_email || !current.smtp_host) {
       ok = false;

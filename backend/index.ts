@@ -243,7 +243,7 @@ export function createWorker(authentication: AuthenticationService = productionA
         const pubAction = publicQuoteMatch[2] === 'accept' || publicQuoteMatch[2] === 'refuse' ? publicQuoteMatch[2] : undefined;
         return addCors(await handlePublicQuotationToken(request, env, publicQuoteMatch[1], pubAction, requestId), env);
       }
-      const quotesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/quotations(?:\/([^/]+)(?:\/(send|accept|refuse|revoke|revise|follow-ups\/dispatch))?)?$/.exec(pathname);
+      const quotesMatch = /^\/api\/v1\/workspaces\/([^/]+)\/quotations(?:\/([^/]+)(?:\/(send|resend|accept|refuse|revoke|revise|follow-ups\/dispatch))?)?$/.exec(pathname);
       if (quotesMatch) {
         return addCors(await handleQuotations(request, env, quotesMatch[1], quotesMatch[2], quotesMatch[3], requestId, authentication, {
           emailDispatcher: async req => {
@@ -256,9 +256,19 @@ export function createWorker(authentication: AuthenticationService = productionA
               bodyHtml: req.htmlBody ?? null,
               requestId,
             });
+            const quoteDispatchStatus =
+              res.delivery.status === 'FAILED'
+                ? 'FAILED'
+                : res.delivery.status === 'UNCERTAIN'
+                  ? 'UNCERTAIN'
+                  : res.is_synthetic
+                    ? 'SANDBOX_LOGGED'
+                    : res.delivery.status === 'QUEUED'
+                      ? 'QUEUED'
+                      : 'SENT';
             return {
               deliveryId: res.delivery.id,
-              status: res.delivery.status === 'FAILED' ? 'FAILED' : (res.is_synthetic ? 'SANDBOX_LOGGED' : 'SENT'),
+              status: quoteDispatchStatus,
               transport: res.transport_mode,
             };
           },
@@ -280,8 +290,14 @@ export function createWorker(authentication: AuthenticationService = productionA
             bodyText: payload.text,
             requestId,
           });
+          if (res.delivery.status === 'FAILED') {
+            return { status: 'FAILED' as const, messageId: res.delivery.id, error: res.delivery.error_message || 'Email dispatch failed' };
+          }
+          if (res.delivery.status === 'UNCERTAIN') {
+            return { status: 'UNCERTAIN' as const, messageId: res.delivery.id, error: res.delivery.error_message || 'Delivery outcome uncertain' };
+          }
           return {
-            status: res.delivery.status === 'FAILED' ? 'FAILED' as const : (res.is_synthetic ? 'SANDBOX_SIMULATED' as const : 'SENT' as const),
+            status: res.is_synthetic ? 'SANDBOX_SIMULATED' as const : 'SENT' as const,
             messageId: res.delivery.id,
           };
         } catch (err) {

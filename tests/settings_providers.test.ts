@@ -437,4 +437,140 @@ describe('System & Workspace Provider Settings (D1 + RBAC + Secrets + Sandbox Te
     assert.equal(passBody.ok, true);
     assert.equal(passBody.status, 'PASSED_LIVE');
   });
+
+  it('Thread #9 regression: concurrent 412 race leaves existing and absent workspace_provider_secrets untouched', async () => {
+    // 1. Seed initial secrets (version 1 -> 2)
+    const seedRes = await callProviderRoute(
+      'solarcell',
+      undefined,
+      'PATCH',
+      { Authorization: ownerAdminAuth, 'If-Match': '"1"' },
+      {
+        sender_name: 'Initial Desk',
+        smtp_secret: 'initial-smtp-secret',
+        myob_client_secret: 'initial-myob-secret',
+      }
+    );
+    assert.equal(seedRes.status, 200);
+    assert.equal(seedRes.headers.get('ETag'), '"2"');
+
+    // 2. Deterministic mid-flight race: preempt right before racer's db.batch executes
+    let preempted = false;
+    const raceDb: D1Database = {
+      prepare: q => db.prepare(q),
+      dump: () => db.dump(),
+      exec: q => db.exec(q),
+      batch: async stmts => {
+        if (!preempted) {
+          preempted = true;
+          const winnerRes = await callProviderRoute(
+            'solarcell',
+            undefined,
+            'PATCH',
+            { Authorization: ownerAdminAuth, 'If-Match': '"2"' },
+            {
+              sender_name: 'Winner Ahead Desk',
+              smtp_secret: 'winner-smtp-secret',
+              myob_client_secret: 'winner-myob-secret',
+            }
+          );
+          assert.equal(winnerRes.status, 200);
+          assert.equal(winnerRes.headers.get('ETag'), '"3"');
+        }
+        return db.batch(stmts);
+      },
+    };
+    const raceEnv: Env = { ...env, DB: raceDb };
+
+    // Racer read version 2, then got preempted before db.batch; tries BOTH overwriting smtp_secret and clearing myob_client_secret
+    const racerReq = new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings', {
+      method: 'PATCH',
+      headers: {
+        Authorization: ownerAdminAuth,
+        'Content-Type': 'application/json',
+        'If-Match': '"2"',
+      },
+      body: JSON.stringify({
+        sender_name: 'Stale Loser Desk',
+        smtp_secret: 'rogue-loser-smtp-secret',
+        myob_client_secret: null,
+      }),
+    });
+    const racerRes = await handleSettingsProviders(racerReq, raceEnv, 'solarcell', undefined, 'req_race_loser_1', authService);
+    assert.equal(racerRes.status, 412);
+
+    const secretsAfterOverwriteRace = await db
+      .prepare('SELECT secret_key, secret_value FROM workspace_provider_secrets WHERE workspace_id = ? ORDER BY secret_key')
+      .bind('solarcell')
+      .all<{ secret_key: string; secret_value: string }>();
+    assert.deepEqual(
+      secretsAfterOverwriteRace.results.map(r => ({ key: r.secret_key, val: r.secret_value })),
+      [
+        { key: 'myob_client_secret', val: 'winner-myob-secret' },
+        { key: 'smtp_secret', val: 'winner-smtp-secret' },
+      ]
+    );
+
+    // 3. Reverse clear/set race with another mid-flight preemption (version 3 -> 4)
+    let preempted2 = false;
+    const raceDb2: D1Database = {
+      prepare: q => db.prepare(q),
+      dump: () => db.dump(),
+      exec: q => db.exec(q),
+      batch: async stmts => {
+        if (!preempted2) {
+          preempted2 = true;
+          const winner2 = await callProviderRoute(
+            'solarcell',
+            undefined,
+            'PATCH',
+            { Authorization: superAdminAuth, 'If-Match': '"3"' },
+            { sender_name: 'Winner Clear Guard' }
+          );
+          assert.equal(winner2.status, 200);
+        }
+        return db.batch(stmts);
+      },
+    };
+    const racerClearRes = await handleSettingsProviders(
+      new Request('http://localhost/api/v1/workspaces/solarcell/provider-settings', {
+        method: 'PATCH',
+        headers: { Authorization: ownerAdminAuth, 'Content-Type': 'application/json', 'If-Match': '"3"' },
+        body: JSON.stringify({ smtp_secret: null, myob_client_secret: 'stale-myob-overwrite' }),
+      }),
+      { ...env, DB: raceDb2 },
+      'solarcell',
+      undefined,
+      'req_race_loser_2',
+      authService
+    );
+    assert.equal(racerClearRes.status, 412);
+
+    const secretsAfterClearRace = await db
+      .prepare('SELECT secret_key, secret_value FROM workspace_provider_secrets WHERE workspace_id = ? ORDER BY secret_key')
+      .bind('solarcell')
+      .all<{ secret_key: string; secret_value: string }>();
+    assert.deepEqual(
+      secretsAfterClearRace.results.map(r => ({ key: r.secret_key, val: r.secret_value })),
+      [
+        { key: 'myob_client_secret', val: 'winner-myob-secret' },
+        { key: 'smtp_secret', val: 'winner-smtp-secret' },
+      ]
+    );
+
+    // 4. Stale 412 on workspace with no secrets must NOT insert new secret rows
+    const staleEmptyWsRes = await callProviderRoute(
+      'smart_home',
+      undefined,
+      'PATCH',
+      { Authorization: superAdminAuth, 'If-Match': '"99"' },
+      { smtp_secret: 'should-never-exist', myob_client_secret: 'should-never-exist' }
+    );
+    assert.equal(staleEmptyWsRes.status, 412);
+    const smartHomeSecrets = await db
+      .prepare('SELECT secret_key FROM workspace_provider_secrets WHERE workspace_id = ?')
+      .bind('smart_home')
+      .all<{ secret_key: string }>();
+    assert.equal(smartHomeSecrets.results.length, 0);
+  });
 });

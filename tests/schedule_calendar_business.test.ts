@@ -223,7 +223,7 @@ test('PersistentCalendar handles empty, invalid, and 5+ digit year inputs withou
   });
 });
 
-test('ComplianceWork separates Active business (header/theme/new-job destination) from Filter jobs by business (display only)', async t => {
+test('ComplianceWork Business filter scopes displayed jobs and new-job destination without switching activeWorkspace', async t => {
   const { dom, cleanup } = setupDom();
   t.after(cleanup);
 
@@ -283,18 +283,16 @@ test('ComplianceWork separates Active business (header/theme/new-job destination
 
   await renderWork();
 
-  const activeSelect = container.querySelector<HTMLSelectElement>('select[aria-label="Active business"]')!;
-  const filterSelect = container.querySelector<HTMLSelectElement>('select[aria-label="Filter jobs by business"]')!;
-  assert.ok(activeSelect && filterSelect, 'Both Active business and Filter jobs by business selects are rendered');
-  assert.equal(activeSelect.value, 'solarcell');
-  assert.equal(filterSelect.value, 'all');
+  const businessSelect = container.querySelector<HTMLSelectElement>('select[aria-label="Business"]')!;
+  assert.ok(businessSelect, 'Business filter select is rendered');
+  assert.equal(businessSelect.value, 'all');
 
-  // Filtering by CCTV updates displayed records only, does NOT call onWorkspace or change destination
+  // Filtering by CCTV updates displayed records and Create New Job destination without calling onWorkspace
   await act(async () => {
-    triggerReactChange(filterSelect, 'cctv');
+    triggerReactChange(businessSelect, 'cctv');
   });
   await flush();
-  assert.equal(workspaceChanges.length, 0, 'Filter jobs by business must not invoke onWorkspace');
+  assert.equal(workspaceChanges.length, 0, 'Business filter must not invoke onWorkspace');
   assert.match(container.textContent || '', /CCTV Job/);
   assert.doesNotMatch(container.textContent || '', /Solar Job/);
 
@@ -303,23 +301,40 @@ test('ComplianceWork separates Active business (header/theme/new-job destination
     createBtn.click();
   });
   await flush();
-  assert.match(container.textContent || '', /Destination business:\s*Solarcell/);
+  assert.match(container.textContent || '', /Destination business:\s*Gold Coast CCTV/);
 
   const cancelBtn = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Cancel')!;
   await act(async () => {
     cancelBtn.click();
   });
 
-  // Changing Active business calls onWorkspace and updates new-job destination
+  // Resetting Business filter to 'all' uses activeWorkspace as destination
   await act(async () => {
-    triggerReactChange(activeSelect, 'smart_home');
+    triggerReactChange(businessSelect, 'all');
   });
-  await renderWork();
-  assert.deepEqual(workspaceChanges, ['smart_home']);
+  await flush();
+  assert.equal(workspaceChanges.length, 0, 'Resetting Business filter to all must not invoke onWorkspace');
+  assert.match(container.textContent || '', /Solar Job/);
+  assert.match(container.textContent || '', /CCTV Job/);
 
   const createBtn2 = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Create New Job'))!;
   await act(async () => {
     createBtn2.click();
+  });
+  await flush();
+  assert.match(container.textContent || '', /Destination business:\s*Solarcell/);
+
+  const cancelBtn2 = Array.from(container.querySelectorAll('button')).find(b => b.textContent === 'Cancel')!;
+  await act(async () => {
+    cancelBtn2.click();
+  });
+
+  // When activeWorkspace changes while Business === 'all', new-job destination follows activeWorkspace
+  currentWorkspace = 'smart_home';
+  await renderWork();
+  const createBtn3 = Array.from(container.querySelectorAll('button')).find(b => b.textContent?.includes('Create New Job'))!;
+  await act(async () => {
+    createBtn3.click();
   });
   await flush();
   assert.match(container.textContent || '', /Destination business:\s*Gold Coast Smart Home Solutions/);

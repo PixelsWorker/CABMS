@@ -246,7 +246,20 @@ export async function handleCommunications(
   const retryDeliveryMatch = /^deliveries\/([^/]+)\/retry$/.exec(normalizedSub);
   if (retryDeliveryMatch && method === 'POST') {
     const deliveryId = decodeURIComponent(retryDeliveryMatch[1]);
-    const res = await emailService.retryEmailDelivery(env.DB, emailEnv, workspaceId, deliveryId, auth.userId, requestId);
+    const body = await parseJsonObject(request);
+    const simulateOutcome =
+      body && typeof body.simulate_outcome === 'string' && VALID_SIMULATE_OUTCOMES.has(body.simulate_outcome)
+        ? (body.simulate_outcome as 'SENT' | 'FAILED' | 'UNCERTAIN')
+        : undefined;
+    const res = await emailService.retryEmailDelivery(
+      env.DB,
+      emailEnv,
+      workspaceId,
+      deliveryId,
+      auth.userId,
+      requestId,
+      simulateOutcome ? { simulateOutcome } : undefined
+    );
     if (!res.ok) {
       if (res.code === 'NOT_FOUND') {
         return resourceNotFoundResponse(res.message, requestId);
@@ -311,13 +324,19 @@ export async function handleCommunications(
   const retryReviewMatch = /^reviews\/([^/]+)\/retry$/.exec(normalizedSub);
   if (retryReviewMatch && method === 'POST') {
     const jobId = decodeURIComponent(retryReviewMatch[1]);
+    const body = await parseJsonObject(request);
+    const simulateOutcome =
+      body && typeof body.simulate_outcome === 'string' && VALID_SIMULATE_OUTCOMES.has(body.simulate_outcome)
+        ? (body.simulate_outcome as 'SENT' | 'FAILED' | 'UNCERTAIN')
+        : undefined;
     const res = await emailService.retryReviewRequestDelivery(
       env.DB,
       emailEnv,
       workspaceId,
       jobId,
       auth.userId,
-      requestId
+      requestId,
+      simulateOutcome ? { simulateOutcome } : undefined
     );
     if (!res.ok) {
       if (res.code === 'NOT_FOUND') {

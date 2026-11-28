@@ -516,19 +516,25 @@ export async function getTemplate(db: D1Database, workspace: string, auth: AuthC
   if (!tpl) return null;
 
   const revisions = await db.prepare(
-    `SELECT * FROM template_revisions WHERE template_id = ? ORDER BY created_at DESC`
-  ).bind(id).all<{ id: string; version: string; status: string; content: string; effective_at: string | null }>();
+    `SELECT * FROM template_revisions WHERE template_id = ? ORDER BY created_at DESC, rowid DESC`
+  ).bind(id).all<{ id: string; version: string; status: string; content: string; sample_file_name: string | null; effective_at: string | null; created_at: string; updated_at: string }>();
 
   const hasOutput = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first();
-  const outputByRevision = new Map<string, unknown>();
+  const outputByRevision = new Map<string, TemplateOutputConfig>();
   if (hasOutput) {
-    const outputs = await db.prepare(`SELECT o.* FROM template_revision_output o JOIN template_revisions r ON r.id=o.revision_id WHERE o.workspace_id=? AND r.template_id=?`).bind(workspace,id).all<{revision_id:string; category:string; brand_id:string; linked_form_revision_id:string|null; document_type_id:string|null; layout_json:string; dynamic_fields_json:string}>();
+    const outputs = await db.prepare(`SELECT o.* FROM template_revision_output o JOIN template_revisions r ON r.id=o.revision_id WHERE o.workspace_id=? AND r.template_id=?`).bind(workspace,id).all<{revision_id:string; category:TemplateOutputConfig['category']; brand_id:string; linked_form_revision_id:string|null; document_type_id:string|null; layout_json:string; dynamic_fields_json:string}>();
     for (const output of outputs.results) outputByRevision.set(output.revision_id,{category:output.category,brand_id:output.brand_id,linked_form_revision_id:output.linked_form_revision_id,document_type_id:output.document_type_id,layout:JSON.parse(output.layout_json),dynamic_fields:JSON.parse(output.dynamic_fields_json)});
   }
 
+  const hydratedRevisions = revisions.results.map(r => ({ ...r, output: outputByRevision.get(r.id) || null }));
+  const activeRevision = hydratedRevisions.find(r => r.status === 'DRAFT' || r.status === 'REVIEW')
+    || hydratedRevisions.find(r => r.id === tpl.current_revision_id)
+    || hydratedRevisions[0];
+
   return {
     ...tpl,
-    revisions: revisions.results.map(r=>({...r,output:outputByRevision.get(r.id) || null})),
+    output: activeRevision?.output || null,
+    revisions: hydratedRevisions,
   };
 }
 
@@ -543,6 +549,7 @@ export async function createTemplate(
     content: string;
     description?: string;
     sampleFileName?: string;
+    mappingStatus?: 'Mapped' | 'Pending Review' | 'Unsupported';
     status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
     output?: { category:'Compliance'|'Terms'|'Email'|'Contract'; brand_id:string; linked_form_revision_id?:string|null; document_type_id?:string|null; layout:Record<string,unknown>; dynamic_fields:Record<string,unknown> };
   }
@@ -551,6 +558,7 @@ export async function createTemplate(
   const revId = `rev-${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   const code = data.code?.trim() || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  const mappingStatus = data.mappingStatus || 'Mapped';
   // All new document templates start in DRAFT status with a DRAFT revision
   const initialStatus = 'DRAFT';
   const initialRevStatus = 'DRAFT';
@@ -558,9 +566,9 @@ export async function createTemplate(
   const statements: D1PreparedStatement[] = [
     db.prepare(
       `INSERT INTO document_templates (id, workspace_id, code, name, template_type, description, status, current_revision_id, sample_file_name, mapping_status, created_at, updated_at, created_by, updated_by)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Mapped', ?, ?, ?, ?
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
        WHERE ${allowedStaff}`
-    ).bind(tplId, workspace, code, data.name.trim(), data.templateType, data.description?.trim() || null, initialStatus, revId, data.sampleFileName || `${code}.docx`, now, now, auth.userId, auth.userId, ...who(workspace, auth)),
+    ).bind(tplId, workspace, code, data.name.trim(), data.templateType, data.description?.trim() || null, initialStatus, revId, data.sampleFileName || `${code}.docx`, mappingStatus, now, now, auth.userId, auth.userId, ...who(workspace, auth)),
 
     db.prepare(
       `INSERT INTO template_revisions (id, template_id, version, status, content, sample_file_name, effective_at, created_at, updated_at, created_by, approved_by, approved_at)
@@ -620,15 +628,40 @@ export async function deleteTemplateDraft(
   return { success: del.meta.changes === 1 };
 }
 
+let lastDraftUpdatedAtMs = 0;
+
+function allocateDraftTimestamp(minAfterIso?: string): string | null {
+  let minTime = 0;
+  if (minAfterIso !== undefined) {
+    const parsed = Date.parse(minAfterIso);
+    if (!Number.isFinite(parsed)) return null;
+    minTime = parsed + 1;
+  }
+  const nextTime = Math.max(Date.now(), minTime, lastDraftUpdatedAtMs + 1);
+  lastDraftUpdatedAtMs = nextTime;
+  let ts = new Date(nextTime).toISOString();
+  if (minAfterIso !== undefined && ts === minAfterIso) {
+    lastDraftUpdatedAtMs = nextTime + 1;
+    ts = new Date(lastDraftUpdatedAtMs).toISOString();
+  }
+  return ts;
+}
+
 export async function createTemplateRevisionDraft(
   db: D1Database,
   workspace: string,
   auth: AuthContext,
   templateId: string,
-  content: string
+  content: string,
+  options?: {
+    sampleFileName?: string;
+    mappingStatus?: 'Mapped' | 'Pending Review' | 'Unsupported';
+    output?: TemplateOutputConfig;
+  }
 ): Promise<{ id: string; version: string; updated_at:string } | null> {
+  if (options?.output && options.output.brand_id !== workspace) return null;
   const tpl = await db.prepare(
-    `SELECT * FROM document_templates WHERE workspace_id = ? AND id = ? AND ${allowedStaff}`
+    `SELECT * FROM document_templates WHERE workspace_id = ? AND id = ? AND status <> 'ARCHIVED' AND ${allowedStaff}`
   ).bind(workspace, templateId, ...who(workspace, auth)).first<DocumentTemplateRow>();
 
   if (!tpl) return null;
@@ -640,17 +673,73 @@ export async function createTemplateRevisionDraft(
   const nextVerNum = (revisions.results.length + 1).toFixed(1);
   const version = `v${nextVerNum}-draft`;
   const revId = `rev-${crypto.randomUUID()}`;
-  const now = new Date().toISOString();
+  const now = allocateDraftTimestamp()!;
+  const sampleFileName = options?.sampleFileName?.trim() || null;
+  const mappingStatus = options?.mappingStatus || null;
+  const hasOutput = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first();
 
   const statements: D1PreparedStatement[] = [
     db.prepare(
       `INSERT INTO template_revisions (id, template_id, version, status, content, sample_file_name, effective_at, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, 'DRAFT', ?, ?, NULL, ?, ?, ?)`
-    ).bind(revId, templateId, version, content, tpl.sample_file_name, now, now, auth.userId),
+       SELECT ?, ?, ?, 'DRAFT', ?, ?, NULL, ?, ?, ?
+       WHERE EXISTS (SELECT 1 FROM document_templates t WHERE t.id = ? AND t.workspace_id = ? AND t.status <> 'ARCHIVED' AND ${allowedStaff})`
+    ).bind(revId, templateId, version, content, sampleFileName ?? tpl.sample_file_name, now, now, auth.userId, templateId, workspace, ...who(workspace, auth)),
   ];
 
-  const hasOutput = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first();
-  if (hasOutput && tpl.current_revision_id) statements.push(db.prepare(`INSERT INTO template_revision_output (revision_id,workspace_id,brand_id,category,linked_form_revision_id,document_type_id,layout_json,dynamic_fields_json) SELECT ?,workspace_id,brand_id,category,linked_form_revision_id,document_type_id,layout_json,dynamic_fields_json FROM template_revision_output WHERE workspace_id=? AND revision_id=?`).bind(revId,workspace,tpl.current_revision_id));
+  if (sampleFileName || mappingStatus) {
+    statements.push(
+      db.prepare(
+        `UPDATE document_templates
+         SET sample_file_name = COALESCE(?, sample_file_name),
+             mapping_status = COALESCE(?, mapping_status),
+             updated_at = ?,
+             updated_by = ?
+         WHERE id = ? AND workspace_id = ? AND status <> 'ARCHIVED'
+           AND EXISTS (SELECT 1 FROM template_revisions r WHERE r.id = ? AND r.template_id = ? AND r.status = 'DRAFT' AND r.updated_at = ?)
+           AND changes() = 1
+           AND ${allowedStaff}`
+      ).bind(sampleFileName, mappingStatus, now, auth.userId, templateId, workspace, revId, templateId, now, ...who(workspace, auth))
+    );
+  }
+
+  if (hasOutput && options?.output) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO template_revision_output (revision_id, workspace_id, brand_id, category, linked_form_revision_id, document_type_id, layout_json, dynamic_fields_json)
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM template_revisions r
+           JOIN document_templates t ON t.id = r.template_id
+           WHERE r.id = ? AND r.template_id = ? AND r.status = 'DRAFT' AND r.updated_at = ?
+             AND t.workspace_id = ? AND t.status <> 'ARCHIVED' AND ${allowedStaff}
+         )
+           AND changes() = 1`
+      ).bind(
+        revId,
+        workspace,
+        options.output.brand_id,
+        options.output.category,
+        options.output.linked_form_revision_id || null,
+        options.output.document_type_id || null,
+        JSON.stringify(options.output.layout),
+        JSON.stringify(options.output.dynamic_fields),
+        revId,
+        templateId,
+        now,
+        workspace,
+        ...who(workspace, auth)
+      )
+    );
+  } else if (hasOutput && tpl.current_revision_id) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO template_revision_output (revision_id, workspace_id, brand_id, category, linked_form_revision_id, document_type_id, layout_json, dynamic_fields_json)
+         SELECT ?, workspace_id, brand_id, category, linked_form_revision_id, document_type_id, layout_json, dynamic_fields_json
+         FROM template_revision_output
+         WHERE workspace_id = ? AND revision_id = ? AND changes() = 1`
+      ).bind(revId, workspace, tpl.current_revision_id)
+    );
+  }
 
   const results = await db.batch(statements);
   if (!results[0] || results[0].meta.changes !== 1) return null;
@@ -731,52 +820,97 @@ export async function updateTemplateDraftContent(
   templateId: string,
   revisionId: string,
   expectedUpdatedAt: string,
-  content: string,
+  content: string | undefined,
   options?: {
     sampleFileName?: string;
     mappingStatus?: 'Mapped' | 'Pending Review' | 'Unsupported';
     output?: TemplateOutputConfig;
   }
 ): Promise<string | null> {
-  const expectedTime = Date.parse(expectedUpdatedAt);
-  if (!Number.isFinite(expectedTime)) return null;
-  const updatedAt = new Date(Math.max(Date.now(), expectedTime + 1)).toISOString();
+  const updatedAt = allocateDraftTimestamp(expectedUpdatedAt);
+  if (!updatedAt) return null;
+  if (options?.output && options.output.brand_id !== workspace) return null;
+
+  const contentValue = typeof content === 'string' ? content : null;
   const sampleFileName = options?.sampleFileName?.trim() || null;
+  const mappingStatus = options?.mappingStatus || null;
+  const hasOutput = options?.output
+    ? Boolean(await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first())
+    : false;
 
-  const result = await db.prepare(
-    `UPDATE template_revisions
-     SET content=?,
-         sample_file_name=COALESCE(?, sample_file_name),
-         updated_at=?
-     WHERE id=? AND template_id=? AND status='DRAFT' AND updated_at=?
-       AND EXISTS (SELECT 1 FROM document_templates t WHERE t.id=template_revisions.template_id AND t.workspace_id=? AND t.status<>'ARCHIVED' AND ${allowedStaff})`
-  ).bind(content, sampleFileName, updatedAt, revisionId, templateId, expectedUpdatedAt, workspace, ...who(workspace, auth)).run();
+  const statements: D1PreparedStatement[] = [
+    db.prepare(
+      `UPDATE template_revisions
+       SET content = COALESCE(?, content),
+           sample_file_name = COALESCE(?, sample_file_name),
+           updated_at = ?
+       WHERE id = ? AND template_id = ? AND status = 'DRAFT' AND updated_at = ?
+         AND EXISTS (
+           SELECT 1 FROM document_templates t
+           WHERE t.id = template_revisions.template_id
+             AND t.workspace_id = ?
+             AND t.status <> 'ARCHIVED'
+             AND ${allowedStaff}
+         )`
+    ).bind(contentValue, sampleFileName, updatedAt, revisionId, templateId, expectedUpdatedAt, workspace, ...who(workspace, auth)),
+  ];
 
-  if (result.meta.changes !== 1) return null;
-
-  if (sampleFileName || options?.mappingStatus) {
-    await db.prepare(
-      `UPDATE document_templates
-       SET sample_file_name=COALESCE(?, sample_file_name),
-           mapping_status=COALESCE(?, mapping_status),
-           updated_at=?,
-           updated_by=?
-       WHERE id=? AND workspace_id=? AND status<>'ARCHIVED' AND ${allowedStaff}`
-    ).bind(sampleFileName, options?.mappingStatus || null, updatedAt, auth.userId, templateId, workspace, ...who(workspace, auth)).run();
+  if (sampleFileName || mappingStatus) {
+    statements.push(
+      db.prepare(
+        `UPDATE document_templates
+         SET sample_file_name = COALESCE(?, sample_file_name),
+             mapping_status = COALESCE(?, mapping_status),
+             updated_at = ?,
+             updated_by = ?
+         WHERE id = ? AND workspace_id = ? AND status <> 'ARCHIVED'
+           AND EXISTS (
+             SELECT 1 FROM template_revisions r
+             JOIN document_templates t ON t.id = r.template_id
+             WHERE r.id = ? AND r.template_id = ? AND r.status = 'DRAFT' AND r.updated_at = ?
+               AND (? IS NULL OR r.content = ?)
+               AND t.workspace_id = ? AND t.status <> 'ARCHIVED' AND ${allowedStaff}
+           )
+           AND changes() = 1`
+      ).bind(
+        sampleFileName,
+        mappingStatus,
+        updatedAt,
+        auth.userId,
+        templateId,
+        workspace,
+        revisionId,
+        templateId,
+        updatedAt,
+        contentValue,
+        contentValue,
+        workspace,
+        ...who(workspace, auth)
+      )
+    );
   }
 
-  if (options?.output) {
-    const hasOutput = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first();
-    if (hasOutput) {
-      await db.prepare(
-        `INSERT INTO template_revision_output (revision_id,workspace_id,brand_id,category,linked_form_revision_id,document_type_id,layout_json,dynamic_fields_json)
-         VALUES (?,?,?,?,?,?,?,?)
+  if (options?.output && hasOutput) {
+    statements.push(
+      db.prepare(
+        `INSERT INTO template_revision_output (
+           revision_id, workspace_id, brand_id, category, linked_form_revision_id, document_type_id, layout_json, dynamic_fields_json
+         )
+         SELECT ?, ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM template_revisions r
+           JOIN document_templates t ON t.id = r.template_id
+           WHERE r.id = ? AND r.template_id = ? AND r.status = 'DRAFT' AND r.updated_at = ?
+             AND (? IS NULL OR r.content = ?)
+             AND t.workspace_id = ? AND t.status <> 'ARCHIVED' AND ${allowedStaff}
+         )
+           AND changes() = 1
          ON CONFLICT(revision_id) DO UPDATE SET
-           category=excluded.category,
-           linked_form_revision_id=excluded.linked_form_revision_id,
-           document_type_id=excluded.document_type_id,
-           layout_json=excluded.layout_json,
-           dynamic_fields_json=excluded.dynamic_fields_json`
+           category = excluded.category,
+           linked_form_revision_id = excluded.linked_form_revision_id,
+           document_type_id = excluded.document_type_id,
+           layout_json = excluded.layout_json,
+           dynamic_fields_json = excluded.dynamic_fields_json`
       ).bind(
         revisionId,
         workspace,
@@ -785,10 +919,20 @@ export async function updateTemplateDraftContent(
         options.output.linked_form_revision_id || null,
         options.output.document_type_id || null,
         JSON.stringify(options.output.layout),
-        JSON.stringify(options.output.dynamic_fields)
-      ).run();
-    }
+        JSON.stringify(options.output.dynamic_fields),
+        revisionId,
+        templateId,
+        updatedAt,
+        contentValue,
+        contentValue,
+        workspace,
+        ...who(workspace, auth)
+      )
+    );
   }
+
+  const batchResults = await db.batch(statements);
+  if (!batchResults[0] || batchResults[0].meta.changes !== 1) return null;
 
   return updatedAt;
 }
@@ -822,7 +966,7 @@ export async function previewTemplate(
     revision_id: targetRev?.id || tpl.current_revision_id,
     version: targetRev?.version || tpl.current_version,
     status: targetRev?.status || tpl.revision_status,
-    sample_file_name: tpl.sample_file_name,
+    sample_file_name: (targetRev as any)?.sample_file_name || tpl.sample_file_name,
     mapping_status: tpl.mapping_status,
     ...renderSimulatedTemplatePreview(content, mergedDynamicFields, options?.sampleData || {}),
   };
@@ -881,11 +1025,12 @@ export async function approveTemplateRevision(
     db.prepare(
       `UPDATE document_templates
        SET current_revision_id = ?,
+           sample_file_name = COALESCE((SELECT sample_file_name FROM template_revisions WHERE id = ?), sample_file_name),
            status = CASE WHEN status = 'DRAFT' THEN 'ACTIVE' ELSE status END,
            updated_at = ?,
            updated_by = ?
        WHERE id = ? AND workspace_id = ? AND status<>'ARCHIVED' AND changes()=1 AND ${allowedApprover}`
-    ).bind(revisionId, now, auth.userId, templateId, workspace,...who(workspace,auth)),
+    ).bind(revisionId, revisionId, now, auth.userId, templateId, workspace,...who(workspace,auth)),
   ];
 
   const results = await db.batch(statements);

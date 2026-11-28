@@ -73,7 +73,7 @@ export function ComplianceWork({actorId,api,memberships,screen,onJobs,onLogin,ac
  const role=memberships.find(m=>m.workspace_id===selected?.workspace_id)?.role;
  const [creationWorkspace,setCreationWorkspace]=useState<string|null>(null);
  const workspace=activeWorkspace??memberships[0]?.workspace_id;
- const destination=workspace;
+ const destination=business==='all'?workspace:business;
  const allowedDestination=(id:string|undefined|null)=>memberships.some(m=>m.workspace_id===id && m.role!=='technician');
  const [query,setQuery]=useState('');
  const hasStatus=(j:Job,status:string)=>status==='all'||jobStatuses(j).includes(status);
@@ -91,8 +91,7 @@ export function ComplianceWork({actorId,api,memberships,screen,onJobs,onLogin,ac
  {screen==='compliance'&&<section className="cabms-card p-5 shadow-sm"><h1 className="text-xl font-bold">Mobile Technician Compliance Forms &amp; Documents</h1><label>Current Work Order <select value={selected?.id??''} onChange={e=>{const j=jobs.find(item=>item.id===e.target.value);if(j){if(j.workspace_id!==workspace)onWorkspace?.(j.workspace_id);setDetail(null);select(j);setSlot('');}else{setDetail(null);select(null);setSlot('');}}}><option value="">Select work order</option>{jobs.map(j=><option key={j.id} value={j.id}>[{brands[j.workspace_id]??j.workspace_id}] {j.title}</option>)}</select></label></section>}
  {screen==='dashboard'&&<><h1 className="cabms-sr-only">Operations dashboard</h1><div className="grid grid-cols-2 lg:grid-cols-5 gap-4">{Object.entries(statusLabel).map(([status,name])=><button className="cabms-card p-5 text-left" aria-pressed={filter===status} key={status} onClick={()=>setFilter(status)}><span>{name} jobs</span><strong className="block text-2xl font-black">{loading||error?'...':jobs.filter(j=>hasStatus(j,status)).length}</strong></button>)}</div><p className="cw-sub">Scheduled and in-progress jobs are included in Open. A job can be both.</p></>}
  {screen==='dashboard'&&<p className="cw-sub">Live MYOB, communications and enquiry metrics are unavailable.</p>}
- {screen!=='compliance'&&<div className="cw-toolbar"><label>Active business<select aria-label="Active business" title="Switch active business (updates header, theme, and new-job destination)" value={workspace??''} onChange={e=>{onWorkspace?.(e.target.value);}}>{memberships.map(m=><option key={m.workspace_id} value={m.workspace_id}>{brands[m.workspace_id]??m.name}</option>)}</select></label>
- <label>Filter jobs by business<select aria-label="Filter jobs by business" title="Filter displayed jobs by business" value={business} onChange={e=>{setBusiness(e.target.value);back();}}><option value="all">All authorized businesses</option>{memberships.map(m=><option key={m.workspace_id} value={m.workspace_id}>{brands[m.workspace_id]??m.name}</option>)}</select></label>
+ {screen!=='compliance'&&<div className="cw-toolbar"><label>Business<select aria-label="Business" title="Filter jobs by business" value={business} onChange={e=>{setBusiness(e.target.value);back();}}><option value="all">All authorized businesses</option>{memberships.map(m=><option key={m.workspace_id} value={m.workspace_id}>{brands[m.workspace_id]??m.name}</option>)}</select></label>
  <label>Status<select aria-label="Status" value={filter} onChange={e=>setFilter(e.target.value)}>{Object.entries(statusLabel).map(([v,label])=><option value={v} key={v}>{label}</option>)}<option value="all">All statuses</option></select></label></div>}
  {loading&&<p role="status">Loading jobs and compliance records…</p>}
  {error&&<div role="alert" className="cw-alert">{error} <button onClick={()=>reload(n=>n+1)}>Retry load</button></div>}

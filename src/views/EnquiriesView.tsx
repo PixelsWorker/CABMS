@@ -44,11 +44,18 @@ export interface PersistentEnquiry {
   matched_customer_id: string | null;
   converted_job_id: string | null;
   converted_job_type_id: string | null;
-  acknowledgement_status: 'PENDING' | 'SENT' | 'SANDBOX_SIMULATED' | 'FAILED' | 'SKIPPED';
+  acknowledgement_status: 'PENDING' | 'SENT' | 'SANDBOX_SIMULATED' | 'FAILED' | 'SKIPPED' | 'UNCERTAIN';
   acknowledgement_message_id: string | null;
   acknowledgement_error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface CreationJobTypeOption {
+  id: string;
+  name: string;
+  current_policy_version_id: string;
+  missing_mandatory_forms: string[];
 }
 
 interface EnquiriesListResponse {
@@ -103,7 +110,7 @@ async function enquiryApiRequest<T>(
 
 export const EnquiriesView: React.FC = () => {
   const session = useG01Session();
-  const { persona, brands, activeBrandId, customers, jobTypes, setActiveTab } = useCabms();
+  const { persona, brands, activeBrandId, setActiveTab } = useCabms();
 
   const [enquiries, setEnquiries] = useState<PersistentEnquiry[]>([]);
   const [counts, setCounts] = useState({ pending: 0, converted: 0, dismissed: 0, total: 0 });
@@ -126,8 +133,13 @@ export const EnquiriesView: React.FC = () => {
   const [customerMode, setCustomerMode] = useState<'matched' | 'existing' | 'new'>('new');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
+  const [jobTypeOptions, setJobTypeOptions] = useState<CreationJobTypeOption[]>([]);
+  const [jobTypesLoading, setJobTypesLoading] = useState(false);
+  const [jobTypesError, setJobTypesError] = useState('');
+  const [workspaceCustomers, setWorkspaceCustomers] = useState<Array<{ id: string; name: string; email: string }>>([]);
 
   const generation = useRef(0);
+  const creationReqGen = useRef(0);
   const workspaceId = session?.workspaceId ?? '';
   const userId = session?.profile?.user.id;
 
@@ -162,12 +174,69 @@ export const EnquiriesView: React.FC = () => {
     }
   }, [session, workspaceId, userId, isTechnician]);
 
+  const loadConversionOptions = useCallback(async (targetEnquiry: PersistentEnquiry) => {
+    if (!session || !workspaceId || isTechnician) return;
+    const reqId = ++creationReqGen.current;
+    setJobTypesLoading(true);
+    setJobTypesError('');
+    setJobTypeOptions([]);
+    setSelectedJobTypeId('');
+    try {
+      const token = await session.token();
+      const options = await enquiryApiRequest<CreationJobTypeOption[]>(
+        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/compliance-jobs?view=creation-options`,
+        token
+      );
+      if (creationReqGen.current !== reqId) return;
+      const list = Array.isArray(options) ? options : [];
+      setJobTypeOptions(list);
+      const firstReady = list.find(jt => !jt.missing_mandatory_forms?.length);
+      setSelectedJobTypeId(firstReady?.id ?? '');
+
+      try {
+        const custRes = await enquiryApiRequest<{ customers: Array<{ id: string; name: string; email: string }> }>(
+          `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/customers`,
+          token
+        );
+        if (creationReqGen.current === reqId && Array.isArray(custRes.customers)) {
+          setWorkspaceCustomers(custRes.customers);
+          if (!targetEnquiry.matched_customer_id && custRes.customers.length > 0) {
+            setSelectedCustomerId(prev => prev || custRes.customers[0].id);
+          }
+        }
+      } catch {
+        // Manual Customer ID entry remains available when customers list is unavailable
+      }
+    } catch (err) {
+      if (creationReqGen.current !== reqId) return;
+      setJobTypesError(err instanceof Error ? err.message : 'Unable to load active published job types.');
+    } finally {
+      if (creationReqGen.current === reqId) {
+        setJobTypesLoading(false);
+      }
+    }
+  }, [session, workspaceId, isTechnician]);
+
   useEffect(() => {
     void loadEnquiries();
     return () => {
       generation.current++;
     };
   }, [loadEnquiries]);
+
+  useEffect(() => {
+    creationReqGen.current++;
+    setConvertTarget(null);
+    setJobTypeOptions([]);
+    setJobTypesLoading(false);
+    setJobTypesError('');
+    setSelectedJobTypeId('');
+    setSelectedCustomerId('');
+    setWorkspaceCustomers([]);
+    return () => {
+      creationReqGen.current++;
+    };
+  }, [workspaceId]);
 
   if (isTechnician) {
     return (
@@ -261,8 +330,33 @@ export const EnquiriesView: React.FC = () => {
     }
   };
 
+  const openConvertModal = (enq: PersistentEnquiry) => {
+    setError('');
+    setStatusMessage('');
+    setConvertTarget(enq);
+    setCustomerMode(enq.matched_customer_id ? 'matched' : 'new');
+    setSelectedCustomerId(enq.matched_customer_id ?? '');
+    void loadConversionOptions(enq);
+  };
+
   const handleConvert = async () => {
     if (!workspaceId || !convertTarget || busy) return;
+    const chosenJobType = jobTypeOptions.find(jt => jt.id === selectedJobTypeId);
+    if (!chosenJobType || chosenJobType.missing_mandatory_forms?.length) {
+      setError('Select an active published job type before converting this enquiry.');
+      return;
+    }
+    const customerIdForRequest =
+      customerMode === 'matched'
+        ? (selectedCustomerId.trim() || convertTarget.matched_customer_id || '')
+        : customerMode === 'existing'
+          ? selectedCustomerId.trim()
+          : '';
+    if (customerMode !== 'new' && !customerIdForRequest) {
+      setError('Select or enter a valid customer ID before converting this enquiry.');
+      return;
+    }
+
     setBusy(true);
     setError('');
     setStatusMessage('');
@@ -275,8 +369,8 @@ export const EnquiriesView: React.FC = () => {
           method: 'POST',
           body: {
             customer_mode: customerMode,
-            ...(customerMode !== 'new' && selectedCustomerId ? { customer_id: selectedCustomerId } : {}),
-            ...(selectedJobTypeId ? { job_type_id: selectedJobTypeId } : {}),
+            ...(customerMode !== 'new' && customerIdForRequest ? { customer_id: customerIdForRequest } : {}),
+            job_type_id: chosenJobType.id,
           },
         }
       );
@@ -293,7 +387,16 @@ export const EnquiriesView: React.FC = () => {
 
   const pendingEnquiries = enquiries.filter(e => e.status === 'PENDING_REVIEW');
   const processedEnquiries = enquiries.filter(e => e.status !== 'PENDING_REVIEW');
-  const workspaceJobTypes = jobTypes.filter(jt => jt.brandId === (workspaceId || activeBrandId));
+  const readyJobTypes = jobTypeOptions.filter(jt => !jt.missing_mandatory_forms?.length);
+  const selectedJobType = jobTypeOptions.find(jt => jt.id === selectedJobTypeId);
+  const conversionCustomerInvalid = customerMode === 'existing' && !selectedCustomerId.trim();
+  const canSubmitConversion =
+    !busy &&
+    !jobTypesLoading &&
+    !jobTypesError &&
+    Boolean(selectedJobType) &&
+    !selectedJobType?.missing_mandatory_forms?.length &&
+    !conversionCustomerInvalid;
 
   return (
     <div className="space-y-6">
@@ -446,11 +549,15 @@ export const EnquiriesView: React.FC = () => {
                       <span>Source: {enq.source_website}</span>
                       <span>
                         Ack Email:{' '}
-                        <strong>
-                          {enq.acknowledgement_status === 'SANDBOX_SIMULATED'
-                            ? 'SANDBOX_SIMULATED'
-                            : enq.acknowledgement_status}
-                        </strong>
+                        <strong>{enq.acknowledgement_status}</strong>
+                        {(enq.acknowledgement_status === 'UNCERTAIN' ||
+                          (enq.acknowledgement_status === 'PENDING' &&
+                            enq.acknowledgement_error?.toUpperCase().includes('UNCERTAIN'))) && (
+                          <span className="ml-1 text-amber-300">(delivery unconfirmed)</span>
+                        )}
+                        {enq.acknowledgement_status === 'FAILED' && enq.acknowledgement_error && (
+                          <span className="ml-1 text-red-300">({enq.acknowledgement_error})</span>
+                        )}
                       </span>
                     </div>
                   </div>
@@ -500,12 +607,7 @@ export const EnquiriesView: React.FC = () => {
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => {
-                      setConvertTarget(enq);
-                      setCustomerMode(enq.matched_customer_id ? 'matched' : 'new');
-                      setSelectedCustomerId(enq.matched_customer_id || customers[0]?.id || '');
-                      setSelectedJobTypeId(workspaceJobTypes[0]?.id || '');
-                    }}
+                    onClick={() => openConvertModal(enq)}
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold rounded cursor-pointer disabled:opacity-50"
                   >
                     <span>Convert to Job</span>
@@ -585,29 +687,77 @@ export const EnquiriesView: React.FC = () => {
               </select>
 
               {customerMode === 'existing' && (
-                <input
-                  value={selectedCustomerId}
-                  onChange={e => setSelectedCustomerId(e.target.value)}
-                  placeholder="Customer ID"
-                  className="w-full cabms-input rounded p-2 text-xs text-(--cabms-text-primary)"
-                />
+                <div className="space-y-2">
+                  {workspaceCustomers.length > 0 && (
+                    <select
+                      aria-label="Select existing customer"
+                      value={workspaceCustomers.some(c => c.id === selectedCustomerId) ? selectedCustomerId : ''}
+                      onChange={e => setSelectedCustomerId(e.target.value)}
+                      className="w-full cabms-input rounded p-2 text-xs text-(--cabms-text-primary)"
+                    >
+                      <option value="">Choose a persisted customer…</option>
+                      {workspaceCustomers.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.email}) — {c.id}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <input
+                    aria-label="Customer ID"
+                    value={selectedCustomerId}
+                    onChange={e => setSelectedCustomerId(e.target.value)}
+                    placeholder="Customer ID"
+                    className="w-full cabms-input rounded p-2 text-xs text-(--cabms-text-primary)"
+                  />
+                </div>
               )}
 
-              {workspaceJobTypes.length > 0 && (
+              <label className="block font-bold text-(--cabms-text-secondary) pt-2">Job Type</label>
+              {jobTypesLoading ? (
+                <p role="status" className="text-(--cabms-text-secondary)">
+                  Loading active published job types…
+                </p>
+              ) : jobTypesError ? (
+                <div role="alert" className="p-2.5 rounded bg-red-950/60 border border-red-800 text-red-200 space-y-1.5">
+                  <p>{jobTypesError}</p>
+                  <button
+                    type="button"
+                    onClick={() => void loadConversionOptions(convertTarget)}
+                    className="underline font-semibold cursor-pointer"
+                  >
+                    Retry loading job types
+                  </button>
+                </div>
+              ) : jobTypeOptions.length === 0 ? (
+                <div role="status" className="p-2.5 rounded bg-amber-950/60 border border-amber-700 text-amber-200">
+                  No active published job types are available in this workspace. Publish a job type and compliance policy before converting enquiries to jobs.
+                </div>
+              ) : (
                 <>
-                  <label className="block font-bold text-(--cabms-text-secondary) pt-2">Job Type</label>
                   <select
                     aria-label="Job type"
                     value={selectedJobTypeId}
                     onChange={e => setSelectedJobTypeId(e.target.value)}
                     className="w-full cabms-input rounded p-2 text-xs text-(--cabms-text-primary)"
                   >
-                    {workspaceJobTypes.map(jt => (
-                      <option key={jt.id} value={jt.id}>
+                    <option value="">Select an active published job type…</option>
+                    {jobTypeOptions.map(jt => (
+                      <option
+                        key={jt.id}
+                        value={jt.id}
+                        disabled={Boolean(jt.missing_mandatory_forms?.length)}
+                      >
                         {jt.name}
+                        {jt.missing_mandatory_forms?.length ? ' — missing mandatory form mappings' : ''}
                       </option>
                     ))}
                   </select>
+                  {readyJobTypes.length === 0 && (
+                    <div role="status" className="p-2.5 rounded bg-amber-950/60 border border-amber-700 text-amber-200">
+                      Published job types exist in this workspace, but none have complete mandatory form mappings yet ({jobTypeOptions.map(jt => `${jt.name}: ${jt.missing_mandatory_forms.join(', ')}`).join('; ')}).
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -622,7 +772,7 @@ export const EnquiriesView: React.FC = () => {
               </button>
               <button
                 type="button"
-                disabled={busy}
+                disabled={!canSubmitConversion}
                 onClick={() => void handleConvert()}
                 className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded cursor-pointer disabled:opacity-50"
               >

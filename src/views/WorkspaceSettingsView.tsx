@@ -51,7 +51,7 @@ const getBrandDefaults = (brand: BrandConfig, fallbackPreset: VisualPreset): Wor
   preferredPreset: brand.preferredPreset || fallbackPreset,
 });
 
-export const WorkspaceSettingsView: React.FC = () => {
+export const WorkspaceSettingsView: React.FC<{ isActive?: boolean }> = ({ isActive = true }) => {
   const {
     persona,
     activeBrandId,
@@ -85,10 +85,12 @@ export const WorkspaceSettingsView: React.FC = () => {
   const [providerAudit, setProviderAudit] = useState<ProviderAuditEventRow[]>([]);
 
   const loadProviderConfig = useCallback(async () => {
-    if (!session?.workspaceId || !canEdit) {
-      setProviderConfig(null);
-      setProviderEtag(null);
-      setProviderAudit([]);
+    if (!isActive || !session?.workspaceId || !canEdit) {
+      if (!session?.workspaceId || !canEdit) {
+        setProviderConfig(null);
+        setProviderEtag(null);
+        setProviderAudit([]);
+      }
       return;
     }
     setProviderLoading(true);
@@ -125,7 +127,7 @@ export const WorkspaceSettingsView: React.FC = () => {
     } finally {
       setProviderLoading(false);
     }
-  }, [session?.workspaceId, canEdit, session]);
+  }, [isActive, session?.workspaceId, canEdit, session]);
 
   useEffect(() => {
     setProviderMessage(null);

@@ -30,6 +30,7 @@ import {
   deleteTemplateDraft,
   createTemplateRevisionDraft,
   updateTemplateDraftContent,
+  previewTemplate,
   submitTemplateRevisionReview,
   approveTemplateRevision,
 } from '../../modules/templates/templatesRepo.ts';
@@ -183,6 +184,39 @@ export async function handleJobTypesRoute(
   return new Response('Method Not Allowed', { status: 405 });
 }
 
+async function validateTemplateOutput(
+  db: Env['DB'],
+  workspace: string,
+  out: any,
+  requestId: string
+): Promise<Response | null> {
+  const object = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (
+    !object(out) ||
+    !['Compliance', 'Terms', 'Email', 'Contract'].includes(out.category) ||
+    out.brand_id !== workspace ||
+    !object(out.layout) ||
+    !object(out.dynamic_fields) ||
+    JSON.stringify(out).length > 16000 ||
+    (out.linked_form_revision_id != null && typeof out.linked_form_revision_id !== 'string')
+  ) {
+    return validationErrorResponse('Invalid output configuration', [], requestId);
+  }
+  if (!await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first()) {
+    return createProblemResponse(503, 'CATALOG_NOT_READY', 'catalog-not-ready', 'Form catalog unavailable', 'The form catalog has not been initialized for this environment.', requestId);
+  }
+  if (out.document_type_id != null) {
+    if (typeof out.document_type_id !== 'string') return validationErrorResponse('Invalid document type reference', [], requestId);
+    const documentType = await db.prepare(`SELECT id FROM document_type_catalog WHERE id=? AND workspace_id=? AND status='PUBLISHED'`).bind(out.document_type_id, workspace).first();
+    if (!documentType) return validationErrorResponse('Document type must be published in this workspace', [], requestId);
+  }
+  if (out.linked_form_revision_id) {
+    const form = await db.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions d ON d.id=r.form_definition_id AND d.workspace_id=r.workspace_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND d.status='ACTIVE' AND d.brand_id=?`).bind(out.linked_form_revision_id, workspace, out.brand_id).first();
+    if (!form) return validationErrorResponse('Linked form revision must be published and in this workspace and business', [], requestId);
+  }
+  return null;
+}
+
 export async function handleTemplatesRoute(
   request: Request,
   env: Env,
@@ -216,6 +250,26 @@ export async function handleTemplatesRoute(
     return reply(tpl);
   }
 
+  // 2b. GET or POST /templates/:id/preview (simulated document preview)
+  if ((request.method === 'GET' || request.method === 'POST') && templateId && subAction === 'preview' && !subId) {
+    let options: { revisionId?: string; content?: string; dynamicFields?: Record<string, unknown>; sampleData?: Record<string, string> } = {};
+    if (request.method === 'POST') {
+      let body: any;
+      try { body = await request.json(); } catch { return validationErrorResponse('Invalid JSON', [], requestId); }
+      if (body && typeof body === 'object' && !Array.isArray(body)) {
+        options = {
+          revisionId: typeof body.revisionId === 'string' ? body.revisionId : undefined,
+          content: typeof body.content === 'string' ? body.content : undefined,
+          dynamicFields: body.dynamicFields && typeof body.dynamicFields === 'object' && !Array.isArray(body.dynamicFields) ? body.dynamicFields : undefined,
+          sampleData: body.sampleData && typeof body.sampleData === 'object' && !Array.isArray(body.sampleData) ? body.sampleData : undefined,
+        };
+      }
+    }
+    const preview = await previewTemplate(env.DB, workspace, auth, templateId, options);
+    if (!preview) return resourceNotFoundResponse('Template not found', requestId);
+    return reply(preview);
+  }
+
   // Technician role cannot make any modifications
   if (membership.role === 'technician') {
     return accessDeniedResponse('Technicians cannot modify document templates', requestId);
@@ -229,19 +283,8 @@ export async function handleTemplatesRoute(
       return validationErrorResponse('Name, templateType, and content are required', [], requestId);
     }
     if (input.output !== undefined) {
-      const out = input.output;
-      const object = (v: unknown) => !!v && typeof v === 'object' && !Array.isArray(v);
-      if (!object(out) || !['Compliance','Terms','Email','Contract'].includes(out.category) || out.brand_id !== workspace || !object(out.layout) || !object(out.dynamic_fields) || JSON.stringify(out).length > 16000 || (out.linked_form_revision_id != null && typeof out.linked_form_revision_id !== 'string')) return validationErrorResponse('Invalid output configuration', [], requestId);
-      if (!await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first()) return createProblemResponse(503,'CATALOG_NOT_READY','catalog-not-ready','Form catalog unavailable','The form catalog has not been initialized for this environment.',requestId);
-      if (out.document_type_id != null) {
-        if (typeof out.document_type_id !== 'string') return validationErrorResponse('Invalid document type reference',[],requestId);
-        const documentType = await env.DB.prepare(`SELECT id FROM document_type_catalog WHERE id=? AND workspace_id=? AND status='PUBLISHED'`).bind(out.document_type_id,workspace).first();
-        if (!documentType) return validationErrorResponse('Document type must be published in this workspace',[],requestId);
-      }
-      if (out.linked_form_revision_id) {
-        const form = await env.DB.prepare(`SELECT r.id FROM form_revisions r JOIN form_definitions d ON d.id=r.form_definition_id AND d.workspace_id=r.workspace_id WHERE r.id=? AND r.workspace_id=? AND r.status='PUBLISHED' AND d.status='ACTIVE' AND d.brand_id=?`).bind(out.linked_form_revision_id,workspace,out.brand_id).first();
-        if (!form) return validationErrorResponse('Linked form revision must be published and in this workspace and brand',[],requestId);
-      }
+      const outputErr = await validateTemplateOutput(env.DB, workspace, input.output, requestId);
+      if (outputErr) return outputErr;
     }
     const res = await createTemplate(env.DB, workspace, auth, input);
     if (!res) return createProblemResponse(400, 'CREATION_FAILED', 'creation-failed', 'Creation Failed', 'Could not create template', requestId);
@@ -295,8 +338,20 @@ export async function handleTemplatesRoute(
     const parsed = /^"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)"$/.exec(match);
     if (!parsed || !Number.isFinite(Date.parse(parsed[1]))) return validationErrorResponse('Invalid draft version',[],requestId);
     let input:unknown; try { input = await request.json(); } catch { return validationErrorResponse('Invalid JSON',[],requestId); }
-    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof (input as {content?:unknown}).content !== 'string' || !(input as {content:string}).content.trim() || (input as {content:string}).content.length > 100000) return validationErrorResponse('Content is required and must be at most 100000 characters',[],requestId);
-    const updated = await updateTemplateDraftContent(env.DB,workspace,auth,templateId,subId,parsed[1],(input as {content:string}).content);
+    const body = input as { content?: unknown; sampleFileName?: unknown; mappingStatus?: unknown; output?: unknown };
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof body.content !== 'string' || !body.content.trim() || body.content.length > 100000) return validationErrorResponse('Content is required and must be at most 100000 characters',[],requestId);
+    if (body.mappingStatus !== undefined && !['Mapped', 'Pending Review', 'Unsupported'].includes(String(body.mappingStatus))) {
+      return validationErrorResponse('Invalid mappingStatus', [], requestId);
+    }
+    if (body.output !== undefined) {
+      const outputErr = await validateTemplateOutput(env.DB, workspace, body.output, requestId);
+      if (outputErr) return outputErr;
+    }
+    const updated = await updateTemplateDraftContent(env.DB,workspace,auth,templateId,subId,parsed[1],body.content, {
+      sampleFileName: typeof body.sampleFileName === 'string' ? body.sampleFileName : undefined,
+      mappingStatus: body.mappingStatus as 'Mapped' | 'Pending Review' | 'Unsupported' | undefined,
+      output: body.output as any,
+    });
     return updated ? reply({updated_at:updated}) : createProblemResponse(412,'PRECONDITION_FAILED','precondition-failed','Precondition Failed','Draft changed or is no longer editable. Reload before saving.',requestId);
   }
 

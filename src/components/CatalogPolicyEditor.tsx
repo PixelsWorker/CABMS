@@ -129,7 +129,7 @@ export function CatalogPolicyEditor({ jobType, close }: { jobType:JobTypeConfig;
   <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="catalog-policy-editor-title" className="cabms-card max-w-lg w-full p-6 space-y-3">
     <h3 id="catalog-policy-editor-title" className="font-bold">Configure {jobType.name}</h3>
     <p className="text-xs">Existing legacy requirements: {jobType.formsRequired.join(', ') || 'none'}. Manage catalog forms in this draft policy:</p>
-    {loading ? <p>Loading published forms…</p> : forms.length === 0 ? <p>No published forms are available for this brand.</p> : (
+    {loading ? <p>Loading published forms…</p> : forms.length === 0 ? <p>No published forms are available for this business.</p> : (
       <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
         {forms.map(form => {
           const isSelected = !!rulesMap[form.published_revision_id];

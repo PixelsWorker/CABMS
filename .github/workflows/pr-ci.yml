@@ -33,12 +33,18 @@ jobs:
 
       - name: Verify and extract trusted Gate 1 v2 bundle
         run: |
-          if [ -f .trusted-ref/.ci/trusted-qa/cabms-trusted-ci-gate1-v2.tar.gz ]; then
-            BUNDLE=.trusted-ref/.ci/trusted-qa/cabms-trusted-ci-gate1-v2.tar.gz
+          EXPECTED="0c9254d17f5f5ae21b12f1015fc06e66df3323ceca85742eaf16a419515c30a8"
+          PREV_BASE="31c2eb3ccbd6d53190c5ae3e17bb3aa84fa8354dc08120ac9e1f8b7fb99c8dbd"
+          BASE_BUNDLE=".trusted-ref/.ci/trusted-qa/cabms-trusted-ci-gate1-v2.tar.gz"
+          if [ -f "${BASE_BUNDLE}" ] && echo "${EXPECTED}  ${BASE_BUNDLE}" | sha256sum -c - >/dev/null 2>&1; then
+            BUNDLE="${BASE_BUNDLE}"
+          elif [ -f "${BASE_BUNDLE}" ] && echo "${PREV_BASE}  ${BASE_BUNDLE}" | sha256sum -c - >/dev/null 2>&1; then
+            BUNDLE=".ci/trusted-qa/cabms-trusted-ci-gate1-v2.tar.gz"
           else
-            BUNDLE=.ci/trusted-qa/cabms-trusted-ci-gate1-v2.tar.gz
+            echo "Trusted base bundle missing or unexpected digest."
+            exit 1
           fi
-          echo "31c2eb3ccbd6d53190c5ae3e17bb3aa84fa8354dc08120ac9e1f8b7fb99c8dbd  ${BUNDLE}" | sha256sum -c -
+          echo "${EXPECTED}  ${BUNDLE}" | sha256sum -c -
           mkdir -p /tmp/cabms-trusted-qa
           tar -xzf "${BUNDLE}" -C /tmp/cabms-trusted-qa
           rm -rf .trusted-ref
@@ -88,13 +94,14 @@ jobs:
             --policy-source worktree \
             --out "${{ runner.temp }}/aqa-report"
 
-      - name: Run supplemental operational suites (F06 concurrency, 0014, Windows enrollment)
+      - name: Run supplemental operational suites (F06 concurrency, 0014, Windows enrollment, integrated journey)
         env:
           CABMS_DISPOSABLE_D1_TEST: "1"
           WRANGLER_SEND_METRICS: "false"
         run: |
           node node_modules/tsx/dist/cli.mjs --test tests/workerd/f06_concurrency.test.ts
           node node_modules/tsx/dist/cli.mjs --test tests/workerd/c1_exact_0014.test.ts tests/workerd/windows_local_enrollment.test.ts
+          node node_modules/tsx/dist/cli.mjs --test tests/workerd/wave1_2_client_journey.test.ts
 
       - name: Upload sanitized AQA summary
         if: always()

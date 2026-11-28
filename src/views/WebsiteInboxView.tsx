@@ -455,7 +455,12 @@ const SimulatedWebsiteInboxView: React.FC = () => {
 /** Authenticated demo data is kept separate from the G00 simulated inbox. */
 export const WebsiteInboxView: React.FC = () => {
  const session = useG01Session();
- return session ? <PersistentInbox key={JSON.stringify([session.workspaceId, session.profile?.user.id])} /> : <SimulatedWebsiteInboxView />;
+ return (
+   <div className="space-y-6">
+     {session && <PersistentInbox key={JSON.stringify([session.workspaceId, session.profile?.user.id])} />}
+     <SimulatedWebsiteInboxView />
+   </div>
+ );
 };
 function PersistentInbox() {
  const session = useG01Session()!;
@@ -498,5 +503,5 @@ function PersistentInbox() {
    <button className="rounded bg-amber-400 px-4 py-2 font-semibold text-slate-950 hover:bg-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || uncertain} type="submit">Save enquiry</button></form>
   <button type="button" disabled={busy} onClick={() => { setError(''); void refresh('manual'); }} className="rounded border border-amber-400 px-3 py-2 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:opacity-50">Refresh saved enquiries</button>
   <ul className="space-y-3">{items.map(item=><li className="cabms-card-subtle rounded p-3" key={item.id}>{item.customer_name} — {item.service} — {item.job_id ? `Converted to job ${item.job_id}` : <button className="rounded border border-amber-400 px-3 py-1 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400 disabled:opacity-50" disabled={busy || conversionUncertain.includes(item.id)} onClick={()=>void convert(item.id)}>Convert to job</button>}</li>)}</ul>
-  <button className="rounded border border-amber-400 px-3 py-2 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" onClick={()=>setActiveTab('jobs')}>Open jobs</button></section>;
+  <button className="rounded border border-amber-400 px-3 py-2 text-amber-300 focus:outline-2 focus:outline-offset-2 focus:outline-amber-400" onClick={()=>setActiveTab('jobs')}>Open Compliance Jobs</button></section>;
 }

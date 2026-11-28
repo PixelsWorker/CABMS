@@ -11,8 +11,13 @@
     "lint": "tsc --noEmit",
     "test": "npm run build && tsx --test src/utils/cabmsLogic.test.ts tests/*.test.ts tests/s2/*.test.ts tests/bootstrap/*.test.ts",
     "test:g01-workerd": "tsx --test tests/workerd/g01_d1_worker_binding.test.ts",
+    "test:paar-p0": "tsx --test tests/workerd/p0_bootstrap_integration.test.ts",
+    "test:paar-p0-disposable": "tsx scripts/p0/runDisposableD1Tests.ts",
+    "test:paar-p0-all": "npm run test:paar-p0 && npm run test:paar-p0-disposable",
     "test:demo-workerd": "tsx --test tests/workerd/demo_journey_workerd.test.ts",
-    "test:workerd": "tsx --test tests/workerd/g01_d1_worker_binding.test.ts tests/workerd/demo_journey_workerd.test.ts",
+    "test:c1-workerd": "CABMS_DISPOSABLE_D1_TEST=1 tsx --test tests/workerd/c1_templates_workerd.test.ts",
+    "test:workerd": "tsx --test --test-concurrency=1 tests/workerd/g01_d1_worker_binding.test.ts tests/workerd/demo_journey_workerd.test.ts",
+    "test:operational": "node scripts/qa/runOperationalWorkerdTests.mjs",
     "test:layer1": "tsx --test tests/layer1_toolchain.test.ts",
     "test:layer2": "tsx --test tests/layer2_domain.test.ts",
     "test:layer3": "tsx --test tests/layer3_navigation_access.test.ts",
@@ -54,5 +59,10 @@
   },
   "engines": {
     "node": "^22.22.2 || ^24.15.0"
+  },
+  "overrides": {
+    "@firebase/firestore": {
+      "@grpc/grpc-js": "1.13.6"
+    }
   }
 }

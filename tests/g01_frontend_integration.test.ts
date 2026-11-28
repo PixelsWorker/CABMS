@@ -1,3 +1,4 @@
+import {DashboardView} from '../src/views/DashboardView.tsx';
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import React, { act } from 'react';
@@ -232,6 +233,15 @@ test('G01 mounted dashboard for CCTV-only member renders without crash and filte
     assert.equal(currentCtx.activeBrand.name, 'Gold Coast CCTV');
     assert.deepEqual(Object.keys(currentCtx.brands), ['cctv']);
 
+    const work = container.querySelector('[aria-label="Compliance operations"]')!;
+    assert.ok(work, 'Authenticated compliance dashboard is the default');
+    const filter = work.querySelector('select')!;
+    assert.deepEqual(Array.from(filter.options, option => option.value), ['all', 'cctv']);
+    assert.ok(!container.textContent!.includes('Open legacy preview'));
+    // Mount the isolated legacy dashboard explicitly for the original fixture scoping checks.
+    await act(async()=>root.render(React.createElement(SessionContext.Provider,{value:session},
+      React.createElement(CabmsProvider,null,React.createElement(Capture),React.createElement(AppContent),React.createElement(DashboardView)))));
+
     // 2. Operational jobs heading must reflect Gold Coast CCTV
     assert.match(container.textContent!, /Gold Coast CCTV Sample Operational Jobs \(Simulation\)/);
     assert.doesNotMatch(container.textContent!, /Solarcell Operational Jobs/);
@@ -334,6 +344,15 @@ test('G01 mounted dashboard for Smart-Home-only member renders without crash and
     assert.equal(currentCtx.activeBrandId, 'smart_home');
     assert.equal(currentCtx.activeBrand.name, 'Smart Home Solutions');
     assert.deepEqual(Object.keys(currentCtx.brands), ['smart_home']);
+
+    const work = container.querySelector('[aria-label="Compliance operations"]')!;
+    assert.ok(work, 'Authenticated compliance dashboard is the default');
+    const filter = work.querySelector('select')!;
+    assert.deepEqual(Array.from(filter.options, option => option.value), ['all', 'smart_home']);
+    assert.ok(!container.textContent!.includes('Open legacy preview'));
+    // Mount the isolated legacy dashboard explicitly for the original fixture scoping checks.
+    await act(async()=>root.render(React.createElement(SessionContext.Provider,{value:session},
+      React.createElement(CabmsProvider,null,React.createElement(Capture),React.createElement(AppContent),React.createElement(DashboardView)))));
 
     // 2. Operational jobs heading must reflect Smart Home Solutions
     assert.match(container.textContent!, /Smart Home Solutions Sample Operational Jobs \(Simulation\)/);

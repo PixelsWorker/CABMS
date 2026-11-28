@@ -5,7 +5,7 @@ import {createRoot} from 'react-dom/client';
 import {JSDOM} from 'jsdom';
 import {SessionContext,type Session} from '../src/context/G01Session.tsx';
 import {CabmsProvider, useCabms} from '../src/context/CabmsContext.tsx';
-import {ScheduleView} from '../src/views/ScheduleView.tsx';
+import {SyntheticScheduleFixture as ScheduleView} from '../src/views/ScheduleView.tsx';
 import {setApiBase,resetApiBase} from '../src/services/g01Client.ts';
 import {createLocalD1Database,type LocalD1Database} from '../backend/db/d1.ts';
 import {runLocalMigrations} from '../backend/db/migrate.ts';

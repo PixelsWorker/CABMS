@@ -98,16 +98,27 @@ export interface Customer {
 export interface JobTypeConfig {
   id: string;
   name: string;
+  code?: string;
+  description?: string;
   brandId: BrandId;
   formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
+  catalogForms?: Array<{revision_id:string;title:string;code:string;required:number}>;
   isDirectToInvoice: boolean;
   version: string;
+  status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  policyStatus?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+  currentPolicyId?: string;
   revisionHistory?: {
+    id?: string;
     version: string;
     formsRequired: ('JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2')[];
     isDirectToInvoice: boolean;
+    status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+    effectiveAt?: string;
     updatedAt: string;
     updatedBy: string;
+    approvedBy?: string;
+    approvedAt?: string;
   }[];
 }
 
@@ -461,20 +472,29 @@ export interface WebsiteEnquiry {
 }
 
 export interface TemplateRevision {
+  id?: string;
   version: string;
-  status: 'DRAFT' | 'REVIEW' | 'PUBLISHED';
+  status: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
   content: string;
   updatedAt: string;
   updatedBy: string;
+  approvedBy?: string;
+  approvedAt?: string;
 }
 
 export interface TemplateSetting {
   id: string;
+  code?: string;
   name: string;
   type: 'TERMS' | 'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2' | 'EMAIL_CONFIRMATION' | 'REVIEW_REQUEST' | 'QUOTE_FOLLOWUP';
   currentVersion: string;
-  activeStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED';
+  publishedVersion?: string;
+  activeStatus: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+  status?: 'ACTIVE' | 'ARCHIVED' | 'DRAFT';
+  currentRevisionId?: string;
+  editingRevisionId?: string;
   content: string;
+  description?: string;
   sampleFileName?: string;
   mappingStatus: 'Mapped' | 'Pending Review' | 'Unsupported';
   revisions: TemplateRevision[];

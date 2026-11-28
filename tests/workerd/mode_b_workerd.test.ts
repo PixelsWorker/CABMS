@@ -1,0 +1,47 @@
+/** LOCAL WORKER/D1 ONLY. Runs a synthetic Mode B statement batch on a fresh local D1. */
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {createRequire} from 'node:module';
+import {loadVerifiedMigrations} from '../../backend/db/migrate.ts';
+import type {D1Database} from '../../backend/db/d1.ts';
+import {canonicalizeJson} from '../../scripts/p0/approvalManifest.ts';
+import {verifyModeBApproval} from '../../scripts/p0/modeBContract.ts';
+import {buildModeBStatements,enrollModeBExistingUser} from '../../scripts/p0/modeBEnrollment.ts';
+import {reconcileModeB} from '../../scripts/p0/modeBReconcile.ts';
+import {readModeBClock} from '../../scripts/p0/modeBClock.ts';
+
+test('LOCAL WORKER/D1: Mode B builder rolls back mismatched identity and preserves an existing mapping',async t=>{
+ if (process.env.CABMS_DISPOSABLE_D1_TEST!=='1') throw new Error('Explicit disposable local D1 test opt-in required');
+ const base=fs.realpathSync(os.tmpdir()), dir=fs.mkdtempSync(path.join(base,'cabms-mode-b-workerd-')), real=fs.realpathSync(dir);
+ if (!real.startsWith(base+path.sep) || !path.basename(real).startsWith('cabms-mode-b-workerd-')) throw new Error('Invalid temporary test path');
+ let server:{close:()=>Promise<void>}|undefined;
+ t.after(async()=>{if(server) await server.close();if(fs.existsSync(real) && fs.realpathSync(real)===real) fs.rmSync(real,{recursive:true,force:true});});
+ const migrations=path.join(real,'migrations');fs.mkdirSync(migrations);
+ for(const migration of loadVerifiedMigrations()) fs.writeFileSync(path.join(migrations,migration.name),migration.bytes);
+ const config=path.join(real,'wrangler.json');
+ fs.writeFileSync(config,JSON.stringify({name:'cabms-mode-b-local-test',main:path.resolve('tests/support/worker.ts'),compatibility_date:'2026-10-28',compatibility_flags:['nodejs_compat'],d1_databases:[{binding:'DB',database_name:'mode-b-local-test',database_id:'mode-b-local-only',migrations_dir:migrations}],vars:{ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'}}));
+ const require=createRequire(import.meta.url), {createTestHarness}=require('wrangler');
+ const harness=createTestHarness({workers:[{configPath:config}]});server=harness;
+ await harness.listen();const worker=harness.getWorker('cabms-mode-b-local-test');await worker.applyD1Migrations('DB');
+ const db=(await worker.getEnv()).DB as D1Database;
+ await db.prepare("INSERT INTO users(id,email,disabled,created_at,updated_at) VALUES('user-test','fixture@example.invalid',0,'2026','2026')").run();
+ await db.prepare("INSERT INTO user_identity_mappings(id,user_id,provider_id,provider_subject_id,created_at) VALUES('map-test','user-test','firebase','fixture-uid','2026')").run();
+ const key=crypto.generateKeyPairSync('ed25519'),now=Date.now(),scope=['solarcell','smart_home','cctv'];
+ const manifest={domain:'CABMS/MODE-B/v1',operation_id:`op_${crypto.randomUUID()}`,nonce:crypto.randomUUID(),account_id:'fixture-account',target_id:'fixture-db',target_user_id:'user-test',operator_email:'fixture@example.invalid',operator_uid:'fixture-uid',workspace_scope:scope,permitted_action:'bootstrap_super_admin',issued_at:new Date(now-60000).toISOString(),expires_at:new Date(now+300000).toISOString(),signing_key_id:'fixture-key',approval_identity:'fixture-approver'};
+ const canonical=canonicalizeJson(manifest),signature=crypto.sign(null,Buffer.from(canonical),key.privateKey).toString('base64url');
+ const approval=verifyModeBApproval(JSON.stringify({manifest,signature_algorithm:'Ed25519',signature_bytes:signature,signing_key_id:'fixture-key',canonical_manifest_json:canonical}),key.publicKey,{accountId:'fixture-account',databaseId:'fixture-db',userId:'user-test',email:'fixture@example.invalid',uid:'fixture-uid',workspaceIds:scope,keyId:'fixture-key',publicKeySha256:crypto.createHash('sha256').update(key.publicKey.export({type:'spki',format:'der'})).digest('hex'),nowMs:now});
+ assert.equal((await readModeBClock(db,approval)).ok,true);
+ assert.equal(await reconcileModeB(db,approval,{settled:true}),'NOT_ENROLLED');
+ await assert.rejects(()=>enrollModeBExistingUser(db,approval),/not enabled/);
+ await db.prepare("UPDATE users SET disabled=1 WHERE id='user-test'").run();
+ await assert.rejects(()=>db.batch(buildModeBStatements(db,approval)));
+ assert.equal((await db.prepare('SELECT count(*) AS n FROM g01_bootstrap_completion').first<{n:number}>())?.n,0);
+ await db.prepare("UPDATE users SET disabled=0 WHERE id='user-test'").run();
+ const result=await db.batch(buildModeBStatements(db,approval));assert.ok(result.every(r=>r.success));
+ assert.equal(await reconcileModeB(db,approval,{settled:true}),'CONFIRMED_ENROLLED');
+ await assert.rejects(()=>db.batch(buildModeBStatements(db,approval)));
+});

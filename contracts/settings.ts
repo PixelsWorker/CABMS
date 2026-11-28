@@ -15,6 +15,7 @@ export interface WorkspaceSettingsRow {
   contact_phone: string | null;
   operational_address: string | null;
   operating_hours: string | null;
+  contract_threshold_cents?: number;
   holiday_region: string;
   review_url: string | null;
   calendar_mapping_name: string | null;
@@ -63,6 +64,7 @@ export type EditableWorkspaceSettings = Pick<
   | 'contact_email'
   | 'contact_phone'
   | 'operational_address'
+  | 'contract_threshold_cents'
   | 'operating_hours'
 >;
 
@@ -83,6 +85,7 @@ export const ALLOWED_SETTINGS_KEYS: (keyof EditableWorkspaceSettings)[] = [
   'contact_email',
   'contact_phone',
   'operational_address',
+  'contract_threshold_cents',
   'operating_hours',
 ];
 

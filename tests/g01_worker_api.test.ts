@@ -608,6 +608,8 @@ describe('G01 Worker API Endpoints', () => {
         .bind('test_op_approval_sc', 'test_g01_usr_operator', 'test_g01_operator_uid', 'solarcell',
               'test_op_approval_sh', 'test_g01_usr_operator', 'test_g01_operator_uid', 'smart_home',
               'test_op_approval_cctv', 'test_g01_usr_operator', 'test_g01_operator_uid', 'cctv'),
+      operatorDb.prepare("INSERT INTO paar_p0_bootstrap_audit_manifests (id, operation_id, nonce, target_id, operator_email, operator_uid, workspace_scope, permitted_action, signing_key_id, signature_algorithm, signature_bytes, canonical_manifest_json, audit_reference, created_at) VALUES ('audit_op_worker', 'op_worker', 'nonce_worker', 'target_worker', 'test-g01-operator@example.invalid', 'test_g01_operator_uid', 'solarcell,smart_home,cctv', 'bootstrap_super_admin', 'key_worker', 'Ed25519', 'sig', '{}', 'audit_ref_worker', datetime('now'))"),
+      operatorDb.prepare("INSERT INTO g01_bootstrap_completion (singleton, original_firebase_uid, completed_at, completed_by, operation_id, request_id, audit_reference) VALUES (1, 'test_g01_operator_uid', datetime('now'), 'test-fixture', 'op_worker', 'req_worker', 'audit_ref_worker')"),
     ]);
     assert.equal((await operatorDb.prepare("SELECT disabled FROM users WHERE id = 'usr_chine_super_admin'").first<{ disabled: number }>())?.disabled, 1);
 

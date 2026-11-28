@@ -193,8 +193,8 @@ test('workspace data reader isolates identities and workspaces and distinguishes
 
 test('demo requests time out without retrying a possibly committed write', async t => {
  t.after(()=>{mock.restoreAll();resetApiBase();}); setApiBase('http://localhost');
- let calls=0; const realTimeout=AbortSignal.timeout;
- mock.method(AbortSignal,'timeout',()=>realTimeout(20));
+ let calls=0;
+ mock.method(AbortSignal,'timeout',() => { const c = new AbortController(); setTimeout(() => c.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 20); return c.signal; });
  mock.method(globalThis,'fetch',async (_input:RequestInfo|URL, init?:RequestInit)=>{calls++;return new Promise<Response>((_resolve,reject)=>init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true}));});
  await assert.rejects(demoJourneyRequest('solarcell','token','jobs'));
  await assert.rejects(demoJourneyRequest('solarcell','token','enquiries','POST',{customer_name:'Synthetic',service:'Demo'}));
@@ -208,7 +208,7 @@ test('timed-out enquiry write clears busy without automatic retry', async t => {
  for(const n of names) Object.defineProperty(globalThis,n,{configurable:true,writable:true,value:n==='IS_REACT_ACT_ENVIRONMENT'?true:(dom.window as any)[n]});
  const root=createRoot(dom.window.document.getElementById('root')!);
  t.after(async()=>{await act(async()=>root.unmount()); mock.restoreAll();resetApiBase();dom.window.close();for(const n of names){const d=saved.get(n);if(d)Object.defineProperty(globalThis,n,d);else delete (globalThis as any)[n];}});
- const realTimeout=AbortSignal.timeout; mock.method(AbortSignal,'timeout',()=>realTimeout(20)); let writes=0;
+ mock.method(AbortSignal,'timeout',() => { const c = new AbortController(); setTimeout(() => c.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 20); return c.signal; }); let writes=0;
  mock.method(globalThis,'fetch',async (_input:RequestInfo|URL,init?:RequestInit)=>{if(init?.method!=='POST')return Response.json([{id:'synthetic-1',workspace_id:'solarcell',customer_name:'Synthetic',service:'Demo',created_at:'2026-01-01',job_id:writes>=2?'synthetic-job':null}]);writes++;return new Promise<Response>((_resolve,reject)=>init.signal!.addEventListener('abort',()=>reject(init.signal!.reason),{once:true}));}); setApiBase('http://localhost');
  const actor=G01_TEST_AUTH.officeStaff; const session:Session={profile:{user:{id:actor.userId,email:actor.email,display_name:actor.name},memberships:[{workspace_id:'solarcell',name:'Solarcell',role:'office_staff'}]},workspaceId:'solarcell',selectWorkspace:()=>{},token:async()=> 'token',login:async()=>{},logout:async()=>{},invalidate:()=>{},loading:false,error:''};
  await act(async()=>{root.render(React.createElement(SessionContext.Provider,{value:session},React.createElement(CabmsProvider,null,React.createElement(WebsiteInboxView))));});
@@ -225,7 +225,7 @@ test('committed enquiry with lost response is not automatically retried', async 
  const db=createLocalD1Database() as LocalD1Database;t.after(()=>{mock.restoreAll();resetApiBase();db.getSqliteHandle().close();});
  await runLocalMigrations(db,{disposableTest:true});await installG01TestAuthFixtures(db);
  const fixture=await createFirebaseFixture(), worker=createWorker(createAuthenticationService(fixture.transport));const actor=G01_TEST_AUTH.officeStaff;const token=await fixture.token(actor.uid,actor.email);let posts=0;setApiBase('http://localhost');
- const originalTimeout=AbortSignal.timeout; mock.method(AbortSignal,'timeout',()=>originalTimeout(50));
+ mock.method(AbortSignal,'timeout',() => { const c = new AbortController(); setTimeout(() => c.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 50); return c.signal; });
  mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{posts++;const result=await worker.fetch(new Request(input,init),{DB:db,ENVIRONMENT:'test',FIREBASE_PROJECT_ID:'cabms-test'});assert.equal(result.status,201);return new Promise<Response>((_resolve,reject)=>{if(init!.signal!.aborted)reject(init!.signal!.reason);else init!.signal!.addEventListener('abort',()=>reject(init!.signal!.reason),{once:true});});});
  await assert.rejects(demoJourneyRequest('solarcell',token,'enquiries','POST',{customer_name:'Synthetic',service:'Demo'}));
  assert.equal(posts,1);assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM demo_enquiries').first<{n:number}>())?.n,1);
@@ -255,7 +255,7 @@ async function recoveryHarness(t: import('node:test').TestContext, postStatus: n
 
 test('uncertain save refreshes GET only and never unlocks on empty or matching results',async t=>{
  const h=await recoveryHarness(t,'lost');await h.input();await h.submit();
- assert.equal(h.posts,1);assert.equal(h.gets,2);assert.equal(h.button('Save enquiry').disabled,true);
+ assert.equal(h.posts,1);assert.equal(h.gets,3);assert.equal(h.button('Save enquiry').disabled,true);
  assert.match(h.doc.body.textContent!,/may have succeeded/);assert.match(h.doc.body.textContent!,/does not resubmit/);assert.match(h.doc.body.textContent!,/connection lost/);
  assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.doc.querySelectorAll('input')[1].value,'Demo');
  h.setFail(true);await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/save outcome is unknown.*could not be reloaded/i);assert.equal(h.button('Save enquiry').disabled,true);
@@ -267,7 +267,7 @@ test('uncertain save refreshes GET only and never unlocks on empty or matching r
  delayedCommit();await h.click('Refresh saved enquiries');assert.match(h.doc.body.textContent!,/Synthetic — Demo/);assert.equal(h.button('Save enquiry').disabled,true);assert.equal(h.posts,1);
 });
 for(const status of [408,503,422] as const) test(`save HTTP ${status} ${status===422?'remains correctable':'remains uncertain'}`,async t=>{
- const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,2, 'refreshes the authorized list without repeating the write');if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
+ const h=await recoveryHarness(t,status);await h.input();await h.submit();assert.equal(h.posts,1);assert.equal(h.button('Save enquiry').disabled,status!==422);assert.equal(h.doc.querySelectorAll('input')[0].value,'Synthetic');assert.equal(h.gets,3, 'refreshes the authorized list without repeating the write');if(status===422)assert.match(h.doc.body.textContent!,/Request failed/);else {assert.match(h.doc.body.textContent!,/outcome is unknown/);assert.match(h.doc.body.textContent!,/Request failed/);}
 });
 
 test('late refresh from previous workspace and user does not replace current data',async t=>{

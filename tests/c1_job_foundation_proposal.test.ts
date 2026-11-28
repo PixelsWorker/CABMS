@@ -1,0 +1,36 @@
+﻿import { proposalPath } from './support/proposalPath.ts';
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createLocalD1Database,type LocalD1Database} from '../backend/db/d1.ts';
+import {initializePreOperationalDatabase} from './support/preOperationalMigrations.ts';
+
+test('foundation proposal inherits pinned forms, rejects unsafe completion and preserves cancellation',async t=>{
+ const db=createLocalD1Database() as LocalD1Database;t.after(()=>db.getSqliteHandle().close());await initializePreOperationalDatabase(db);
+ await db.exec(readFileSync(proposalPath('0014_job_forms_foundation_review.sql'),'utf8'));
+ await db.exec(`INSERT INTO users(id,email,created_at,updated_at) VALUES('actor','actor@example.invalid','2026','2026');
+ INSERT INTO form_definitions(id,workspace_id,brand_id,code,title,category,status,created_at,updated_at) VALUES('def','solarcell','solarcell','TEST','Test','Custom','DRAFT','2026','2026');
+ INSERT INTO form_revisions(id,workspace_id,form_definition_id,version,status,created_at,updated_at) VALUES('rev','solarcell','def','v1','DRAFT','2026','2026');
+ UPDATE form_revisions SET status='REVIEW' WHERE id='rev'; UPDATE form_revisions SET status='PUBLISHED' WHERE id='rev'; UPDATE form_definitions SET status='ACTIVE',published_revision_id='rev' WHERE id='def';
+ INSERT INTO job_types(id,workspace_id,code,name,brand_id,status,created_at,updated_at) VALUES('type','solarcell','TEST','Test','solarcell','ACTIVE','2026','2026');
+ INSERT INTO job_type_compliance_policies(id,job_type_id,version,status,created_at,updated_at) VALUES('policy','type','v1','DRAFT','2026','2026');
+ INSERT INTO policy_catalog_form_rules(id,workspace_id,policy_version_id,form_revision_id,required,display_order) VALUES('rule','solarcell','policy','rev',1,0);
+ UPDATE job_type_compliance_policies SET status='PUBLISHED' WHERE id='policy'; UPDATE job_types SET current_policy_version_id='policy' WHERE id='type';`);
+ const insert=(id:string,type:string,policy:string)=>`INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,status,created_at,created_by,updated_at,updated_by) VALUES('${id}','solarcell','solarcell','${type}','${policy}','Test','OPEN','2026','actor','2026','actor')`;
+ await assert.rejects(()=>db.exec(insert('legacy','jt-solar-install','pol-solar-install-v1')),/legacy mandatory/);
+ await db.exec(insert('job','type','policy'));
+ assert.deepEqual({...await db.prepare("SELECT form_revision_id,policy_rule_id,required FROM cabms_job_forms WHERE job_id='job'").first<Record<string,unknown>>()},{form_revision_id:'rev',policy_rule_id:'rule',required:1});
+ await assert.rejects(()=>db.exec("UPDATE cabms_jobs SET status='COMPLETED',completed_at='2026',completed_by='actor' WHERE id='job'"),/verified form workflow/);
+ await db.exec("UPDATE cabms_jobs SET status='CANCELLED',cancelled_at='2026',cancelled_by='actor',cancellation_reason='Customer request',updated_by='actor' WHERE id='job'");
+ await assert.rejects(()=>db.exec("UPDATE cabms_jobs SET status='COMPLETED',cancelled_at=NULL,cancelled_by=NULL,cancellation_reason=NULL,completed_at='2026',completed_by='actor' WHERE id='job'"),/terminal|verified form workflow/);
+ assert.equal((await db.prepare("SELECT count(*) n FROM cabms_job_forms WHERE job_id='job'").first<{n:number}>())?.n,1);
+ await assert.rejects(()=>db.exec("UPDATE cabms_job_events SET event_type='JOB_CREATED'"),/immutable/);
+ await db.exec("UPDATE form_definitions SET status='ARCHIVED' WHERE id='def'");
+ await assert.rejects(()=>db.exec(insert('rollback','type','policy')),/invalid job form scope/);
+ assert.equal((await db.prepare("SELECT count(*) n FROM cabms_jobs WHERE id='rollback'").first<{n:number}>())?.n,0);
+ assert.equal((await db.prepare("SELECT count(*) n FROM cabms_job_events WHERE job_id='rollback'").first<{n:number}>())?.n,0);
+ await db.exec(insert('invoice','jt-solar-service','pol-solar-service-v1'));
+ await db.exec("UPDATE cabms_jobs SET status='COMPLETED',completed_at='2026',completed_by='actor' WHERE id='invoice'");
+ assert.equal((await db.prepare("SELECT status FROM cabms_jobs WHERE id='invoice'").first<{status:string}>())?.status,'COMPLETED');
+ await assert.rejects(()=>db.exec("INSERT INTO cabms_jobs(id,workspace_id,brand_id,job_type_id,policy_id,title,created_at,created_by,updated_at,updated_by) VALUES('cross','cctv','cctv','type','policy','Test','2026','actor','2026','actor')"),/workspace policy/);
+});

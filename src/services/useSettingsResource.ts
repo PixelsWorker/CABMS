@@ -81,7 +81,7 @@ export function useSettingsResource(kind: 'settings' | 'legal-details') {
     }
   };
   useEffect(() => { if (key && !entries.current[key]?.row) void load(); }, [key, kind]);
-  const setField = (field: string, value: string | null) => {
+  const setField = (field: string, value: string | number | null) => {
     const entry = entries.current[key] || empty();
     update(key, { draft: { ...entry.draft, [field]: value }, revision: entry.revision + 1, message: '', error: false });
   };

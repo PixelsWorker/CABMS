@@ -232,7 +232,23 @@ export const WorkspaceSettingsView: React.FC = () => {
           <fieldset className="space-y-4" disabled={resource.active && (!canEdit || !resource.row || resource.loading)}>
           {resource.active && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="text-xs">Trading Name<input id="ws-trading-name" required maxLength={100} className="w-full cabms-card-subtle rounded p-2" value={serverValues?.trading_name || ''} onChange={e => resource.setField('trading_name', e.target.value)} /></label>
-            <label className="text-xs">Brand Accent<input id="ws-accent" type="color" value={serverValues?.accent_color || '#0284c7'} onChange={e => resource.setField('accent_color', e.target.value)} /></label>
+            {serverValues?.contract_threshold_cents !== undefined && <label className="text-xs">
+              Contract threshold including GST (AUD cents)
+              <input type="number" min="0" step="1" required className="w-full cabms-card-subtle rounded p-2"
+                value={serverValues.contract_threshold_cents ?? ''} onChange={e => resource.setField('contract_threshold_cents',
+                  e.target.value === '' ? null : e.target.valueAsNumber)} />
+            </label>}
+            <div className="rounded-lg border border-(--cabms-border-base) cabms-card-subtle p-3 flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="w-6 h-6 rounded border border-(--cabms-border-base) shrink-0"
+                style={{ backgroundColor: 'var(--cabms-brand-primary)' }}
+              />
+              <div className="text-xs">
+                <div className="font-semibold text-(--cabms-text-primary)">{currentBrand?.name || activeBrandId}</div>
+                <div className="text-(--cabms-text-secondary)">Official company brand accent (read-only)</div>
+              </div>
+            </div>
           </div>}
           <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2 border-b border-(--cabms-border-base) pb-3">
             <FontAwesomeIcon icon={faBuilding} className="text-amber-500" />
@@ -361,7 +377,6 @@ export const WorkspaceSettingsView: React.FC = () => {
           </form>
 
           {/* Legal Entity & Licences (Read-only for Admin) */}
-          {!resource.active && <>
           <div className="cabms-card p-6 bg-(--cabms-surface-subtle) border border-(--cabms-border-base) rounded-lg space-y-4">
             <div className="flex items-center justify-between border-b border-(--cabms-border-base) pb-3">
               <h3 className="text-base font-semibold text-(--cabms-text-primary) flex items-center gap-2">
@@ -413,7 +428,6 @@ export const WorkspaceSettingsView: React.FC = () => {
               </div>
             </div>
           </div>
-          </>}
       </div>
     </div>
   );

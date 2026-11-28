@@ -7,6 +7,7 @@ export * from '../contracts/settings.ts';
 
 export interface Env {
   DB: D1Database;
+  PRIVATE_EVIDENCE?: import('./modules/compliance/photoEvidence.ts').PrivateEvidenceStore & {delete(key:string):Promise<void>};
   FIREBASE_PROJECT_ID?: string;
   FIREBASE_API_KEY?: string;
   ENVIRONMENT?: string;

@@ -5,10 +5,12 @@
  * and uncertain dispatch reconciliation.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { formatBusinessTime } from '../utils/businessTime.ts';
 import { validateSignedSnapshot } from '../utils/cabmsLogic.ts';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
+import { buildApiUrl } from '../services/g01Client.ts';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -28,7 +30,36 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { Job } from '../types/cabms.ts';
 
+interface DeliveryHistoryItem {
+  id: string;
+  category: string;
+  job_id: string | null;
+  recipient_email: string;
+  sender_name: string;
+  sender_email: string;
+  subject: string;
+  transport_mode: 'SANDBOX_SYNTHETIC' | 'HTTPS_RELAY' | 'SMTP_TCP';
+  status: 'QUEUED' | 'SENT' | 'FAILED' | 'UNCERTAIN';
+  error_message: string | null;
+  attempt_count: number;
+  created_at: string;
+  sent_at: string | null;
+}
+
+interface TransportStatusSummary {
+  mode: 'SANDBOX_SYNTHETIC' | 'HTTPS_RELAY' | 'SMTP_TCP';
+  is_synthetic: boolean;
+  reason: string;
+}
+
+interface SenderIdentitySummary {
+  sender_name: string;
+  sender_email: string;
+  is_synthetic_sender: boolean;
+}
+
 export const CommunicationsView: React.FC = () => {
+  const session = useG01Session();
   const {
     jobs,
     selectedJobId,
@@ -53,9 +84,70 @@ export const CommunicationsView: React.FC = () => {
     getOrCreateTca2,
   } = useCabms();
 
-  const [activeTab, setActiveTab] = useState<'reviews' | 'reminders' | 'certificates'>('reviews');
+  const [activeTab, setActiveTab] = useState<'reviews' | 'reminders' | 'certificates' | 'delivery'>('reviews');
   const [reviewFeedback, setReviewFeedback] = useState<{ success: boolean; message: string } | null>(null);
   const [selectedCertType, setSelectedCertType] = useState<'JSA' | 'ELECTRICAL' | 'SMOKE_ALARM' | 'TCA1' | 'TCA2'>('JSA');
+
+  // Persistent Worker email delivery state (when authenticated)
+  const [transportStatus, setTransportStatus] = useState<TransportStatusSummary>({
+    mode: 'SANDBOX_SYNTHETIC',
+    is_synthetic: true,
+    reason: 'Local preview / sandbox transport active.',
+  });
+  const [senderIdentity, setSenderIdentity] = useState<SenderIdentitySummary>({
+    sender_name: activeBrand.name,
+    sender_email: activeBrand.contactEmail || `noreply@${activeBrandId}.cabms-demo.invalid`,
+    is_synthetic_sender: !activeBrand.contactEmail,
+  });
+  const [deliveries, setDeliveries] = useState<DeliveryHistoryItem[]>([]);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [testRecipient, setTestRecipient] = useState('');
+  const [testSubject, setTestSubject] = useState('');
+  const [testOutcome, setTestOutcome] = useState<'SENT' | 'FAILED' | 'UNCERTAIN'>('SENT');
+  const [testFeedback, setTestFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+
+  const loadCommunicationsData = useCallback(async () => {
+    if (!session?.profile) {
+      setSenderIdentity({
+        sender_name: activeBrand.name,
+        sender_email: activeBrand.contactEmail || `noreply@${activeBrandId}.cabms-demo.invalid`,
+        is_synthetic_sender: !activeBrand.contactEmail,
+      });
+      return;
+    }
+    setDeliveryLoading(true);
+    try {
+      const token = await session.token();
+      const [statusRes, delivRes] = await Promise.all([
+        fetch(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(activeBrandId)}/communications/status`), {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(activeBrandId)}/communications/deliveries?limit=25`), {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      if (statusRes.ok) {
+        const sJson = (await statusRes.json()) as {
+          transport_status?: TransportStatusSummary;
+          sender_identity?: SenderIdentitySummary;
+        };
+        if (sJson.transport_status) setTransportStatus(sJson.transport_status);
+        if (sJson.sender_identity) setSenderIdentity(sJson.sender_identity);
+      }
+      if (delivRes.ok) {
+        const dJson = (await delivRes.json()) as { deliveries?: DeliveryHistoryItem[] };
+        if (Array.isArray(dJson.deliveries)) setDeliveries(dJson.deliveries);
+      }
+    } catch {
+      // Keep local preview fallback if Worker is unavailable
+    } finally {
+      setDeliveryLoading(false);
+    }
+  }, [session, activeBrandId, activeBrand.name, activeBrand.contactEmail]);
+
+  useEffect(() => {
+    void loadCommunicationsData();
+  }, [loadCommunicationsData]);
 
   // Scoped jobs for active business
   const brandJobs = jobs.filter(j => j.brandId === activeBrandId);
@@ -262,6 +354,18 @@ export const CommunicationsView: React.FC = () => {
           >
             <FontAwesomeIcon icon={faEnvelope} className="w-3.5 h-3.5" />
             <span>Certificate Delivery Previews</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('delivery')}
+            className={`max-w-full px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center space-x-1.5 ${
+              activeTab === 'delivery'
+                ? 'bg-emerald-600 text-slate-950 shadow-sm'
+                : 'cabms-surface-subtle border cabms-border text-(--cabms-text-secondary) hover:text-(--cabms-text-primary)'
+            }`}
+          >
+            <FontAwesomeIcon icon={faPaperPlane} className="w-3.5 h-3.5" />
+            <span>Email Delivery & Test Dispatch</span>
           </button>
         </div>
       </div>
@@ -709,6 +813,253 @@ export const CommunicationsView: React.FC = () => {
                       </div>
                     </div>
                   ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Email Delivery & Test Dispatch Tab */}
+      {activeTab === 'delivery' && (
+        <div className="space-y-6">
+          {/* Transport & Sender Identity Banner */}
+          <div className="cabms-card p-5 space-y-3 text-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                  Shared Email Transport & Business Sender Identity
+                </span>
+                <h2 className="text-base font-bold text-(--cabms-text-primary) mt-0.5">
+                  {senderIdentity.sender_name} &lt;{senderIdentity.sender_email}&gt;
+                </h2>
+                <p className="text-(--cabms-text-secondary) mt-0.5">{transportStatus.reason}</p>
+              </div>
+              <span
+                className={`px-3 py-1 rounded-lg font-bold text-[11px] border shrink-0 ${
+                  transportStatus.is_synthetic
+                    ? 'bg-amber-950/60 border-amber-700 text-amber-300'
+                    : 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
+                }`}
+              >
+                {transportStatus.is_synthetic ? 'SANDBOX / SYNTHETIC' : `LIVE (${transportStatus.mode})`}
+              </span>
+            </div>
+          </div>
+
+          {/* Test Email Form */}
+          <div className="cabms-card p-5 space-y-4 text-xs">
+            <h3 className="text-sm font-bold text-(--cabms-text-primary)">Send Test Email</h3>
+            <form
+              onSubmit={async e => {
+                e.preventDefault();
+                setTestFeedback(null);
+                const recipient = testRecipient.trim();
+                if (!recipient) {
+                  setTestFeedback({ ok: false, message: 'Recipient email address is required.' });
+                  return;
+                }
+                if (!session?.profile) {
+                  const localItem: DeliveryHistoryItem = {
+                    id: `sandbox_local_${Date.now()}`,
+                    category: 'TEST_EMAIL',
+                    job_id: null,
+                    recipient_email: recipient,
+                    sender_name: senderIdentity.sender_name,
+                    sender_email: senderIdentity.sender_email,
+                    subject: testSubject.trim() || `[${senderIdentity.sender_name}] CABMS Test Email (SANDBOX_SYNTHETIC)`,
+                    transport_mode: 'SANDBOX_SYNTHETIC',
+                    status: testOutcome,
+                    error_message: testOutcome === 'FAILED' ? 'Simulated sandbox failure.' : null,
+                    attempt_count: 1,
+                    created_at: new Date().toISOString(),
+                    sent_at: testOutcome === 'SENT' ? new Date().toISOString() : null,
+                  };
+                  setDeliveries(prev => [localItem, ...prev]);
+                  setTestFeedback({
+                    ok: testOutcome === 'SENT',
+                    message: `Local sandbox preview recorded (${testOutcome}). Sign in for D1-persisted Worker dispatch.`,
+                  });
+                  return;
+                }
+                try {
+                  const token = await session.token();
+                  const res = await fetch(
+                    buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(activeBrandId)}/communications/test-email`),
+                    {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${token}`,
+                      },
+                      body: JSON.stringify({
+                        recipient_email: recipient,
+                        subject: testSubject.trim() || undefined,
+                        simulate_outcome: transportStatus.is_synthetic ? testOutcome : undefined,
+                      }),
+                    }
+                  );
+                  const data = (await res.json()) as {
+                    delivery?: DeliveryHistoryItem;
+                    transport_mode?: string;
+                    is_synthetic?: boolean;
+                    detail?: string;
+                  };
+                  if (!res.ok) {
+                    setTestFeedback({ ok: false, message: data.detail || 'Test email dispatch failed.' });
+                    return;
+                  }
+                  if (data.delivery) {
+                    setDeliveries(prev => [data.delivery!, ...prev]);
+                  }
+                  setTestFeedback({
+                    ok: data.delivery?.status === 'SENT',
+                    message: `Test email ${data.delivery?.status || 'PROCESSED'} via ${data.transport_mode}${
+                      data.is_synthetic ? ' (Sandbox/Synthetic)' : ''
+                    }.`,
+                  });
+                } catch {
+                  setTestFeedback({ ok: false, message: 'Network error while dispatching test email.' });
+                }
+              }}
+              className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end"
+            >
+              <div>
+                <label htmlFor="test-email-recipient" className="block font-semibold text-(--cabms-text-secondary) mb-1">
+                  Recipient Email
+                </label>
+                <input
+                  id="test-email-recipient"
+                  type="email"
+                  value={testRecipient}
+                  onChange={e => setTestRecipient(e.target.value)}
+                  placeholder="ops@example.invalid"
+                  className="w-full cabms-card-subtle rounded px-3 py-2 text-(--cabms-text-primary) border cabms-border"
+                />
+              </div>
+              <div>
+                <label htmlFor="test-email-subject" className="block font-semibold text-(--cabms-text-secondary) mb-1">
+                  Subject (Optional)
+                </label>
+                <input
+                  id="test-email-subject"
+                  type="text"
+                  value={testSubject}
+                  onChange={e => setTestSubject(e.target.value)}
+                  placeholder="Transport verification"
+                  className="w-full cabms-card-subtle rounded px-3 py-2 text-(--cabms-text-primary) border cabms-border"
+                />
+              </div>
+              {transportStatus.is_synthetic && (
+                <div>
+                  <label htmlFor="test-email-outcome" className="block font-semibold text-(--cabms-text-secondary) mb-1">
+                    Sandbox Outcome
+                  </label>
+                  <select
+                    id="test-email-outcome"
+                    value={testOutcome}
+                    onChange={e => setTestOutcome(e.target.value as 'SENT' | 'FAILED' | 'UNCERTAIN')}
+                    className="w-full cabms-card-subtle rounded px-3 py-2 text-(--cabms-text-primary) border cabms-border"
+                  >
+                    <option value="SENT">SENT (Success)</option>
+                    <option value="FAILED">FAILED (SMTP 550)</option>
+                    <option value="UNCERTAIN">UNCERTAIN (504 Timeout)</option>
+                  </select>
+                </div>
+              )}
+              <button
+                type="submit"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold rounded-lg transition cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <FontAwesomeIcon icon={faPaperPlane} className="w-3.5 h-3.5" />
+                <span>Send Test Email</span>
+              </button>
+            </form>
+
+            {testFeedback && (
+              <div
+                className={`p-3 rounded-lg border text-xs ${
+                  testFeedback.ok
+                    ? 'bg-emerald-950/50 border-emerald-800 text-emerald-200'
+                    : 'bg-amber-950/50 border-amber-800 text-amber-200'
+                }`}
+              >
+                {testFeedback.message}
+              </div>
+            )}
+          </div>
+
+          {/* Delivery History */}
+          <div className="cabms-card p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-(--cabms-text-primary)">Email Delivery History</h3>
+              {deliveryLoading && <span className="text-(--cabms-text-secondary)">Loading...</span>}
+            </div>
+            {deliveries.length === 0 ? (
+              <div className="cabms-card-subtle p-4 text-center text-(--cabms-text-secondary)">
+                No email deliveries recorded for {activeBrand.name} yet.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {deliveries.map(item => (
+                  <div
+                    key={item.id}
+                    className="cabms-card-subtle p-3.5 rounded-xl border cabms-border flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono font-bold text-(--cabms-text-primary)">{item.category}</span>
+                        <span className="text-(--cabms-text-secondary)">•</span>
+                        <span className="font-semibold text-(--cabms-text-primary)">{item.subject}</span>
+                      </div>
+                      <div className="text-[11px] text-(--cabms-text-secondary) mt-0.5">
+                        To: {item.recipient_email} • From: {item.sender_email} • Mode: {item.transport_mode} • Attempts: {item.attempt_count}
+                      </div>
+                      {item.error_message && (
+                        <div className="text-[11px] text-red-400 mt-1">{item.error_message}</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          item.status === 'SENT'
+                            ? 'bg-emerald-950 text-emerald-400 border-emerald-800'
+                            : item.status === 'FAILED'
+                            ? 'bg-red-950 text-red-400 border-red-800'
+                            : 'bg-amber-950 text-amber-400 border-amber-800'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                      {item.status === 'FAILED' && session?.profile && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const token = await session.token();
+                              const res = await fetch(
+                                buildApiUrl(
+                                  `/api/v1/workspaces/${encodeURIComponent(activeBrandId)}/communications/deliveries/${encodeURIComponent(item.id)}/retry`
+                                ),
+                                { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
+                              );
+                              if (res.ok) {
+                                const data = (await res.json()) as { delivery?: DeliveryHistoryItem };
+                                if (data.delivery) {
+                                  setDeliveries(prev => prev.map(d => (d.id === item.id ? data.delivery! : d)));
+                                }
+                              }
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-[11px] rounded cursor-pointer flex items-center space-x-1"
+                        >
+                          <FontAwesomeIcon icon={faRotate} className="w-3 h-3" />
+                          <span>Retry</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>

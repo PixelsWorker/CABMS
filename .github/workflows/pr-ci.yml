@@ -28,7 +28,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .trusted-ref
-          sparse-checkout: .ci/trusted-qa/cabms-trusted-ci-gate1-v2.tar.gz
+          sparse-checkout: .ci/trusted-qa
           persist-credentials: false
 
       - name: Verify and extract trusted Gate 1 v2 bundle

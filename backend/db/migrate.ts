@@ -24,6 +24,11 @@ export const G01_MIGRATION_MANIFEST = [
   ['0016_compliance_visit_events.sql', '508ef5f96ac74cc5d5c7a5cbba1cdd5e07890e0bfbc7efa535c0aaf28ebd90bd'],
   ['0017_operational_job_details.sql', '047c5acf85f5fe8c9972fa302649fb47c57092103ca96d69bc8d16a4c69c40d4'],
   ['0018_independent_review_remediation.sql', '36dc2e12862ed0b0590c5340a03c42d9e1a9f4d463eb040dd428e33c20fb3fc2'],
+  ['0019_settings_providers.sql', 'e089e1c29fb76abc3ba8390f557f31e855e03d9b9a2aca35d278b8f0b90c90e6'],
+  ['0020_communications_email.sql', 'c4c5f58d3b7b7d635bdf53afb5ee96bbdc9818bb76734602dbfc41bbcaf16990'],
+  ['0021_customers_myob.sql', '909406be523500aa82e1e48e96c3a1f59d197cb4f82f86639d9ca6bdaa09d6d0'],
+  ['0022_quotations_terms.sql', '6363daa1d5772511c8dfd9aa66a72182fb7de471aa15453d03201b64323e769c'],
+  ['0023_website_enquiries.sql', 'c64e672fec02e54440817e59e1ba6c72f25a7edd5d34400bd62dbacd57d6354f'],
 ] as const;
 
 const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../migrations');

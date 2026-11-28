@@ -211,7 +211,8 @@ export async function handleComplianceJobs(
         return complianceProblem('INVALID_FIELD',requestId);
       }
 
-      const autofillFields = fields.filter(f => f.type === 'READONLY_AUTOFILL' && f.autofill_source);
+      const { answers: visibleSupplied, applicable } = applicableFormAnswers(fields, supplied);
+      const autofillFields = applicable.filter(f => f.type === 'READONLY_AUTOFILL' && f.autofill_source);
       const trustedAutofill: Record<string, string> = {};
       if (autofillFields.length > 0) {
         const jobRecord = await env.DB.prepare(`
@@ -248,11 +249,14 @@ export async function handleComplianceJobs(
           }
         }
       }
-      const resolvedAnswers = { ...applicableFormAnswers(fields, supplied).answers, ...trustedAutofill };
+      const resolvedAnswers = { ...visibleSupplied, ...trustedAutofill };
 
       let carryWrites: any[] = [];
       if (expected_answer_version > 0) {
-        try {
+        const carryForwardTrigger = await env.DB.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='compliance_evidence_guard'"
+        ).first<{ sql: string | null }>();
+        if (carryForwardTrigger?.sql?.includes('DISTINCT')) {
           const priorEv = await env.DB.prepare(`SELECT e.id,e.byte_length,e.digest,e.storage_key,coalesce(u.media_type,'image/jpeg') AS media_type
             FROM compliance_evidence e
             LEFT JOIN compliance_uploads u ON u.id=e.id AND u.workspace_id=e.workspace_id AND u.job_id=e.job_id AND u.occurrence_key=e.occurrence_key
@@ -269,7 +273,7 @@ export async function handleComplianceJobs(
               env.DB.prepare('INSERT INTO compliance_evidence VALUES(?,?,?,?,?,?,?,?,?)').bind(newEvId,workspace,id,occurrence_key,next,pe.byte_length,pe.digest,pe.storage_key,newEvId)
             );
           }
-        } catch { /* best-effort carry forward */ }
+        }
       }
 
       const saveBatch = [
@@ -278,18 +282,10 @@ export async function handleComplianceJobs(
         env.DB.prepare('INSERT INTO compliance_answers(workspace_id,job_id,occurrence_key,version,answers_json,operation_id) VALUES(?,?,?,?,?,?)')
           .bind(workspace,id,occurrence_key,next,JSON.stringify(resolvedAnswers),operationId),
       ];
-      try {
-        if (carryWrites.length > 0) {
-          await env.DB.batch([...saveBatch, ...carryWrites]);
-        } else {
-          await env.DB.batch(saveBatch);
-        }
-      } catch (batchError) {
-        if (carryWrites.length > 0) {
-          await env.DB.batch(saveBatch);
-        } else {
-          throw batchError;
-        }
+      if (carryWrites.length > 0) {
+        await env.DB.batch([...saveBatch, ...carryWrites]);
+      } else {
+        await env.DB.batch(saveBatch);
       }
       return await reconcile() ?? complianceProblem('OPERATION_UNCONFIRMED',requestId);
     } catch (error) {

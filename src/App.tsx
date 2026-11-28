@@ -25,6 +25,7 @@ import { CustomersView } from './views/CustomersView.tsx';
 import { QuotesAcceptanceView } from './views/QuotesAcceptanceView.tsx';
 import { CommunicationsView } from './views/CommunicationsView.tsx';
 import { WebsiteInboxView } from './views/WebsiteInboxView.tsx';
+import { EnquiriesView } from './views/EnquiriesView.tsx';
 import { TemplatesSettingsView } from './views/TemplatesSettingsView.tsx';
 import { SystemWorkspaceSettingsView } from './views/SystemWorkspaceSettingsView.tsx';
 
@@ -95,7 +96,7 @@ export const AppContent: React.FC = () => {
           {permitted && activeTab === 'customers' && <CustomersView />}
           {permitted && activeTab === 'quotes' && <QuotesAcceptanceView />}
           {permitted && activeTab === 'communications' && <CommunicationsView />}
-          {permitted && activeTab === 'website_inbox' && <WebsiteInboxView />}
+          {permitted && activeTab === 'website_inbox' && (session ? <EnquiriesView /> : <WebsiteInboxView />)}
           {permitted && activeTab === 'templates' && <TemplatesSettingsView />}
           {session ? canAccessDestination(persona, 'super_admin_setup') && <div hidden={activeTab !== 'super_admin_setup'}><SystemWorkspaceSettingsView /></div> : permitted && activeTab === 'super_admin_setup' && <SystemWorkspaceSettingsView />}
         </main>

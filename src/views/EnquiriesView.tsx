@@ -143,7 +143,7 @@ export const EnquiriesView: React.FC = () => {
     try {
       const token = await session.token();
       const data = await enquiryApiRequest<EnquiriesListResponse>(
-        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/enquiries`,
+        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/website-enquiries`,
         token
       );
       if (generation.current !== reqId) return;
@@ -202,7 +202,7 @@ export const EnquiriesView: React.FC = () => {
     try {
       const token = await session.token();
       const result = await enquiryApiRequest<{ enquiry: PersistentEnquiry; deduplicated: boolean }>(
-        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/enquiries`,
+        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/website-enquiries`,
         token,
         {
           method: 'POST',
@@ -247,7 +247,7 @@ export const EnquiriesView: React.FC = () => {
     try {
       const token = await session.token();
       await enquiryApiRequest(
-        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/enquiries/${encodeURIComponent(enquiryId)}/dismiss`,
+        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/website-enquiries/${encodeURIComponent(enquiryId)}/dismiss`,
         token,
         { method: 'POST' }
       );
@@ -269,7 +269,7 @@ export const EnquiriesView: React.FC = () => {
     try {
       const token = await session.token();
       const res = await enquiryApiRequest<{ enquiry: PersistentEnquiry; customer_id: string; job_id: string }>(
-        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/enquiries/${encodeURIComponent(convertTarget.id)}/convert`,
+        `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/website-enquiries/${encodeURIComponent(convertTarget.id)}/convert`,
         token,
         {
           method: 'POST',

@@ -113,10 +113,10 @@ export async function handleEvidence(request:Request,env:Env,authentication:Auth
         if(state.status!=='OPEN')return fail('JOB_STATE_CONFLICT');
         if(state.version!==expectedVersion||state.answer_version!==expectedAnswer)return fail('VERSION_CONFLICT');
         try{
-          // Automatically reclaim obsolete unfinalized uploads for this job from older answer versions or obsolete job versions
+          // Automatically reclaim obsolete unfinalized uploads for this occurrence (older answer versions) or obsolete job versions
           const stale=await db.prepare(`SELECT u.id FROM compliance_uploads u WHERE u.workspace_id=? AND u.job_id=?
-            AND (u.answer_version < ? OR u.job_version < ?)
-            AND NOT EXISTS(SELECT 1 FROM compliance_evidence e WHERE e.id=u.id)`).bind(workspace,job,expectedAnswer,expectedVersion).all<{id:string}>();
+            AND ((u.occurrence_key = ? AND u.answer_version < ?) OR u.job_version < ?)
+            AND NOT EXISTS(SELECT 1 FROM compliance_evidence e WHERE e.id=u.id)`).bind(workspace,job,slot,expectedAnswer,expectedVersion).all<{id:string}>();
           for(const s of stale.results){
             await store.delete('stage/'+s.id).catch(()=>{});
             await db.prepare('DELETE FROM compliance_uploads WHERE id=? AND NOT EXISTS(SELECT 1 FROM compliance_evidence WHERE id=?)').bind(s.id,s.id).run().catch(()=>{});

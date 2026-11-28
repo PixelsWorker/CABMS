@@ -414,7 +414,7 @@ test('EnquiriesView UI: enforces technician RBAC and supports create & convert',
   mock.method(globalThis, 'fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
     const req = new Request(input, init);
     const url = new URL(req.url);
-    const m = /^\/api\/v1\/workspaces\/([^/]+)\/enquiries(?:\/([^/]+)\/(convert|dismiss))?$/.exec(url.pathname);
+    const m = /^\/api\/v1\/workspaces\/([^/]+)\/website-enquiries(?:\/([^/]+)\/(convert|dismiss))?$/.exec(url.pathname);
     if (m) {
       return handleEnquiries(req, env, m[1], m[2], m[3], `req_${crypto.randomUUID().slice(0, 6)}`, authService);
     }

@@ -658,12 +658,174 @@ export async function createTemplateRevisionDraft(
   return { id: revId, version, updated_at: now };
 }
 
-export async function updateTemplateDraftContent(db:D1Database,workspace:string,auth:AuthContext,templateId:string,revisionId:string,expectedUpdatedAt:string,content:string):Promise<string|null> {
-  const expectedTime=Date.parse(expectedUpdatedAt);
+export interface TemplateOutputConfig {
+  category: 'Compliance' | 'Terms' | 'Email' | 'Contract';
+  brand_id: string;
+  linked_form_revision_id?: string | null;
+  document_type_id?: string | null;
+  layout: Record<string, unknown>;
+  dynamic_fields: Record<string, unknown>;
+}
+
+const DEFAULT_SIMULATED_SAMPLE_DATA: Record<string, string> = {
+  'business.name': 'Solarcell Electrical & Solar',
+  'business.abn': '12 345 678 901',
+  'customer.name': 'Brisbane Commercial Properties Pty Ltd',
+  'customer.email': 'facilities@brisbanecommercial.example',
+  'job.id': 'JOB-2026-101',
+  'job.title': '10kW Commercial Solar PV System',
+  'site.address': '42 Creek Street, Brisbane QLD 4000',
+  'technician.name': 'Alex Mercer',
+  'quote.total': '$18,450.00 (incl. GST)',
+  'date': '2026-11-28',
+};
+
+export function renderSimulatedTemplatePreview(
+  content: string,
+  dynamicFields: Record<string, unknown> = {},
+  sampleData: Record<string, string> = {}
+): {
+  rendered_text: string;
+  placeholders_found: string[];
+  mapped_fields: Record<string, string>;
+  unmapped_placeholders: string[];
+  rendering_mode: 'SIMULATED_TEXT_PREVIEW';
+  notice: string;
+} {
+  const placeholders = Array.from(new Set(Array.from(content.matchAll(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g), m => m[1])));
+  const mappedFields: Record<string, string> = {};
+  const unmappedPlaceholders: string[] = [];
+
+  for (const key of placeholders) {
+    const mappedSource = typeof dynamicFields[key] === 'string' ? dynamicFields[key] as string : undefined;
+    const resolved =
+      sampleData[key] ??
+      (mappedSource ? sampleData[mappedSource] : undefined) ??
+      (mappedSource ? DEFAULT_SIMULATED_SAMPLE_DATA[mappedSource] : undefined) ??
+      DEFAULT_SIMULATED_SAMPLE_DATA[key];
+    if (resolved !== undefined) {
+      mappedFields[key] = resolved;
+    } else {
+      unmappedPlaceholders.push(key);
+    }
+  }
+
+  const renderedText = content.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (match, key: string) => {
+    return mappedFields[key] !== undefined ? mappedFields[key] : match;
+  });
+
+  return {
+    rendered_text: renderedText,
+    placeholders_found: placeholders,
+    mapped_fields: mappedFields,
+    unmapped_placeholders: unmappedPlaceholders,
+    rendering_mode: 'SIMULATED_TEXT_PREVIEW',
+    notice: 'Simulated/synthetic document rendering — binary DOCX/PDF engine is not installed in this environment.',
+  };
+}
+
+export async function updateTemplateDraftContent(
+  db: D1Database,
+  workspace: string,
+  auth: AuthContext,
+  templateId: string,
+  revisionId: string,
+  expectedUpdatedAt: string,
+  content: string,
+  options?: {
+    sampleFileName?: string;
+    mappingStatus?: 'Mapped' | 'Pending Review' | 'Unsupported';
+    output?: TemplateOutputConfig;
+  }
+): Promise<string | null> {
+  const expectedTime = Date.parse(expectedUpdatedAt);
   if (!Number.isFinite(expectedTime)) return null;
-  const updatedAt=new Date(Math.max(Date.now(),expectedTime+1)).toISOString();
-  const result=await db.prepare(`UPDATE template_revisions SET content=?,updated_at=? WHERE id=? AND template_id=? AND status='DRAFT' AND updated_at=? AND EXISTS (SELECT 1 FROM document_templates t WHERE t.id=template_revisions.template_id AND t.workspace_id=? AND t.status<>'ARCHIVED' AND ${allowedStaff})`).bind(content,updatedAt,revisionId,templateId,expectedUpdatedAt,workspace,...who(workspace,auth)).run();
-  return result.meta.changes===1 ? updatedAt : null;
+  const updatedAt = new Date(Math.max(Date.now(), expectedTime + 1)).toISOString();
+  const sampleFileName = options?.sampleFileName?.trim() || null;
+
+  const result = await db.prepare(
+    `UPDATE template_revisions
+     SET content=?,
+         sample_file_name=COALESCE(?, sample_file_name),
+         updated_at=?
+     WHERE id=? AND template_id=? AND status='DRAFT' AND updated_at=?
+       AND EXISTS (SELECT 1 FROM document_templates t WHERE t.id=template_revisions.template_id AND t.workspace_id=? AND t.status<>'ARCHIVED' AND ${allowedStaff})`
+  ).bind(content, sampleFileName, updatedAt, revisionId, templateId, expectedUpdatedAt, workspace, ...who(workspace, auth)).run();
+
+  if (result.meta.changes !== 1) return null;
+
+  if (sampleFileName || options?.mappingStatus) {
+    await db.prepare(
+      `UPDATE document_templates
+       SET sample_file_name=COALESCE(?, sample_file_name),
+           mapping_status=COALESCE(?, mapping_status),
+           updated_at=?,
+           updated_by=?
+       WHERE id=? AND workspace_id=? AND status<>'ARCHIVED' AND ${allowedStaff}`
+    ).bind(sampleFileName, options?.mappingStatus || null, updatedAt, auth.userId, templateId, workspace, ...who(workspace, auth)).run();
+  }
+
+  if (options?.output) {
+    const hasOutput = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='template_revision_output'`).first();
+    if (hasOutput) {
+      await db.prepare(
+        `INSERT INTO template_revision_output (revision_id,workspace_id,brand_id,category,linked_form_revision_id,document_type_id,layout_json,dynamic_fields_json)
+         VALUES (?,?,?,?,?,?,?,?)
+         ON CONFLICT(revision_id) DO UPDATE SET
+           category=excluded.category,
+           linked_form_revision_id=excluded.linked_form_revision_id,
+           document_type_id=excluded.document_type_id,
+           layout_json=excluded.layout_json,
+           dynamic_fields_json=excluded.dynamic_fields_json`
+      ).bind(
+        revisionId,
+        workspace,
+        options.output.brand_id,
+        options.output.category,
+        options.output.linked_form_revision_id || null,
+        options.output.document_type_id || null,
+        JSON.stringify(options.output.layout),
+        JSON.stringify(options.output.dynamic_fields)
+      ).run();
+    }
+  }
+
+  return updatedAt;
+}
+
+export async function previewTemplate(
+  db: D1Database,
+  workspace: string,
+  auth: AuthContext,
+  templateId: string,
+  options?: {
+    revisionId?: string;
+    content?: string;
+    dynamicFields?: Record<string, unknown>;
+    sampleData?: Record<string, string>;
+  }
+) {
+  const tpl = await getTemplate(db, workspace, auth, templateId);
+  if (!tpl) return null;
+
+  const targetRev = options?.revisionId
+    ? tpl.revisions.find((r: any) => r.id === options.revisionId)
+    : tpl.revisions.find((r: any) => r.id === tpl.current_revision_id) || tpl.revisions[0];
+
+  const content = typeof options?.content === 'string' ? options.content : (targetRev?.content ?? tpl.current_content ?? '');
+  const revDynamicFields = (targetRev as any)?.output?.dynamic_fields || {};
+  const mergedDynamicFields = { ...revDynamicFields, ...(options?.dynamicFields || {}) };
+
+  return {
+    template_id: tpl.id,
+    template_name: tpl.name,
+    revision_id: targetRev?.id || tpl.current_revision_id,
+    version: targetRev?.version || tpl.current_version,
+    status: targetRev?.status || tpl.revision_status,
+    sample_file_name: tpl.sample_file_name,
+    mapping_status: tpl.mapping_status,
+    ...renderSimulatedTemplatePreview(content, mergedDynamicFields, options?.sampleData || {}),
+  };
 }
 
 export async function submitTemplateRevisionReview(

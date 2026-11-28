@@ -6,8 +6,10 @@
  * and explicitly DEFERRED detailed electronic signature notice.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useCabms } from '../context/CabmsContext.tsx';
+import { useG01Session } from '../context/G01Session.tsx';
+import { buildApiUrl } from '../services/g01Client.ts';
 import { AccessDeniedView } from '../components/AccessDeniedView.tsx';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -27,6 +29,49 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import { Quote } from '../types/cabms.ts';
 
+interface ApiQuotationLineItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  total: number;
+}
+
+interface ApiQuotationFollowUp {
+  id: string;
+  quote_id: string;
+  stage: 'STAGE_1_COURTESY' | 'STAGE_2_EXPIRY';
+  scheduled_date: string;
+  status: 'SCHEDULED' | 'SENT' | 'CANCELLED';
+  sent_at: string | null;
+  channel: string;
+}
+
+interface ApiQuotationRecord {
+  id: string;
+  workspace_id: string;
+  job_id: string;
+  customer_id: string | null;
+  brand_id: string;
+  external_myob_ref: string | null;
+  title: string;
+  subtotal: number;
+  gst: number;
+  total: number;
+  terms_version: string | null;
+  terms_content_snapshot: string | null;
+  frozen_issuer_snapshot: string | null;
+  acceptance_status: 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REFUSED' | 'EXPIRED' | 'REVOKED' | 'SUPERSEDED';
+  issued_at: string | null;
+  expires_at: string | null;
+  accepted_at: string | null;
+  accepted_by_name: string | null;
+  refusal_reason: string | null;
+  revocation_reason: string | null;
+  line_items: ApiQuotationLineItem[];
+  follow_ups: ApiQuotationFollowUp[];
+}
+
 export const QuotesAcceptanceView: React.FC = () => {
   // Hooks called unconditionally at top (G00-008)
   const {
@@ -40,6 +85,9 @@ export const QuotesAcceptanceView: React.FC = () => {
     demoClock,
   } = useCabms();
 
+  const session = useG01Session();
+  const isAuthenticatedWorkspace = Boolean(session?.profile && session?.workspaceId);
+
   const [viewMode, setViewMode] = useState<'office' | 'recipient'>('office');
   const [activeLinkScenario, setActiveLinkScenario] = useState<
     'valid' | 'invalid' | 'expired' | 'revoked' | 'superseded' | 'already_accepted'
@@ -49,13 +97,93 @@ export const QuotesAcceptanceView: React.FC = () => {
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [isPrepareModalOpen, setIsPrepareModalOpen] = useState(false);
 
+  // D1-backed quotation state (active when authenticated G01 session is present)
+  const [d1Quote, setD1Quote] = useState<ApiQuotationRecord | null>(null);
+  const [d1Loading, setD1Loading] = useState(false);
+  const [d1Error, setD1Error] = useState<string | null>(null);
+  const [d1ActionNotice, setD1ActionNotice] = useState<string | null>(null);
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [actionReason, setActionReason] = useState('');
+
   // New Quote Form State for unquoted jobs (G00-016)
   const [quoteTitle, setQuoteTitle] = useState('Standard Service Quotation');
   const [quoteAmount, setQuoteAmount] = useState('1450');
 
   // Find selected job or default
   const currentJob = jobs.find(j => j.id === selectedJobId) || jobs[0];
-  const quote = currentJob?.quote; // Truthful: no fallback to jobs[0].quote! (G00-006)
+
+  const loadD1Quotation = useCallback(async () => {
+    if (!session?.profile || !session?.workspaceId || !currentJob?.id) return;
+    setD1Loading(true);
+    setD1Error(null);
+    try {
+      const token = await session.token();
+      const res = await fetch(
+        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(session.workspaceId)}/quotations?job_id=${encodeURIComponent(currentJob.id)}`),
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) {
+        const problem = await res.json().catch(() => ({})) as { detail?: string };
+        setD1Error(problem.detail || `Failed to load quotation (${res.status})`);
+        return;
+      }
+      const data = await res.json() as { quotations?: ApiQuotationRecord[] };
+      setD1Quote(data.quotations?.[0] ?? null);
+    } catch (err) {
+      setD1Error(err instanceof Error ? err.message : 'Unable to reach quotation API');
+    } finally {
+      setD1Loading(false);
+    }
+  }, [session, currentJob?.id]);
+
+  useEffect(() => {
+    if (isAuthenticatedWorkspace) {
+      void loadD1Quotation();
+    } else {
+      setD1Quote(null);
+    }
+  }, [isAuthenticatedWorkspace, loadD1Quotation]);
+
+  const quote: Quote | undefined = isAuthenticatedWorkspace && d1Quote
+    ? {
+        id: d1Quote.id,
+        jobId: d1Quote.job_id,
+        customerId: d1Quote.customer_id || currentJob?.customerId || '',
+        brandId: (d1Quote.brand_id as Quote['brandId']) || currentJob?.brandId || 'solarcell',
+        externalMyobRef: d1Quote.external_myob_ref || d1Quote.id,
+        title: d1Quote.title,
+        subtotal: d1Quote.subtotal,
+        gst: d1Quote.gst,
+        total: d1Quote.total,
+        lineItems: d1Quote.line_items.map(li => ({
+          id: li.id,
+          description: li.description,
+          quantity: li.quantity,
+          unitPrice: li.unit_price,
+          total: li.total,
+        })),
+        termsVersion: d1Quote.terms_version || 'DRAFT (Pending Send)',
+        termsContentSnapshot: d1Quote.terms_content_snapshot || 'Terms snapshot will be frozen from the published QUOTE_TERMS template when sent.',
+        frozenIssuerSnapshot: d1Quote.frozen_issuer_snapshot || 'Issuer details frozen on send',
+        acceptanceStatus: d1Quote.acceptance_status === 'REFUSED' ? 'REVOKED' : d1Quote.acceptance_status,
+        linkScenario: 'valid',
+        issuedAt: d1Quote.issued_at || undefined,
+        expiresAt: d1Quote.expires_at || undefined,
+        acceptedAt: d1Quote.accepted_at || undefined,
+        acceptedByName: d1Quote.accepted_by_name || undefined,
+        refusalReason: d1Quote.refusal_reason || d1Quote.revocation_reason || undefined,
+        followUps: d1Quote.follow_ups.map(fu => ({
+          id: fu.id,
+          quoteId: fu.quote_id,
+          stage: fu.stage,
+          scheduledDate: fu.scheduled_date,
+          status: fu.status,
+          sentAt: fu.sent_at || undefined,
+          channel: 'EMAIL_SIMULATED',
+        })),
+        acceptanceHistory: [],
+      }
+    : currentJob?.quote; // Truthful: no fallback to jobs[0].quote! (G00-006)
 
   // Reset simulator state when job or quote changes (G00-017)
   useEffect(() => {
@@ -74,6 +202,43 @@ export const QuotesAcceptanceView: React.FC = () => {
     );
   }
 
+  const runD1Action = async (
+    pathSuffix: string,
+    method: 'POST' | 'PATCH' = 'POST',
+    payload?: Record<string, unknown>,
+    successMessage?: string
+  ) => {
+    if (!session?.workspaceId || !d1Quote) return;
+    setD1Loading(true);
+    setD1Error(null);
+    setD1ActionNotice(null);
+    try {
+      const token = await session.token();
+      const res = await fetch(
+        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(session.workspaceId)}/quotations/${encodeURIComponent(d1Quote.id)}${pathSuffix}`),
+        {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: payload ? JSON.stringify(payload) : undefined,
+        }
+      );
+      const data = await res.json().catch(() => ({})) as { quotation?: ApiQuotationRecord; detail?: string };
+      if (!res.ok) {
+        setD1Error(data.detail || `Quotation action failed (${res.status})`);
+        return;
+      }
+      if (data.quotation) setD1Quote(data.quotation);
+      if (successMessage) setD1ActionNotice(successMessage);
+    } catch (err) {
+      setD1Error(err instanceof Error ? err.message : 'Quotation action failed');
+    } finally {
+      setD1Loading(false);
+    }
+  };
+
   const handleSimulateAcceptance = () => {
     if (!quote) return;
     if (!customerAcceptedCheck && activeLinkScenario === 'valid') {
@@ -84,8 +249,58 @@ export const QuotesAcceptanceView: React.FC = () => {
       return;
     }
 
+    if (isAuthenticatedWorkspace && d1Quote) {
+      void runD1Action('/accept', 'POST', { accepted_by_name: currentJob?.siteContact }, 'Quotation accepted and persisted to D1.');
+      return;
+    }
+
     const outcome = simulateQuoteAcceptance(currentJob.id, activeLinkScenario);
     setAcceptanceFeedback(outcome);
+  };
+
+  const createD1Quote = async (exSubtotal: number) => {
+    if (!session?.workspaceId || !currentJob) return;
+    setD1Loading(true);
+    setD1Error(null);
+    try {
+      const token = await session.token();
+      const res = await fetch(
+        buildApiUrl(`/api/v1/workspaces/${encodeURIComponent(session.workspaceId)}/quotations`),
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            job_id: currentJob.id,
+            customer_id: currentJob.customerId,
+            brand_id: currentJob.brandId,
+            title: quoteTitle,
+            line_items: [
+              {
+                id: 'ITEM-01',
+                description: quoteTitle,
+                quantity: 1,
+                unit_price: exSubtotal,
+              },
+            ],
+          }),
+        }
+      );
+      const data = await res.json().catch(() => ({})) as { quotation?: ApiQuotationRecord; detail?: string };
+      if (!res.ok) {
+        setD1Error(data.detail || `Failed to create quotation (${res.status})`);
+        return;
+      }
+      if (data.quotation) setD1Quote(data.quotation);
+      setD1ActionNotice('Draft quotation saved to D1.');
+      setIsPrepareModalOpen(false);
+    } catch (err) {
+      setD1Error(err instanceof Error ? err.message : 'Failed to create quotation');
+    } finally {
+      setD1Loading(false);
+    }
   };
 
   const handlePrepareQuoteSubmit = (e: React.FormEvent) => {
@@ -93,6 +308,11 @@ export const QuotesAcceptanceView: React.FC = () => {
     const grossTotal = parseFloat(quoteAmount) || 1450;
     // GST convention: Gross total / 1.1 = Subtotal ex-GST
     const exSubtotal = Math.round((grossTotal / 1.1) * 100) / 100;
+
+    if (isAuthenticatedWorkspace && session?.workspaceId && currentJob) {
+      void createD1Quote(exSubtotal);
+      return;
+    }
 
     try {
       prepareQuoteForJob(currentJob.id, quoteTitle, [
@@ -636,6 +856,84 @@ export const QuotesAcceptanceView: React.FC = () => {
                       <span>{acceptanceFeedback.success ? 'Acceptance Processed' : 'Acceptance Blocked'}</span>
                     </div>
                     <p className="text-[11px] leading-relaxed">{acceptanceFeedback.message}</p>
+                  </div>
+                )}
+
+                {isAuthenticatedWorkspace && d1Quote && (
+                  <div className="pt-3 border-t border-slate-800 space-y-2" data-testid="d1-quote-lifecycle-controls">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-sky-400">
+                      D1 Quotation Lifecycle ({d1Quote.acceptance_status})
+                    </div>
+                    {d1Error && (
+                      <div className="p-2 rounded bg-red-950/70 border border-red-800 text-red-200 text-[11px]">
+                        {d1Error}
+                      </div>
+                    )}
+                    {d1ActionNotice && (
+                      <div className="p-2 rounded bg-emerald-950/70 border border-emerald-800 text-emerald-200 text-[11px]">
+                        {d1ActionNotice}
+                      </div>
+                    )}
+                    {d1Quote.acceptance_status === 'DRAFT' && (
+                      <div className="space-y-2">
+                        <input
+                          type="email"
+                          placeholder="Optional recipient email for dispatch"
+                          value={recipientEmail}
+                          onChange={e => setRecipientEmail(e.target.value)}
+                          className="w-full cabms-input rounded px-2.5 py-1.5 text-(--cabms-text-primary) text-xs"
+                        />
+                        <button
+                          type="button"
+                          disabled={d1Loading}
+                          onClick={() => void runD1Action('/send', 'POST', recipientEmail ? { recipient_email: recipientEmail } : {}, 'Quotation sent and Terms snapshot frozen.')}
+                          className="w-full py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs rounded-lg transition cursor-pointer disabled:opacity-50"
+                        >
+                          Send &amp; Freeze Terms Snapshot
+                        </button>
+                      </div>
+                    )}
+                    {(d1Quote.acceptance_status === 'DRAFT' || d1Quote.acceptance_status === 'SENT') && (
+                      <div className="space-y-2">
+                        <input
+                          type="text"
+                          placeholder="Reason for refusal or revocation"
+                          value={actionReason}
+                          onChange={e => setActionReason(e.target.value)}
+                          className="w-full cabms-input rounded px-2.5 py-1.5 text-(--cabms-text-primary) text-xs"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          {d1Quote.acceptance_status === 'SENT' && (
+                            <button
+                              type="button"
+                              disabled={d1Loading || !actionReason.trim()}
+                              onClick={() => void runD1Action('/refuse', 'POST', { reason: actionReason.trim() }, 'Quotation marked as refused.')}
+                              className="py-1.5 bg-amber-700 hover:bg-amber-600 text-white font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
+                            >
+                              Record Refusal
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={d1Loading}
+                            onClick={() => void runD1Action('/revoke', 'POST', { reason: actionReason.trim() || 'Revoked by office' }, 'Quotation revoked.')}
+                            className="py-1.5 bg-red-700 hover:bg-red-600 text-white font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
+                          >
+                            Revoke Quote
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {['SENT', 'EXPIRED', 'REFUSED'].includes(d1Quote.acceptance_status) && (
+                      <button
+                        type="button"
+                        disabled={d1Loading}
+                        onClick={() => void runD1Action('/revise', 'POST', {}, 'Superseded quote and created new draft revision.')}
+                        className="w-full py-1.5 cabms-surface-subtle border cabms-border text-(--cabms-text-primary) font-bold text-xs rounded transition cursor-pointer disabled:opacity-50"
+                      >
+                        Supersede &amp; Create Revision Draft
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
